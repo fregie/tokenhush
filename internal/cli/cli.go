@@ -25,7 +25,7 @@ usage:
   tokenhush run      start the gateway in the foreground
   tokenhush status   show whether the gateway is running
   tokenhush audit    show the local audit timeline
-  tokenhush env      print tool setup snippets
+  tokenhush env <tool>  print tool setup snippets
   tokenhush doctor   diagnose common setup problems
   tokenhush version  print version and build information
 `
@@ -34,9 +34,9 @@ usage:
 // name) and returns the process exit code. It writes to stdout/stderr and
 // never calls os.Exit, so callers can test it without spawning a process.
 //
-// `run` is implemented; `status`, `audit`, `env` and `doctor` are still stubs
-// that fail with ExitUsage and a "not implemented" message until their waves
-// land.
+// `run` and `env` are implemented; `status`, `audit` and `doctor` are still
+// stubs that fail with ExitUsage and a "not implemented" message until their
+// waves land.
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
@@ -49,7 +49,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return ExitOK
 	case "run":
 		return runCommand(args[1:], stdout, stderr)
-	case "status", "audit", "env", "doctor":
+	case "env":
+		return envCommand(args[1:], stdout, stderr)
+	case "status", "audit", "doctor":
+		if args[0] == "status" {
+			// W6.7 seam: render the read-only Pro badge when a valid license
+			// file is present. W6.3 replaces this stub with the full status
+			// view (daemon + control API) and keeps calling proLicenseBadge().
+			if badge := proLicenseBadge(); badge != "" {
+				fmt.Fprintln(stdout, badge)
+			}
+		}
 		fmt.Fprintf(stderr, "%s: not implemented\n", args[0])
 		fmt.Fprintf(stderr, "usage: tokenhush %s\n", args[0])
 		return ExitUsage

@@ -53,10 +53,10 @@ func TestRun(t *testing.T) {
 			emptyStdout: true,
 		},
 		{
-			name:        "env is a stub",
+			name:        "env without a tool reports usage",
 			args:        []string{"env"},
 			wantCode:    ExitUsage,
-			wantStderr:  []string{"not implemented", "usage:"},
+			wantStderr:  []string{"usage: tokenhush env", "supported tools:", "claude, codex, aider, cline, roo"},
 			emptyStdout: true,
 		},
 		{
