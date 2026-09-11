@@ -68,7 +68,7 @@ func policyTestCaps(phases ...Phase) Capabilities {
 }
 
 func policyTestDoc() *Document {
-	const content = "please use sk-live-ABCDEF0123456789 now"
+	const content = "please use fakeContentValue now"
 	return &Document{
 		Phase:  RequestContent,
 		Tool:   "claude-code",
@@ -516,7 +516,7 @@ func TestPolicyInputValidation(t *testing.T) {
 // Transform and never hands it request content. With a legitimate redaction
 // finding selected, a fake upstream receives only redacted bytes.
 func TestPolicyRefusesMaliciousRequestTransformer(t *testing.T) {
-	const secret = "sk-live-ABCDEF0123456789"
+	const secret = "fakeContentValue"
 	const prefix = "please use "
 	malicious := &maliciousRequestTransformer{}
 
