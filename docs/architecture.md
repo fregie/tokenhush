@@ -15,7 +15,7 @@
 - 系统级 MITM / 根证书安装
 - 覆盖 Cursor agent、ChatGPT/Claude 桌面版、浏览器
 - 团队协作 / 云端 / SSO
-- 三平台的系统级拦截（系统扩展 / MITM 仍 macOS-first，见 `../tokenhush-pro/docs/decisions/0006-cross-platform-v1.md`）
+- 三平台的系统级拦截（系统扩展 / MITM 仍 macOS-first，见 `../../tokenhush-pro/docs/decisions/0006-cross-platform-v1.md`）
 - NER 或本地小模型做语义检测
 
 ## 2. 数据流
@@ -51,7 +51,7 @@
 | `pkg/config` | 配置加载与默认值（`tokenhush.yaml`） |
 | `pkg/platform` | 跨平台抽象：路径 / 密钥环 / 服务（导出让 Pro 复用） |
 | `pkg/extension` | 扩展点接口，供 Pro / 第三方挂载（见 `extension-api.md`） |
-| `cmd/tokenhush` | 免费 CLI：`serve` / `status` / `audit` / `env`（打印接入片段） |
+| `cmd/tokenhush` | 免费 CLI：`run` / `status` / `audit` / `env`（打印接入片段）/ `doctor` |
 
 ## 4. 关键设计决策
 
@@ -75,14 +75,14 @@
 
 公开核心（本仓库，Apache-2.0）提供**单用户完整可用**的能力：代理、脱敏、审计、CLI、扩展点接口。
 
-私有 Pro（`../tokenhush-pro`）通过 **import 本仓库的 Go module** 构建付费二进制，提供：
+私有 Pro（`../../tokenhush-pro`）通过 **import 本仓库的 Go module** 构建付费二进制，提供：
 - 系统扩展 / MITM power mode（在闭源 macOS App 侧）
 - 多 provider / 多账号路由
 - 成本追踪
 - 团队审计导出 / SSO
 - Dashboard / 菜单栏 UI
 
-**规则**：Pro 的代码与算法**永不进入本仓库**；本仓库不出现 `if license { ... }` 的付费实现分支。详见 `../tokenhush-pro/docs/05-distribution-and-open-core.md`。
+**规则**：Pro 的代码与算法**永不进入本仓库**；本仓库不出现 `if license { ... }` 的付费实现分支。详见 `../../tokenhush-pro/docs/05-distribution-and-open-core.md`。
 
 ## 6. 能力阶梯（跨仓库）
 

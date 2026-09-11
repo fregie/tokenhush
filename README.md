@@ -45,7 +45,7 @@ Tokenhush 给这类工具加一道**本地关卡**：看得见、管得住、不
 > - Homebrew（mac/Linux）：`brew install tokenhush`
 > - Scoop（Windows）：`scoop install tokenhush`
 > - 安装脚本：`curl -fsSL https://…/install.sh | sh`
-> - npm wrapper 延后（见私有仓库 `tokenhush-pro` 的 `docs/13-v1-technical-design.md`）
+> - 包管理器 wrapper 延后（V1 不分发；见私有仓库 `tokenhush-pro` 的 `docs/13-v1-technical-design.md`）
 
 ## 文档
 

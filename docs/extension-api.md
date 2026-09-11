@@ -8,13 +8,15 @@
 
 ## 接口（`pkg/extension`）
 
+### 跨层扩展点
+
 ```go
 package extension
 
 // Router 决定一个请求走哪个上游（多 provider / 多账号）。
 type Router interface {
     Name() string
-    // Pick 返回目标上游；返回 nil 表示"不处理，交给默认实现"。
+    // Pick 返回目标上游；返回零值 Upstream + nil 表示"不处理，交给默认实现"。
     Pick(req *Request) (Upstream, error)
 }
 
@@ -31,7 +33,85 @@ type AuditExporter interface {
 }
 ```
 
-配套类型（示意）：`Request`（方法/路径/头/已解析 JSON）、`Response`、`Upstream`（base URL + 凭据来源）、`Query`、`Record`。
+### 内容插件（编译内置、能力分级）
+
+架构决策见 `../../tokenhush-pro/docs/decisions/0007-content-plugin-architecture.md`。内置检测器本身即 `Inspector`；Pro / 第三方用同一接口挂载更多插件。**接口公开 ≠ 实现公开：明文生成、出站写入与占位符映射始终由核心独占。**
+
+```go
+type Phase string  // RequestContent | ResponseContent | Header | Metadata
+type Action string // Allow | Warn | Redact | Block
+
+type Plugin interface {
+    ID() string
+    Capabilities() Capabilities
+}
+
+type Capabilities struct {
+    Phases       []Phase
+    ReadContent  bool
+    CanTransform bool
+    CanBlock     bool
+    CanNetwork   bool // 编译内置第三方层在注册期被拒
+    Priority     int  // 升序；同优先级按 id 升序
+}
+
+type Finding struct {
+    LeafIndex  int
+    Start      int
+    End        int
+    Type       string
+    Confidence float64
+    Action     Action
+    PluginID   string
+    Meta       map[string]any
+}
+
+type Leaf struct {
+    Path    string
+    Content []byte
+    Len     int
+}
+type Document struct {
+    Phase  Phase
+    Tool   string
+    Leaves []Leaf
+}
+
+type Inspector interface {
+    Plugin
+    Inspect(*Document) ([]Finding, error)
+}
+
+type Transformer interface {
+    Plugin
+    Transform(*Document) (*Document, error)
+}
+
+// Registry（NewRegistry()）持有编译内置插件；Register 是安全闸门。
+type Registry struct{ /* ... */ }
+
+func NewRegistry() *Registry
+func (r *Registry) Register(p Plugin) error
+func (r *Registry) Inspectors(phase Phase) []Inspector
+func (r *Registry) Transformers(phase Phase) []Transformer
+
+// Gate 返回插件被允许看到的视图：无 ReadContent 时清空 Content；
+// Header 阶段无论能力一律清空 Content（只留 Path/Len）。
+func Gate(doc *Document, caps Capabilities) (*Document, error)
+```
+
+**安全约束（注册 / 运行期）**
+
+- `Register` 以类型化错误拒绝：非插件/typed-nil（`ErrNotAPlugin`）、空/重复 id（`ErrMissingID`/`ErrDuplicateID`）、`CanNetwork`（`ErrNetworkDenied`）、负优先级（`ErrInvalidPriority`）、空/未知阶段（`ErrNoPhases`/`ErrInvalidPhase`）、以及声明 `RequestContent`/`Header` 的 `Transformer`（`ErrTransformerPhase`）。全部通过才入库。
+- 未声明 `ReadContent` 的 `Inspector` 只拿到 `Leaf.Len`，`Content` 为 `nil`。
+- `Transformer` 只允许 `ResponseContent` / `Metadata`；声明 `RequestContent` / `Header` 者在**注册期被拒绝**。
+- 明文生成与一切出站写入**仅核心可为**；`ResponseContent` 改写先于回填，其输出不可能包含原始 secret。
+- `Header` 阶段一律清空 `Content`（即使声明 `ReadContent`），只留头名与长度，**绝不暴露 `Authorization` / 鉴权取值**。
+- 占位符 ↔ 原文映射**对插件不可达**（`pkg/extension` 无映射 API）。
+- 策略引擎在核心：优先级 `Allow < Warn < Redact < Block`（`Block` 最严重）；每插件失败策略 `FailOpenWarn`（advisory，默认）或 `FailClosed`（critical），panic / 超时绝不静默。
+
+配套类型（示意）：`Request`（方法/路径/头/已解析 JSON）、`Response`、`Upstream`（base URL；**不携带凭据**，V1 透传）。
+`Query` / `Record` 是 `pkg/audit` 的类型别名；审计写入与读取由 `pkg/audit` 的 `AuditSink` / `AuditQuerier` seam 承担（daemon 注入实现）。
 
 ## 挂载方式
 
@@ -44,21 +124,29 @@ Pro 仓库是**独立的 `main` 包**，导入本核心的公开包并注册私�
 ```go
 // 私有仓库 tokenhush-pro/cmd/tokenhush-pro/main.go（不存在于本仓库）
 import (
-    "github.com/<org>/tokenhush/pkg/extension"
-    "github.com/<org>/tokenhush/pkg/proxy"
-    pro "github.com/<org>/tokenhush-pro/internal/..."
+    "github.com/fregie/tokenhush/pkg/extension"
+    "github.com/fregie/tokenhush/pkg/proxy"
+    pro "github.com/fregie/tokenhush-pro/internal/..."
 )
 
 func main() {
+    // 内容插件经 Registry 注册；Router / CostSink / AuditExporter 是独立注入点。
+    reg := extension.NewRegistry()
+    _ = reg.Register(pro.NewCredentialInspector()) // Inspector（内容插件）
+    _ = reg.Register(pro.NewSemanticTransformer()) // Transformer（仅 response/metadata）
+
+    // 装配形状示意；真实 API 以 `tokenhush run`（W4.7）落地为准：
     proxy.Run(proxy.Config{
-        Extensions: []extension.Extension{
-            pro.NewMultiAccountRouter(),
-            pro.NewCostTracker(),
-            pro.NewTeamAuditExporter(),
-        },
+        Registry:  reg,
+        Router:    pro.NewMultiAccountRouter(), // extension.Router
+        CostSink:  pro.NewCostTracker(),        // extension.CostSink
+        Exporter:  pro.NewTeamAuditExporter(),  // extension.AuditExporter
+        AuditSink: pro.NewAuditSink(),          // pkg/audit.AuditSink
     })
 }
 ```
+
+> 装配 API 以 `tokenhush run` 的实现为准；上面的组装形状示意 registry 注入。
 
 **要点**：Pro 的能力来自**私有源码**，不是本仓库里的开关。破解公开核心无法解锁 Pro（因为公开二进制里根本没有 Pro 实现）。
 
@@ -67,8 +155,11 @@ func main() {
 | 接口 | 稳定性 | 说明 |
 |---|---|---|
 | `extension.Router` | 计划稳定（v1 起） | 第三方路由插件依赖 |
+| `extension.Inspector` / `Transformer` | 计划稳定（v1 起） | 内容插件契约；能力分级见上 |
+| `extension.Capabilities` / `Phase` / `Action` / `Finding` / `Document` / `Leaf` | 计划稳定（v1 起） | 插件契约核心类型 |
 | `extension.CostSink` | 计划稳定 | |
 | `extension.AuditExporter` | 计划稳定 | |
+| `extension.Registry` | **可能变动** | 依装配方式，`tokenhush run` 落地后冻结 |
 | `Request` / `Response` 结构 | **可能变动** | 随协议演进调整，遵循语义化版本 |
 
 - 公开接口以**语义化版本**管理；破坏性变更升级 major。

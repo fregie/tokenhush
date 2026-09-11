@@ -4,7 +4,7 @@
 
 ## 通用流程
 
-1. 启动本地网关：`tokenhush serve`（默认监听 `127.0.0.1:8787`）。
+1. 启动本地网关：`tokenhush run`（默认监听 `127.0.0.1:8787`）。
 2. 把目标工具的 API base URL 指向网关。
 3. 用 `tokenhush status` 或工具的连通性自检确认生效。
 
@@ -57,7 +57,7 @@ export ANTHROPIC_API_BASE=http://127.0.0.1:8787
   - Claude Code（订阅登录）：推理请求遵守 base URL（Anthropic 官方文档已确认；网关须原样转发 `anthropic-beta`）。认证/刷新固定走 `platform.claude.com` 等域名，不经网关。**真人会话实测尚未完成**（流程见 `scripts/oauth-matrix.sh --capture`）——实测前不要把订阅模式写进用户引导。
   - Codex CLI（ChatGPT 订阅登录）：**V1 不支持**，见上方 Codex 小节；请用 API key。
 - **遥测端点不走 base URL**：部分工具会向 PostHog / Sentry 等发送遥测，含内容较少但需知晓。
-- **不覆盖**：Cursor agent 流量（走 `api2.cursor.sh`）、ChatGPT/Claude 桌面版、浏览器网页版——需系统级方案（见 `../tokenhush-pro/docs/06-roadmap.md` 的 V2/V3）。
+- **不覆盖**：Cursor agent 流量（走 `api2.cursor.sh`）、ChatGPT/Claude 桌面版、浏览器网页版——需系统级方案（见 `../../tokenhush-pro/docs/06-roadmap.md` 的 V2/V3）。
 
 ## 连通性自检（规划）
 

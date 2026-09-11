@@ -31,7 +31,7 @@ tokenhush/
     ├── audit/              # SQLite 审计（元数据 + HMAC 哈希链）
     ├── config/             # 配置加载
     ├── platform/           # 跨平台抽象：paths / keyring / service（导出让 Pro 复用）
-    └── extension/          # 扩展点接口（Router / CostSink / AuditExporter）
+    └── extension/          # 扩展点接口（Router / CostSink / AuditExporter + 内容插件 Inspector/Transformer/Registry）
 ```
 
 ## Where to Look
@@ -49,7 +49,7 @@ tokenhush/
 1. **绝不向出站方向回填占位符**——只回客户端。这是防 prompt-injection 外泄的核心不变量。
 2. **协议层不做归一化**：采用协议无关的 JSON 叶子遍历（递归 string 叶子检测/替换），不要为每个 API 建 IR。
 3. **V1 检测器只用确定性规则**（前缀 / 高熵 / JWT / 私钥头 / Luhn / 邮箱），**不引入 NER 或本地小模型**。
-4. **本地服务只绑 `127.0.0.1`**，并校验 `Host` 头（防 DNS rebinding）；若未来支持网关注入 key，必须加 gateway token + Origin 校验。
+4. **本地服务只绑双栈 loopback（127.0.0.1 + [::1]）**，并校验 `Host` 头（防 DNS rebinding）；若未来支持网关注入 key，必须加 gateway token + Origin 校验。
 5. **审计默认仅元数据**（provider/端点/时间/字节数/脱敏计数/类型），不存值；内容日志必须显式开启且加密。
 6. **Pro 能力不进本仓库**：不要在这里写 `if license { ... }` 的完整实现或 Pro 算法。
 7. **依赖许可**：核心依赖只允许 MIT / Apache-2.0 / BSD 等宽松许可，**禁止 GPL / AGPL**（会污染闭源 Pro 层）。
@@ -69,7 +69,7 @@ tokenhush/
 # 构建（规划）
 go build -o bin/tokenhush ./cmd/tokenhush
 # 运行（规划）
-./bin/tokenhush serve --port 8787
+./bin/tokenhush run --port 8787
 # 测试
 go test ./...
 ```
