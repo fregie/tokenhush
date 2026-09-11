@@ -1,0 +1,113 @@
+# GoReleaser v2 configuration for the public Tokenhush core.
+#
+# Distribution matrix (docs/13 §10.2): macOS via Homebrew cask, Windows via
+# Scoop, Linux via the curl|sh installer (install.sh) plus the raw binaries
+# attached to the GitHub release. Casks are macOS-only; Linux is never served
+# by a package manager in V1.
+#
+# Release: `goreleaser release --clean` (tag-triggered in .github/workflows/
+# release.yml). Local dry render: `goreleaser release --snapshot --clean`.
+# Requires `syft` (SBOMs) on PATH.
+version: 2
+
+project_name: tokenhush
+
+builds:
+  - id: tokenhush
+    main: ./cmd/tokenhush
+    binary: tokenhush
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: tokenhush
+    # Keep the archive name stable: install.sh derives it from the OS/arch it
+    # detects. Changing this template requires updating install.sh's
+    # archive_name() function in lockstep.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# One SBOM per archive (6 archives -> 6 documents), generated with syft and
+# attached to the GitHub release alongside the archives.
+sboms:
+  - id: archive
+    artifacts: archive
+    cmd: syft
+    args: ["$artifact", "--output", "spdx-json=$document"]
+    documents:
+      - "{{ .ArtifactName }}.sbom.json"
+
+# macOS channel (docs/13 §10.2). The cask installs the darwin binaries from
+# the GitHub release. `skip_upload: auto` keeps snapshot/prerelease runs from
+# touching the tap; the real release is pushed by release.yml using
+# HOMEBREW_TAP_GITHUB_TOKEN.
+homebrew_casks:
+  - name: tokenhush
+    binaries:
+      - tokenhush
+    repository:
+      owner: fregie
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/fregie/tokenhush"
+    description: "Local gateway that redacts secrets before they reach AI models"
+    caveats: |
+      tokenhush is not notarized yet. If macOS blocks the first run, clear the
+      quarantine attribute:
+        xattr -dr com.apple.quarantine "$(which tokenhush)"
+    skip_upload: auto
+
+# Windows channel (docs/13 §10.2). Manifest lands in the root of the bucket
+# repo so `scoop bucket list` sees it.
+scoops:
+  - name: tokenhush
+    repository:
+      owner: fregie
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+    homepage: "https://github.com/fregie/tokenhush"
+    description: "Local gateway that redacts secrets before they reach AI models"
+    license: Apache-2.0
+    skip_upload: auto
+
+release:
+  github:
+    owner: fregie
+    name: tokenhush
+  draft: false
+  prerelease: auto
+  footer: |
+    ---
+
+    Install: `brew install --cask fregie/tap/tokenhush` (macOS),
+    `scoop install tokenhush` (Windows), or the `install.sh` script (Linux).
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

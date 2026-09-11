@@ -1,0 +1,49 @@
+name: release
+
+# Tag-triggered release: builds the six cross-platform archives, checksums and
+# per-archive SBOMs, publishes the GitHub release, and pushes the Homebrew cask
+# (macOS) and Scoop manifest (Windows). Linux ships via install.sh + the raw
+# release binaries (docs/13 §10.2).
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    name: goreleaser (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install syft (v1.51.1)
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.51.1
+
+      # HOMEBREW_TAP_GITHUB_TOKEN / SCOOP_BUCKET_GITHUB_TOKEN must be able to
+      # push to fregie/homebrew-tap and fregie/scoop-bucket; the default
+      # GITHUB_TOKEN is scoped to this repository only.
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "v2.18.1"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}
