@@ -90,10 +90,15 @@ jobs:
         run: |
           set -euo pipefail
           # Only MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause pass (docs/13 §12).
+          # The 0.8 confidence threshold exists for modernc.org/mathutil: it is
+          # legitimately BSD-3-Clause but spells the text non-canonically, so
+          # google/licenseclassifier scores it ~0.864, below go-licenses' default
+          # 0.9. The allowlist is unchanged and still rejects GPL/AGPL.
           go install github.com/google/go-licenses@v1.6.0
           go version -m "$(go env GOPATH)/bin/go-licenses" | sed -n '1,3p'
           "$(go env GOPATH)/bin/go-licenses" check ./... \
-            --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause
+            --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause \
+            --confidence_threshold=0.8
 
       - name: Secret scan (gitleaks v8.30.1)
         shell: bash
