@@ -406,9 +406,9 @@ func TestPathsNeverCwdOrExecutableDir(t *testing.T) {
 // Homebrew keg or an MSI Program Files directory): resolution must not return
 // any path inside it, and an explicit override into it must be refused.
 //
-// The prefix comes from t.TempDir() and is therefore host-native, so this test
-// resolves with runtime.GOOS: the executable-dir guard must see containment
-// with the host's own separators, on Windows included.
+// Resolution is simulated as linux, which needs no OS environment (the Windows
+// data base requires %LOCALAPPDATA%); the override refusal uses runtime.GOOS
+// because filepath.Join yields host-native separators there.
 func TestPathsReadOnlyInstallPrefix(t *testing.T) {
 	prefix := t.TempDir()
 	if err := os.Chmod(prefix, 0o555); err != nil {
@@ -416,14 +416,14 @@ func TestPathsReadOnlyInstallPrefix(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(prefix, 0o755) })
 
-	cfg, data, err := pathsFor(runtime.GOOS, stubEnv(nil), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
+	cfg, data, err := pathsFor("linux", stubEnv(nil), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
 	if err != nil {
 		t.Fatalf("pathsFor() with read-only exec dir: %v", err)
 	}
-	if sameOrInside(runtime.GOOS, prefix, cfg) {
+	if sameOrInside("linux", prefix, cfg) {
 		t.Errorf("ConfigDir = %q is inside the read-only install prefix %q", cfg, prefix)
 	}
-	if sameOrInside(runtime.GOOS, prefix, data) {
+	if sameOrInside("linux", prefix, data) {
 		t.Errorf("DataDir = %q is inside the read-only install prefix %q", data, prefix)
 	}
 
@@ -438,9 +438,10 @@ func TestPathsReadOnlyInstallPrefix(t *testing.T) {
 		}
 	}
 
-	// An override aimed straight at the read-only prefix is refused. The
-	// override is built with filepath.Join, i.e. host-native separators, so
-	// runtime.GOOS is the only goos whose guard can see the containment.
+	// An override aimed straight at the read-only prefix is refused. This is
+	// the only call that needs runtime.GOOS: the override is built with
+	// filepath.Join (host separators) and short-circuits before any
+	// OS-specific base is consulted.
 	_, _, err = pathsFor(runtime.GOOS, stubEnv(map[string]string{homeEnvVar: filepath.Join(prefix, "data")}), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
 	if !errors.Is(err, ErrPathInExecDir) {
 		t.Fatalf("pathsFor(override inside read-only prefix) error = %v, want ErrPathInExecDir", err)
