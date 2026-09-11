@@ -287,16 +287,18 @@ func writeStatusText(w io.Writer, view statusUpView) {
 
 // renderStatusDown prints the "not running" view and returns ExitFailure: a
 // status probe that cannot see a running gateway is a failure for scripts.
-func renderStatusDown(stdout, stderr io.Writer, asJSON bool, license string) int {
+// badge is the display-only Pro line returned by proLicenseBadge ("" when no
+// valid license is present); it never branches core behavior.
+func renderStatusDown(stdout, stderr io.Writer, asJSON bool, badge string) int {
 	if asJSON {
-		if code := writeJSON(stdout, stderr, "status", statusDownView{Running: false, License: license}); code != ExitOK {
+		if code := writeJSON(stdout, stderr, "status", statusDownView{Running: false, License: badge}); code != ExitOK {
 			return code
 		}
 		return ExitFailure
 	}
 	fmt.Fprintln(stdout, "tokenhush: gateway not running")
-	if license != "" {
-		fmt.Fprintln(stdout, license)
+	if badge != "" {
+		fmt.Fprintln(stdout, badge)
 	}
 	return ExitFailure
 }
