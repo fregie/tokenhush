@@ -31,41 +31,8 @@ func (s *Store) PruneBefore(cutoff time.Time) (int64, error) {
 		return 0, ErrClosed
 	}
 
-	var maxOld sql.NullInt64
-	if err := s.db.QueryRow(`SELECT MAX(id) FROM requests WHERE ts < ?`, cutoff.UnixMilli()).Scan(&maxOld); err != nil {
-		return 0, fmt.Errorf("audit: find retention boundary: %w", err)
-	}
-	if !maxOld.Valid || maxOld.Int64 < 1 {
-		return 0, nil
-	}
-
-	var maxRowID int64
-	if err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM requests`).Scan(&maxRowID); err != nil {
-		return 0, fmt.Errorf("audit: read chain tip id: %w", err)
-	}
-	deleteThrough := maxOld.Int64
-	if deleteThrough >= maxRowID {
-		deleteThrough = maxRowID - 1
-	}
-	if deleteThrough < 1 {
-		return 0, nil
-	}
-
-	var (
-		targetID   int64
-		targetHash []byte
-	)
-	err := s.db.QueryRow(
-		`SELECT id, hash FROM requests WHERE id > ? ORDER BY id ASC LIMIT 1`, deleteThrough,
-	).Scan(&targetID, &targetHash)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, fmt.Errorf("audit: read re-anchor row: %w", err)
-	}
-
-	if _, err := s.anchors.append(targetID, targetHash); err != nil {
+	deleteThrough, ok, err := s.anchorBeforeDelete(cutoff)
+	if err != nil || !ok {
 		return 0, err
 	}
 
@@ -78,4 +45,50 @@ func (s *Store) PruneBefore(cutoff time.Time) (int64, error) {
 		return 0, fmt.Errorf("audit: count expired rows: %w", err)
 	}
 	return deleted, nil
+}
+
+// anchorBeforeDelete writes the retention anchor for cutoff and returns the last
+// row id the caller should delete, or ok=false when there is nothing to prune.
+// It is the append-only-safe "write the new anchor" half of PruneBefore, split
+// out so tests can simulate a crash between the anchor write and the DELETE
+// without duplicating the boundary logic. The caller must hold s.mu.
+func (s *Store) anchorBeforeDelete(cutoff time.Time) (deleteThrough int64, ok bool, err error) {
+	var maxOld sql.NullInt64
+	if err := s.db.QueryRow(`SELECT MAX(id) FROM requests WHERE ts < ?`, cutoff.UnixMilli()).Scan(&maxOld); err != nil {
+		return 0, false, fmt.Errorf("audit: find retention boundary: %w", err)
+	}
+	if !maxOld.Valid || maxOld.Int64 < 1 {
+		return 0, false, nil
+	}
+
+	var maxRowID int64
+	if err := s.db.QueryRow(`SELECT COALESCE(MAX(id), 0) FROM requests`).Scan(&maxRowID); err != nil {
+		return 0, false, fmt.Errorf("audit: read chain tip id: %w", err)
+	}
+	deleteThrough = maxOld.Int64
+	if deleteThrough >= maxRowID {
+		deleteThrough = maxRowID - 1
+	}
+	if deleteThrough < 1 {
+		return 0, false, nil
+	}
+
+	var (
+		targetID   int64
+		targetHash []byte
+	)
+	err = s.db.QueryRow(
+		`SELECT id, hash FROM requests WHERE id > ? ORDER BY id ASC LIMIT 1`, deleteThrough,
+	).Scan(&targetID, &targetHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("audit: read re-anchor row: %w", err)
+	}
+
+	if _, err := s.anchors.append(targetID, targetHash); err != nil {
+		return 0, false, err
+	}
+	return deleteThrough, true, nil
 }
