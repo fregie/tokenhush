@@ -3,5 +3,6 @@
 // passthrough that keeps placeholder restoration safe across chunk
 // boundaries.
 //
-// Only the package contract is fixed here; behavior lands in later work items.
+// The dual-stack loopback listener layer lives in listen.go; Host allowlist
+// validation, forwarding and SSE land in later work items.
 package proxy
