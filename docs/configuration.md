@@ -19,6 +19,8 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
 # 如需自定义鉴权头，Claude Code 支持 ANTHROPIC_AUTH_TOKEN
 ```
 
+> 订阅登录（Claude Max/Pro）：推理请求遵守 `ANTHROPIC_BASE_URL`（见 [Anthropic LLM gateway 文档](https://code.claude.com/docs/en/llm-gateway)），网关需原样转发 `anthropic-beta`。OAuth 刷新/授权固定走 `platform.claude.com` / `claude.ai`，不经网关。真人会话实测流程见 `scripts/oauth-matrix.sh --capture`。
+
 ## Codex CLI
 
 编辑 `~/.codex/config.toml`：
@@ -27,6 +29,7 @@ export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
 model_providers.tokenhush = { name = "Tokenhush", base_url = "http://127.0.0.1:8787/v1" }
 ```
 > 注意：Codex 默认走 **Responses API**（`/v1/responses`），Tokenhush 必须适配该协议。
+> **ChatGPT 订阅登录（非 API key）当前不支持经网关使用**：订阅令牌只对 ChatGPT 服务路径有效，转发到 OpenAI 平台 API 会 401（[openai/codex#34608](https://github.com/openai/codex/issues/34608)）。请使用 API key 模式。
 
 ## Aider
 
@@ -50,7 +53,9 @@ export ANTHROPIC_API_BASE=http://127.0.0.1:8787
 
 ## 已知限制（重要）
 
-- **订阅式 OAuth 登录可能绕过 base URL**：使用 Claude Max / ChatGPT 登录（而非 API key）时，工具是否遵守 base URL **需实测**。API-key 模式是安全路径。
+- **订阅式 OAuth 登录**：
+  - Claude Code（订阅登录）：推理请求遵守 base URL（Anthropic 官方文档已确认；网关须原样转发 `anthropic-beta`）。认证/刷新固定走 `platform.claude.com` 等域名，不经网关。**真人会话实测尚未完成**（流程见 `scripts/oauth-matrix.sh --capture`）——实测前不要把订阅模式写进用户引导。
+  - Codex CLI（ChatGPT 订阅登录）：**V1 不支持**，见上方 Codex 小节；请用 API key。
 - **遥测端点不走 base URL**：部分工具会向 PostHog / Sentry 等发送遥测，含内容较少但需知晓。
 - **不覆盖**：Cursor agent 流量（走 `api2.cursor.sh`）、ChatGPT/Claude 桌面版、浏览器网页版——需系统级方案（见 `../tokenhush-pro/docs/06-roadmap.md` 的 V2/V3）。
 
