@@ -5,6 +5,7 @@
 //
 // The dual-stack loopback listener layer lives in listen.go; the Host
 // allowlist, control-API bearer auth and Origin policy live in guard.go; the
-// per-session control token and browser handshake URL live in token.go.
-// Forwarding and SSE land in later work items.
+// per-session control token and browser handshake URL live in token.go; the
+// upstream forwarder and its redaction seam live in forward.go. The SSE
+// sliding-window parser lands in a later work item.
 package proxy
