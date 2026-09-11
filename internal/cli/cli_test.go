@@ -39,17 +39,15 @@ func TestRun(t *testing.T) {
 			emptyStdout: true,
 		},
 		{
-			name:        "status is a stub",
-			args:        []string{"status"},
+			name:        "status rejects an unknown flag",
+			args:        []string{"status", "--bogus"},
 			wantCode:    ExitUsage,
-			wantStderr:  []string{"not implemented", "usage:"},
 			emptyStdout: true,
 		},
 		{
-			name:        "audit is a stub",
-			args:        []string{"audit"},
+			name:        "audit rejects an unknown flag",
+			args:        []string{"audit", "--bogus"},
 			wantCode:    ExitUsage,
-			wantStderr:  []string{"not implemented", "usage:"},
 			emptyStdout: true,
 		},
 		{
@@ -60,10 +58,10 @@ func TestRun(t *testing.T) {
 			emptyStdout: true,
 		},
 		{
-			name:        "doctor is a stub",
-			args:        []string{"doctor"},
+			name:        "doctor rejects extra arguments",
+			args:        []string{"doctor", "extra"},
 			wantCode:    ExitUsage,
-			wantStderr:  []string{"not implemented", "usage:"},
+			wantStderr:  []string{"usage: tokenhush doctor"},
 			emptyStdout: true,
 		},
 		{
