@@ -1,0 +1,18 @@
+# Extends the built-in rule set; only planted fake secrets under testdata/ and
+# the exact fake literals asserted by tests are exempt. Everything else keeps
+# the full default detection rules.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Planted fake secrets in test fixtures (not real credentials)"
+paths = [
+  '''(^|/)testdata/''',
+]
+
+[[allowlists]]
+description = "Planted fake key literal asserted by walk_test.go (not a real credential)"
+regexTarget = "secret"
+regexes = [
+  '''^sk-test-FAKE_LEAF_[0-9]{3}$''',
+]
