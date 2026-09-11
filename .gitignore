@@ -1,0 +1,45 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+/vendor/
+coverage.out
+*.prof
+*.pprof
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Secrets & local config
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Tokenhush local runtime data
+*.db
+*.sqlite
+*.sqlite3
+/audit.db
+
+# Agent / tooling state
+.omo/
+
+# Build output (any depth; /bin/ above covers the repo root)
+bin/

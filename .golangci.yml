@@ -1,0 +1,23 @@
+# golangci-lint configuration (v1 schema; matches golangci-lint v1.64.x).
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - misspell
+    - revive
+
+linters-settings:
+  revive:
+    rules:
+      # audit.AuditSink / audit.AuditQuerier are mandated seam names (design
+      # doc §8); suppress only the stutter check, keep the exported-comment rule.
+      - name: exported
+        arguments:
+          - disableStutteringCheck
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
