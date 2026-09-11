@@ -14,7 +14,59 @@ import (
 	"time"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/extension"
+	"github.com/fregie/tokenhush/pkg/proxy"
+	"github.com/fregie/tokenhush/pkg/redact"
 )
+
+// blockingInspector is a channel-gated Inspector that does not return until its
+// gate is released. Under a FailClosed failure policy it makes the timeout path
+// deterministic: the inspector can never beat the policy timer, so the policy
+// always fails safe regardless of OS timer resolution.
+type blockingInspector struct {
+	id   string
+	gate chan struct{}
+}
+
+func (b *blockingInspector) ID() string { return b.id }
+
+func (b *blockingInspector) Capabilities() extension.Capabilities {
+	return extension.Capabilities{
+		Phases:      []extension.Phase{extension.RequestContent},
+		ReadContent: true,
+	}
+}
+
+func (b *blockingInspector) Inspect(*extension.Document) ([]extension.Finding, error) {
+	<-b.gate
+	return nil, nil
+}
+
+// deterministicFailClosedPipeline returns a pipeline whose only detector blocks
+// until release is called, so a real (non-racing) policy timeout forces the
+// fail-safe Block on every OS. release also unblocks the abandoned inspector
+// goroutine so it can exit after the test.
+func deterministicFailClosedPipeline(t *testing.T, timeout time.Duration) (*proxy.Pipeline, func()) {
+	t.Helper()
+	insp := &blockingInspector{id: "blocking", gate: make(chan struct{})}
+	reg := extension.NewRegistry()
+	if err := reg.Register(insp); err != nil {
+		t.Fatalf("Register(blocking): %v", err)
+	}
+	engine, err := redact.NewPlaceholderEngine()
+	if err != nil {
+		t.Fatalf("NewPlaceholderEngine: %v", err)
+	}
+	policy := extension.NewPolicy(reg, extension.PolicyConfig{
+		Timeout:  timeout,
+		Failures: map[string]extension.FailurePolicy{"blocking": extension.FailClosed},
+	})
+	pipeline, err := proxy.NewPipeline(proxy.PipelineConfig{Registry: reg, Policy: policy, Engine: engine})
+	if err != nil {
+		t.Fatalf("NewPipeline: %v", err)
+	}
+	return pipeline, func() { close(insp.gate) }
+}
 
 // captureProcessOutput redirects os.Stdout and os.Stderr into one buffer for
 // the duration of a test and returns an idempotent reader/restore function.
@@ -77,13 +129,13 @@ func TestNoPlaintextInLogs(t *testing.T) {
 	secret := runSecret()
 
 	cases := []struct {
-		name          string
-		policyTimeout time.Duration
-		wantStatus    int
-		wantHits      int64
+		name       string
+		failClosed bool
+		wantStatus int
+		wantHits   int64
 	}{
-		{name: "success_path", policyTimeout: 0, wantStatus: http.StatusOK, wantHits: 1},
-		{name: "fail_closed_detector_timeout", policyTimeout: time.Nanosecond, wantStatus: http.StatusForbidden, wantHits: 0},
+		{name: "success_path", wantStatus: http.StatusOK, wantHits: 1},
+		{name: "fail_closed_detector_timeout", failClosed: true, wantStatus: http.StatusForbidden, wantHits: 0},
 	}
 
 	for _, tc := range cases {
@@ -101,16 +153,23 @@ func TestNoPlaintextInLogs(t *testing.T) {
 			getLogs := captureProcessOutput(t)
 			defer getLogs()
 
-			base, _, stop := startTestDaemon(t, &cfg, RunDeps{
-				DataDir:       dataDir,
-				Secrets:       newStubSecrets(),
-				Stdout:        os.Stdout,
-				Stderr:        os.Stderr,
-				PolicyTimeout: tc.policyTimeout,
-			})
+			deps := RunDeps{
+				DataDir: dataDir,
+				Secrets: newStubSecrets(),
+				Stdout:  os.Stdout,
+				Stderr:  os.Stderr,
+			}
+			if tc.failClosed {
+				pipeline, release := deterministicFailClosedPipeline(t, 50*time.Millisecond)
+				defer release()
+				deps.Pipeline = pipeline
+			}
 
-			// A body carrying the secret exercises the detector timeout path; the
-			// 1ns deadline forces the timeout regardless of body size.
+			base, _, stop := startTestDaemon(t, &cfg, deps)
+			defer stop()
+
+			// The body carries the secret so both paths process real content: the
+			// success path redacts it, the fail-closed path blocks before egress.
 			body := fmt.Sprintf(`{"model":"test","messages":[{"role":"user","content":%q}]}`,
 				strings.Repeat("A", 1<<12)+" "+secret)
 			resp := postBody(t, base+"/v1/messages", "application/json", body, nil)

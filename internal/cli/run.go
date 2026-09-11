@@ -97,6 +97,11 @@ type RunDeps struct {
 	// defaultDetectorTimeout. It is the seam the fail-closed test drives to
 	// force a detector timeout deterministically.
 	PolicyTimeout time.Duration
+	// Pipeline overrides the assembled content pipeline. Nil builds it from
+	// cfg, the audit sink and PolicyTimeout. Tests inject a pipeline with a
+	// channel-gated detector so a fail-safe path is forced by the policy
+	// timeout rather than a wall-clock race.
+	Pipeline *proxy.Pipeline
 	// Ready, when set, is called once the daemon is accepting connections and
 	// its session files exist. It is how tests learn the bound ephemeral port.
 	Ready func(RunInfo)
@@ -190,9 +195,12 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		alertAudit(stderr, auditUnavailableAlert, err)
 	}}
 
-	pipeline, err := buildPipeline(loaded, sink, deps.PolicyTimeout)
-	if err != nil {
-		return err
+	pipeline := deps.Pipeline
+	if pipeline == nil {
+		pipeline, err = buildPipeline(loaded, sink, deps.PolicyTimeout)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Bind before writing the token/pid file: a busy port must not leave a
