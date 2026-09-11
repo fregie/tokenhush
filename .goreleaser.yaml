@@ -21,7 +21,10 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      # .Tag (not .Version) keeps the leading "v": the release acceptance
+      # requires `tokenhush version` to print `v0.1.0`. The archive name below
+      # deliberately keeps .Version because install.sh strips the "v" itself.
+      - -s -w -X main.version={{ .Tag }}
     goos:
       - darwin
       - linux
