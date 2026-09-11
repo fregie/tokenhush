@@ -14,8 +14,9 @@ var Version = "0.0.0-dev"
 // Exit codes returned by Run. They follow the common CLI convention where a
 // usage error is distinguishable from a runtime failure.
 const (
-	ExitOK    = 0
-	ExitUsage = 2
+	ExitOK      = 0
+	ExitFailure = 1
+	ExitUsage   = 2
 )
 
 const usage = `tokenhush - local base-URL gateway that redacts secrets before they leave your machine
@@ -33,8 +34,9 @@ usage:
 // name) and returns the process exit code. It writes to stdout/stderr and
 // never calls os.Exit, so callers can test it without spawning a process.
 //
-// Until the individual commands land, every command except version is a stub
-// that fails with ExitUsage and a "not implemented" message.
+// `run` is implemented; `status`, `audit`, `env` and `doctor` are still stubs
+// that fail with ExitUsage and a "not implemented" message until their waves
+// land.
 func Run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
@@ -45,7 +47,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		fmt.Fprintln(stdout, versionLine())
 		return ExitOK
-	case "run", "status", "audit", "env", "doctor":
+	case "run":
+		return runCommand(args[1:], stdout, stderr)
+	case "status", "audit", "env", "doctor":
 		fmt.Fprintf(stderr, "%s: not implemented\n", args[0])
 		fmt.Fprintf(stderr, "usage: tokenhush %s\n", args[0])
 		return ExitUsage

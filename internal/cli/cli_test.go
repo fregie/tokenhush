@@ -7,8 +7,8 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	if ExitOK != 0 || ExitUsage != 2 {
-		t.Fatalf("exit-code contract changed: ExitOK=%d ExitUsage=%d, want 0 and 2", ExitOK, ExitUsage)
+	if ExitOK != 0 || ExitFailure != 1 || ExitUsage != 2 {
+		t.Fatalf("exit-code contract changed: ExitOK=%d ExitFailure=%d ExitUsage=%d, want 0, 1 and 2", ExitOK, ExitFailure, ExitUsage)
 	}
 
 	const testVersion = "1.2.3-test"
@@ -33,10 +33,9 @@ func TestRun(t *testing.T) {
 			emptyStderr: true,
 		},
 		{
-			name:        "run is a stub",
-			args:        []string{"run"},
+			name:        "run rejects an unknown flag",
+			args:        []string{"run", "--bogus"},
 			wantCode:    ExitUsage,
-			wantStderr:  []string{"not implemented", "usage:"},
 			emptyStdout: true,
 		},
 		{
