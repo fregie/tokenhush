@@ -34,12 +34,19 @@ var ErrInvalidUpstream = errors.New("proxy: invalid upstream base URL")
 // forwarded. A nil BodyTransform is the identity transform.
 type BodyTransform func([]byte) ([]byte, error)
 
+// TransformErrorFunc lets a BodyTransform turn its own error into a
+// client-visible response, for example a 403 when the W4.5 content policy
+// blocks a request. It returns true once it has written a response; a false
+// result (or a nil handler) keeps the forwarder's default fail-closed 500.
+type TransformErrorFunc func(w http.ResponseWriter, err error) bool
+
 // ForwardOption configures a Forwarder at construction.
 type ForwardOption func(*forwardOptions)
 
 // forwardOptions collects optional Forwarder settings; zero value = defaults.
 type forwardOptions struct {
-	client *http.Client
+	client           *http.Client
+	transformFailure TransformErrorFunc
 }
 
 // WithHTTPClient replaces the forwarder's default bounded HTTP client. It is
@@ -54,6 +61,17 @@ func WithHTTPClient(client *http.Client) ForwardOption {
 	}
 }
 
+// WithTransformErrorHandler installs a responder for a BodyTransform error. A
+// nil handler is ignored, so the default fail-closed 500 is never accidentally
+// removed. The W4.5 pipeline uses it to answer a policy Block with 403.
+func WithTransformErrorHandler(h TransformErrorFunc) ForwardOption {
+	return func(o *forwardOptions) {
+		if h != nil {
+			o.transformFailure = h
+		}
+	}
+}
+
 // Forwarder forwards requests to a fixed upstream base URL and streams the
 // response back. It is an http.Handler and is safe for concurrent use.
 //
@@ -61,9 +79,10 @@ func WithHTTPClient(client *http.Client) ForwardOption {
 // ordinary end-to-end headers here: they are copied byte-for-byte and never
 // parsed, stored or rewritten (docs/13 §4.1).
 type Forwarder struct {
-	base      *url.URL
-	client    *http.Client
-	transform BodyTransform
+	base             *url.URL
+	client           *http.Client
+	transform        BodyTransform
+	transformFailure TransformErrorFunc
 }
 
 // Forwarder serves HTTP; the assertion keeps the handler contract explicit.
@@ -89,7 +108,7 @@ func NewForwarder(baseURL string, transform BodyTransform, opts ...ForwardOption
 	if cfg.client == nil {
 		cfg.client = defaultForwardClient()
 	}
-	return &Forwarder{base: base, client: cfg.client, transform: transform}, nil
+	return &Forwarder{base: base, client: cfg.client, transform: transform, transformFailure: cfg.transformFailure}, nil
 }
 
 // parseUpstream validates and canonicalises an upstream base URL.
@@ -131,6 +150,9 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.transform != nil {
 		transformed, err := f.transform(body)
 		if err != nil {
+			if f.transformFailure != nil && f.transformFailure(w, err) {
+				return
+			}
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
