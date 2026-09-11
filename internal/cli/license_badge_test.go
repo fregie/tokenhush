@@ -94,10 +94,21 @@ func TestStatusProBadge(t *testing.T) {
 		if strings.Contains(stderr, license.Badge) {
 			t.Fatalf("stderr = %q, want no badge there", stderr)
 		}
-		// The badge is display-only: status stays the pre-W6.3 stub, so a
-		// valid license changes no command behavior beyond the badge line.
-		if !strings.Contains(stderr, "not implemented") || code != ExitUsage {
-			t.Fatalf("valid license changed the stub contract: code=%d stderr=%q", code, stderr)
+		// Display-only proof: with the license file gone, the status view must
+		// be byte-identical apart from the badge line, and the exit code must
+		// not change. Any other difference would mean the license gated code.
+		if err := os.Remove(licensePath); err != nil {
+			t.Fatalf("remove license: %v", err)
+		}
+		plainStdout, plainStderr, plainCode := status(t)
+		if code != plainCode {
+			t.Fatalf("license changed the status exit code: with=%d without=%d", code, plainCode)
+		}
+		if basis := strings.Replace(stdout, license.Badge+"\n", "", 1); basis != plainStdout {
+			t.Fatalf("license changed status output beyond the badge:\nwith=%q\nwithout=%q", stdout, plainStdout)
+		}
+		if stderr != plainStderr {
+			t.Fatalf("license changed status stderr: with=%q without=%q", stderr, plainStderr)
 		}
 	})
 
