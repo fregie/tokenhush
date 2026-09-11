@@ -2,10 +2,10 @@ package platform
 
 import "errors"
 
-// ErrSecretNotFound is returned by the low-level keyring primitives when the
-// requested entry does not exist in the OS keyring. W2.2 surfaces it through
-// SecretStore.Get.
-var ErrSecretNotFound = errors.New("secret not found in OS keyring")
+// ErrSecretNotFound is the W2.0 low-level name, kept as an alias of ErrNotFound
+// (docs/13 §3.2) so existing keyring code and errors.Is(err, ErrNotFound)
+// callers share a single sentinel.
+var ErrSecretNotFound = ErrNotFound
 
 // errSecretTooBig is returned when the value (plus service/account metadata)
 // exceeds a native backend's hard limit: the macOS `security -i` line is
