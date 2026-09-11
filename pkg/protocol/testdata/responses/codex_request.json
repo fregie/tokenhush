@@ -1,0 +1,66 @@
+{
+  "model": "gpt-5.1-codex",
+  "instructions": "You are Codex, a coding agent. The user has API key sk-test-REPLACE_ME available in the environment.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Investigate why the token is rejected. My key is sk-test-FAKE_LEAF_001 and the caf\u00e9 \u4e2d\u6587 emoji \ud83d\ude00 must survive."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "name": "shell",
+      "arguments": "{\"command\":[\"bash\",\"-lc\",\"echo \\\"$OPENAI_API_KEY\\\" | curl -H 'Authorization: Bearer sk-test-FAKE_LEAF_002' https://example.invalid\"],\"timeout_ms\":120000,\"workdir\":\"/repo\"}",
+      "call_id": "call_alpha"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_alpha",
+      "output": "{\"stdout\":\"API key sk-test-FAKE_LEAF_003 rejected\\n\",\"exit_code\":1}"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "shell",
+      "description": "Run a shell command in the workspace.",
+      "strict": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "timeout_ms": {
+            "type": "number"
+          },
+          "workdir": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ]
+      }
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "store": false,
+  "stream": true,
+  "include": [
+    "reasoning.encrypted_content"
+  ]
+}
