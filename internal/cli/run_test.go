@@ -187,9 +187,9 @@ func TestRunServerEndToEnd(t *testing.T) {
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 
-	sink := &recordingSink{}
+	secrets := newStubSecrets()
 	dataDir := t.TempDir()
-	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir, Sink: sink})
+	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir, Secrets: secrets})
 
 	secret := runSecret()
 	body := fmt.Sprintf(`{"model":"test","messages":[{"role":"user","content":%q}]}`, secret)
@@ -212,9 +212,41 @@ func TestRunServerEndToEnd(t *testing.T) {
 		t.Fatalf("upstream body %q has no placeholder", upstreamBody)
 	}
 
-	// Startup audit row reached the injected sink.
-	if !containsString(sink.paths(), "start") {
-		t.Errorf("startup audit row missing; got paths %v", sink.paths())
+	// GET /audit with the session token: the real store serves the daemon
+	// lifecycle rows plus one metadata-only row per proxied request.
+	auditResp := doGet(t, base+"/audit", token, "")
+	if auditResp.StatusCode != http.StatusOK {
+		t.Fatalf("audit code = %d, want 200", auditResp.StatusCode)
+	}
+	rawAudit, err := io.ReadAll(auditResp.Body)
+	if err != nil {
+		t.Fatalf("read audit body: %v", err)
+	}
+	if bytes.Contains(rawAudit, []byte(secret)) {
+		t.Fatalf("audit output leaked the request secret: %s", rawAudit)
+	}
+	var records []audit.Record
+	if err := json.Unmarshal(rawAudit, &records); err != nil {
+		t.Fatalf("decode audit rows: %v", err)
+	}
+	if findAuditRecord(records, "daemon", "start") == nil {
+		t.Errorf("startup audit row missing; got %+v", records)
+	}
+	requestRow := findAuditRecord(records, "anthropic", "/v1/messages")
+	if requestRow == nil {
+		t.Fatalf("per-request audit row missing; got %+v", records)
+	}
+	if requestRow.Method != http.MethodPost || requestRow.Status != http.StatusOK {
+		t.Errorf("request row = %s/%d, want POST/200", requestRow.Method, requestRow.Status)
+	}
+	if requestRow.ReqBytes <= 0 || requestRow.RespBytes <= 0 {
+		t.Errorf("request row bytes = %d/%d, want both positive", requestRow.ReqBytes, requestRow.RespBytes)
+	}
+	if requestRow.Redactions < 1 {
+		t.Errorf("request row redactions = %d, want >= 1", requestRow.Redactions)
+	}
+	if len(requestRow.Detectors) == 0 {
+		t.Errorf("request row detectors = %v, want at least one detector id", requestRow.Detectors)
 	}
 
 	// GET /status with the session token.
@@ -256,7 +288,7 @@ func TestRunServerControlGuards(t *testing.T) {
 	cfg.Listen.Host = "127.0.0.1"
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
-	base, token, stop := startTestDaemon(t, &cfg, RunDeps{})
+	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), Secrets: newStubSecrets()})
 	defer stop()
 
 	if got := doGet(t, base+"/status", "", "").StatusCode; got != http.StatusUnauthorized {
@@ -285,7 +317,7 @@ func TestRunServerPortInUse(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = RunServer(ctx, &cfg, RunDeps{DataDir: dataDir})
+	err = RunServer(ctx, &cfg, RunDeps{DataDir: dataDir, Secrets: newStubSecrets()})
 	if !errors.Is(err, proxy.ErrAddrInUse) {
 		t.Fatalf("RunServer error = %v, want ErrAddrInUse", err)
 	}
@@ -314,7 +346,7 @@ func TestRunServerFailClosedOnDetectorTimeout(t *testing.T) {
 			cfg.Listen.Host = "127.0.0.1"
 			cfg.Listen.Port = 0
 			cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
-			base, _, stop := startTestDaemon(t, &cfg, RunDeps{PolicyTimeout: tt.timeout})
+			base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), Secrets: newStubSecrets(), PolicyTimeout: tt.timeout})
 			defer stop()
 
 			secret := runSecret()

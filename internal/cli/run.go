@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -37,11 +38,32 @@ const (
 )
 
 // Audit metadata stamped on the daemon's own lifecycle rows. Value rows carry
-// no content; the real store is wired in W5.3.
+// no content; the store is the real pkg/audit SQLite + HMAC chain.
 const (
 	auditProviderDaemon = "daemon"
 	auditMethodRun      = "run"
+
+	// auditDBFileName is the audit database opened below the data directory.
+	auditDBFileName = "audit.db"
+
+	// auditTamperAlert and auditUnavailableAlert are the stable, greppable
+	// fail-safe markers printed before the daemon refuses to serve audit data.
+	// A healthy store never emits either marker.
+	auditTamperAlert      = "tokenhush: AUDIT TAMPER DETECTED"
+	auditUnavailableAlert = "tokenhush: AUDIT STORE UNAVAILABLE"
 )
+
+// AuditStore is the real audit backend the daemon needs: it appends metadata
+// rows (AuditSink), reads them back (AuditQuerier), authenticates its own hash
+// chain (Verify), and releases its resources (Close). *audit.Store implements
+// it. The daemon verifies it on startup and on every GET /audit, and closes it
+// on shutdown.
+type AuditStore interface {
+	audit.AuditSink
+	audit.AuditQuerier
+	Verify() error
+	Close() error
+}
 
 // RunDeps carries the injectable seams of RunServer. The zero value is the
 // production configuration: platform config/data directories, no-op audit
@@ -50,17 +72,26 @@ type RunDeps struct {
 	// ConfigPath is loaded only when cfg is nil: an explicit tokenhush.yaml
 	// path, or the platform default when empty.
 	ConfigPath string
-	// DataDir overrides platform.DataDir(); it holds the control token and the
-	// pid/port file. Empty means the platform data directory.
+	// DataDir overrides platform.DataDir(); it holds the control token, the
+	// pid/port file and the audit database. Empty means the platform data
+	// directory.
 	DataDir string
-	// Sink receives metadata-only audit rows (lifecycle events, policy warnings
-	// and unknown-path rejections). Nil means audit.NoopSink{}.
+	// Secrets overrides platform.OpenSecretStore() when the daemon opens the
+	// default audit store. Nil selects the platform keyring/file chain; tests
+	// inject an in-memory store for deterministic audit keys.
+	Secrets platform.SecretStore
+	// Sink overrides the audit append target. Nil uses the real store (or
+	// audit.NoopSink{} when Querier is also set without a store). It exists for
+	// tests that observe lifecycle and request rows without a real store.
 	Sink audit.AuditSink
-	// Querier backs the control API GET /audit. Nil means audit.NoopQuerier{}.
+	// Querier overrides the audit read target. Nil uses the real store (or
+	// audit.NoopQuerier{} when Sink is also set without a store). A real store
+	// is re-verified before every read.
 	Querier audit.AuditQuerier
 	// Stdout receives the human-facing startup lines. Nil discards them.
 	Stdout io.Writer
-	// Stderr is reserved for diagnostics. Nil discards them.
+	// Stderr receives fail-safe alerts and diagnostics. Nil uses os.Stderr so a
+	// tamper or store-unavailable alert is never silently dropped.
 	Stderr io.Writer
 	// PolicyTimeout bounds one content-detector invocation. Zero uses
 	// defaultDetectorTimeout. It is the seam the fail-closed test drives to
@@ -87,9 +118,12 @@ type RunInfo struct {
 // control plane behind Host/Origin/bearer guards and the data plane behind the
 // Host allowlist alone -> block until ctx is done, then shut down gracefully.
 //
-// A nil cfg is loaded from deps.ConfigPath (or the platform default). The
-// returned error wraps pkg/proxy's typed listener errors (for example
-// ErrAddrInUse), so callers can classify with errors.Is.
+// A nil cfg is loaded from deps.ConfigPath (or the platform default). Before
+// anything is served, the audit store is opened (unless a test injects a Sink
+// or Querier) and its HMAC chain verified: a tampered store aborts startup with
+// an error wrapping audit.ErrTampered and a loud alert. The returned error also
+// wraps pkg/proxy's typed listener errors (for example ErrAddrInUse), so
+// callers can classify with errors.Is.
 func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -97,6 +131,10 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	stdout := deps.Stdout
 	if stdout == nil {
 		stdout = io.Discard
+	}
+	stderr := deps.Stderr
+	if stderr == nil {
+		stderr = os.Stderr
 	}
 
 	loaded, err := resolveConfig(cfg, deps.ConfigPath)
@@ -110,14 +148,47 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 			return err
 		}
 	}
+
+	var store AuditStore
+	if deps.Sink == nil && deps.Querier == nil {
+		store, err = openAuditStore(dataDir, deps.Secrets)
+		if err != nil {
+			alertAudit(stderr, auditUnavailableAlert, err)
+			return err
+		}
+	}
+	if store != nil {
+		defer func() { _ = store.Close() }()
+		if err := store.Verify(); err != nil {
+			alertAudit(stderr, auditTamperAlert, err)
+			return fmt.Errorf("run: verify audit store: %w", err)
+		}
+	}
+
 	sink := deps.Sink
+	querier := deps.Querier
+	if store != nil {
+		if sink == nil {
+			sink = store
+		}
+		if querier == nil {
+			querier = store
+		}
+	}
 	if sink == nil {
 		sink = audit.NoopSink{}
 	}
-	querier := deps.Querier
 	if querier == nil {
 		querier = audit.NoopQuerier{}
 	}
+	if store != nil && deps.Querier == nil {
+		querier = verifyingQuerier{store: store, alert: func(err error) {
+			alertAudit(stderr, auditTamperAlert, err)
+		}}
+	}
+	sink = alertingSink{inner: sink, alert: func(err error) {
+		alertAudit(stderr, auditUnavailableAlert, err)
+	}}
 
 	pipeline, err := buildPipeline(loaded, sink, deps.PolicyTimeout)
 	if err != nil {
@@ -155,6 +226,7 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	daemon := &daemon{
 		pipeline:  pipeline,
 		plane:     newDataPlane(resolver, pipeline),
+		sink:      sink,
 		querier:   querier,
 		token:     token,
 		startedAt: time.Now(),
@@ -230,6 +302,7 @@ func serveUntilDone(ctx context.Context, srv *http.Server, ls *proxy.Listeners) 
 type daemon struct {
 	pipeline  *proxy.Pipeline
 	plane     *dataPlane
+	sink      audit.AuditSink
 	querier   audit.AuditQuerier
 	token     string
 	startedAt time.Time
@@ -248,7 +321,7 @@ func (d *daemon) handler(port int) http.Handler {
 	control := proxy.NewControlAPI(d.status, d.querier)
 	guardedControl := proxy.HostAllowlist(port)(
 		proxy.OriginPolicy(proxy.ControlAuth(func() string { return d.token })(control)))
-	dataPlane := proxy.HostAllowlist(port)(d.pipeline.ResponseMiddleware(d.plane))
+	dataPlane := proxy.HostAllowlist(port)(d.auditRequests(d.pipeline.ResponseMiddleware(d.plane)))
 
 	mux := http.NewServeMux()
 	for _, path := range []string{controlStatusPath, controlAuditPath} {
@@ -257,6 +330,168 @@ func (d *daemon) handler(port int) http.Handler {
 	}
 	mux.Handle("/", dataPlane)
 	return mux
+}
+
+// auditRequests wraps the data plane so one metadata-only audit row is written
+// per proxied response. It sits outside the response pipeline, so the status
+// and byte counts it observes are the ones the client actually received (a
+// response-pipeline rewrite or block is reflected). The per-request stats are
+// threaded through the request context for the data plane to fill in.
+func (d *daemon) auditRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stats := &requestStats{path: r.URL.Path, method: r.Method}
+		ctx := context.WithValue(r.Context(), requestStatsKey{}, stats)
+		aw := &auditResponseWriter{ResponseWriter: w}
+		next.ServeHTTP(aw, r.WithContext(ctx))
+		status := aw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		d.recordRequest(stats, status, aw.bytes)
+	})
+}
+
+// recordRequest commits one metadata-only row for a request the data plane
+// successfully resolved. An unresolved path is already recorded by the
+// resolver's own rejection row, so it is skipped here to avoid a duplicate.
+func (d *daemon) recordRequest(stats *requestStats, status, respBytes int) {
+	if stats == nil || !stats.proxied {
+		return
+	}
+	_ = d.sink.Record(audit.Record{
+		TS:         time.Now().UnixMilli(),
+		Provider:   stats.provider,
+		Path:       stats.path,
+		Method:     stats.method,
+		Status:     status,
+		ReqBytes:   int64(stats.reqBytes),
+		RespBytes:  int64(respBytes),
+		Redactions: stats.redactions,
+		Detectors:  stats.detectors,
+	})
+}
+
+// requestStats is the per-request audit state the data plane fills in and the
+// audit middleware reads after the response completes. It is never shared
+// across requests.
+type requestStats struct {
+	provider   string
+	path       string
+	method     string
+	reqBytes   int
+	redactions int
+	detectors  []string
+	proxied    bool
+}
+
+// requestStatsKey is the context key for the per-request stats. The unexported
+// zero-size struct prevents collisions with other packages' keys.
+type requestStatsKey struct{}
+
+// requestStatsFrom returns the request's audit stats, or nil outside the audit
+// middleware (for example a direct data-plane test).
+func requestStatsFrom(ctx context.Context) *requestStats {
+	stats, _ := ctx.Value(requestStatsKey{}).(*requestStats)
+	return stats
+}
+
+// auditResponseWriter records the final status and body byte count of a
+// response. It forwards Flush so SSE streaming is unaffected.
+type auditResponseWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+// WriteHeader records the first status the handler commits.
+func (w *auditResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+// Write records the status an implicit 200 and accumulates body bytes.
+func (w *auditResponseWriter) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(p)
+	w.bytes += n
+	return n, err
+}
+
+// Flush forwards a flush to the wrapped writer when it supports one.
+func (w *auditResponseWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// verifyingQuerier authenticates the audit chain before every read. A
+// verification failure alerts loudly and is returned to the control API, which
+// answers 500 rather than serving an unverified row.
+type verifyingQuerier struct {
+	store AuditStore
+	alert func(error)
+}
+
+// Query implements audit.AuditQuerier: Verify first, then read.
+func (q verifyingQuerier) Query(ctx context.Context, query audit.Query) ([]audit.Record, error) {
+	if err := q.store.Verify(); err != nil {
+		if q.alert != nil {
+			q.alert(err)
+		}
+		return nil, err
+	}
+	return q.store.Query(ctx, query)
+}
+
+// alertingSink reports any append failure through alert, so a dropped audit row
+// is never silent. The failure is also returned to the caller.
+type alertingSink struct {
+	inner audit.AuditSink
+	alert func(error)
+}
+
+// Record implements audit.AuditSink.
+func (s alertingSink) Record(rec audit.Record) error {
+	err := s.inner.Record(rec)
+	if err != nil && s.alert != nil {
+		s.alert(err)
+	}
+	return err
+}
+
+var (
+	_ audit.AuditQuerier = verifyingQuerier{}
+	_ audit.AuditSink    = alertingSink{}
+)
+
+// openAuditStore opens the real pkg/audit store at <dataDir>/audit.db, selecting
+// the platform secret store unless one was injected.
+func openAuditStore(dataDir string, secrets platform.SecretStore) (AuditStore, error) {
+	if secrets == nil {
+		selected, err := platform.OpenSecretStore()
+		if err != nil {
+			return nil, err
+		}
+		secrets = selected
+	}
+	return audit.OpenStore(audit.StoreConfig{
+		Path:    filepath.Join(dataDir, auditDBFileName),
+		Secrets: secrets,
+	})
+}
+
+// alertAudit prints the loud fail-safe alert. It never lets a caller continue
+// silently: every invocation aborts startup or answers the control request 500.
+func alertAudit(stderr io.Writer, marker string, err error) {
+	if stderr == nil {
+		stderr = os.Stderr
+	}
+	fmt.Fprintf(stderr, "%s: %v\n", marker, err)
+	fmt.Fprintln(stderr, "tokenhush: audit fail-safe engaged: refusing to serve audit data")
 }
 
 // status is the live snapshot GET /status serializes. Counters are session
