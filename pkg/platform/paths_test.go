@@ -405,6 +405,10 @@ func TestPathsNeverCwdOrExecutableDir(t *testing.T) {
 // TestPathsReadOnlyInstallPrefix simulates a read-only install prefix (e.g. a
 // Homebrew keg or an MSI Program Files directory): resolution must not return
 // any path inside it, and an explicit override into it must be refused.
+//
+// The prefix comes from t.TempDir() and is therefore host-native, so this test
+// resolves with runtime.GOOS: the executable-dir guard must see containment
+// with the host's own separators, on Windows included.
 func TestPathsReadOnlyInstallPrefix(t *testing.T) {
 	prefix := t.TempDir()
 	if err := os.Chmod(prefix, 0o555); err != nil {
@@ -412,14 +416,14 @@ func TestPathsReadOnlyInstallPrefix(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(prefix, 0o755) })
 
-	cfg, data, err := pathsFor("linux", stubEnv(nil), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
+	cfg, data, err := pathsFor(runtime.GOOS, stubEnv(nil), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
 	if err != nil {
 		t.Fatalf("pathsFor() with read-only exec dir: %v", err)
 	}
-	if sameOrInside("linux", prefix, cfg) {
+	if sameOrInside(runtime.GOOS, prefix, cfg) {
 		t.Errorf("ConfigDir = %q is inside the read-only install prefix %q", cfg, prefix)
 	}
-	if sameOrInside("linux", prefix, data) {
+	if sameOrInside(runtime.GOOS, prefix, data) {
 		t.Errorf("DataDir = %q is inside the read-only install prefix %q", data, prefix)
 	}
 
@@ -434,8 +438,10 @@ func TestPathsReadOnlyInstallPrefix(t *testing.T) {
 		}
 	}
 
-	// An override aimed straight at the read-only prefix is refused.
-	_, _, err = pathsFor("linux", stubEnv(map[string]string{homeEnvVar: filepath.Join(prefix, "data")}), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
+	// An override aimed straight at the read-only prefix is refused. The
+	// override is built with filepath.Join, i.e. host-native separators, so
+	// runtime.GOOS is the only goos whose guard can see the containment.
+	_, _, err = pathsFor(runtime.GOOS, stubEnv(map[string]string{homeEnvVar: filepath.Join(prefix, "data")}), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
 	if !errors.Is(err, ErrPathInExecDir) {
 		t.Fatalf("pathsFor(override inside read-only prefix) error = %v, want ErrPathInExecDir", err)
 	}
@@ -446,6 +452,84 @@ func TestPathsReadOnlyInstallPrefix(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("install prefix %q gained %d entries; path resolution must not write", prefix, len(entries))
+	}
+}
+
+// TestPathsExecDirGuardSeparators locks the separator robustness of the
+// executable-dir guard, the defect that made windows-latest red: a host-native
+// prefix joined with filepath.Join produced backslashes while the simulated
+// goos was "linux", so sameOrInside found no containment. Simulated-GOOS
+// callers must keep paths and goos consistent; mixed-separator inputs must
+// still be refused on Windows, and a backslash must never be treated as a
+// separator on POSIX (where it is a legal filename byte).
+func TestPathsExecDirGuardSeparators(t *testing.T) {
+	// The exact shape CI executes on Windows: a host-native prefix (t.TempDir)
+	// joined with filepath.Join must be refused on whichever OS runs the suite.
+	t.Run("host_native_paths", func(t *testing.T) {
+		prefix := t.TempDir()
+		_, _, err := pathsFor(runtime.GOOS, stubEnv(map[string]string{homeEnvVar: filepath.Join(prefix, "data")}), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(prefix))
+		if !errors.Is(err, ErrPathInExecDir) {
+			t.Fatalf("host-native override inside %q was not refused: %v", prefix, err)
+		}
+	})
+
+	tests := []struct {
+		name        string
+		goos        string
+		override    string
+		execDir     string
+		wantRefused bool
+	}{
+		{
+			name:        "windows_backslash_paths",
+			goos:        "windows",
+			override:    `C:\Program Files\tokenhush\data`,
+			execDir:     `C:\Program Files\tokenhush`,
+			wantRefused: true,
+		},
+		{
+			name:        "windows_mixed_separators",
+			goos:        "windows",
+			override:    `C:/Program Files\tokenhush/data`,
+			execDir:     `C:\Program Files\tokenhush`,
+			wantRefused: true,
+		},
+		{
+			name:        "windows_mixed_trailing_separators",
+			goos:        "windows",
+			override:    `C:\Program Files/tokenhush\data\`,
+			execDir:     `C:/Program Files/tokenhush/`,
+			wantRefused: true,
+		},
+		{
+			name:        "windows_override_equals_exec_dir",
+			goos:        "windows",
+			override:    `C:\Program Files\Tokenhush`,
+			execDir:     `C:\Program Files\tokenhush`,
+			wantRefused: true,
+		},
+		{
+			name:        "windows_sibling_not_refused",
+			goos:        "windows",
+			override:    `C:\Program Files\tokenhush-portable`,
+			execDir:     `C:\Program Files\tokenhush`,
+			wantRefused: false,
+		},
+		{
+			name:        "posix_backslash_is_not_a_separator",
+			goos:        "linux",
+			override:    `/opt/tokenhush\data`,
+			execDir:     `/opt/tokenhush`,
+			wantRefused: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := pathsFor(tc.goos, stubEnv(map[string]string{homeEnvVar: tc.override}), stubDir(testLinuxConfigBase), stubDir(testLinuxHome), stubDir(tc.execDir))
+			if refused := errors.Is(err, ErrPathInExecDir); refused != tc.wantRefused {
+				t.Fatalf("pathsFor(goos=%q, override=%q, execDir=%q) error = %v, want refused=%v", tc.goos, tc.override, tc.execDir, err, tc.wantRefused)
+			}
+		})
 	}
 }
 
