@@ -1,6 +1,6 @@
 # Security Model — tokenhush (public core)
 
-> 状态：设计稿（2026-09）。
+> 状态：V1 已实现（2026-09）。硬不变量由 `pkg/*` 的具名测试锁定（见 §2 与 `docs/architecture.md`）。
 
 Tokenhush 本身是一个安全工具，因此**它自己必须先安全**。本文定义威胁模型与不可违反的不变量。
 
@@ -9,7 +9,7 @@ Tokenhush 本身是一个安全工具，因此**它自己必须先安全**。本
 | 威胁 | 说明 | 缓解 |
 |---|---|---|
 | **Prompt injection → 外泄** | 攻击者诱导模型吐出占位符，若网关在出站方向回填则泄露 | **硬不变量：绝不出站回填**（见 §2） |
-| **本地恶意进程/网页访问网关** | 任意本地进程或浏览器网页可 `fetch` `127.0.0.1:8787` | 双栈 loopback（127.0.0.1 + [::1]）；校验 `Host` 头；透传模式下需客户端自带 key；若支持 key 注入则必须加 gateway token + Origin 校验 |
+| **本地恶意进程/网页访问网关** | 任意本地进程或浏览器网页可 `fetch` `127.0.0.1:8787` | 双栈 loopback（127.0.0.1 + [::1]）；校验 `Host` 头；控制面另需每次 `run` 随机生成、`0600` 落盘的 bearer token，并对携带 `Origin` 的请求做同源校验 |
 | **DNS rebinding** | 恶意域解析到 127.0.0.1 绕过同源 | 校验 `Host`/`Origin` 头 |
 | **占位符碰撞** | 两个 secret 映射到同一占位符 → 错误回填 | HMAC 确定性映射 + 高熵后缀 |
 | **审计日志被篡改** | 事后篡改日志掩盖泄露 | append-only + HMAC 哈希链（key 存 Keychain/系统密钥环） |
@@ -43,7 +43,7 @@ V1 策略：**高精确率优先的确定性检测器**（前缀、高熵、JWT�
 
 - **V1：透传**。工具自带 provider key，网关只转发、**不存储**。
 - 多账号/路由（Pro）需要存储 key 时，经跨平台密钥环抽象（macOS Keychain / Windows Credential Manager / Linux Secret Service + 降级链，见 `../../tokenhush-pro/docs/13-v1-technical-design.md`），并引入 gateway token + Origin 校验防 CSRF。
-- **诚实降级**：无系统密钥环时降级到受限文件存储（0600），必须由 `tokenhush doctor` 显式告警，不得静默。
+- **诚实降级**：无系统密钥环时降级到受限文件存储（0600），并通过 secret store 的 `Backend()` **显式报告**，不得静默。
 
 ## 6. 发布与供应链
 

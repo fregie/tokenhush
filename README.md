@@ -20,32 +20,86 @@ Tokenhush 给这类工具加一道**本地关卡**：看得见、管得住、不
                           └──▶ 本地审计日志（默认仅元数据）
 ```
 
-- **出站请求**：检测 → 占位符替换（如 `__PII_email_3f9a2b__`）→ 转发上游
+- **出站请求**：检测 → 占位符替换（如 `__PII_email_9f2c8a4b6d1e__`）→ 转发上游
 - **入站响应**：占位符 → 原文回填（**仅回客户端**）
 - **硬不变量**：绝不向出站方向回填占位符（防 prompt injection 诱导外泄）
 
-## 覆盖范围（V1 规划）
+## 支持的工具
 
-**平台**：Windows / Linux / macOS（跨平台）。
+**平台**：Windows / Linux / macOS（同一份纯 Go 代码，`CGO_ENABLED=0`）。
 
 | 工具 | 接入方式 | 状态 |
 |---|---|---|
-| Claude Code CLI | `ANTHROPIC_BASE_URL` | 规划 |
-| Codex CLI | `~/.codex/config.toml` → `base_url` | 规划 |
-| Aider | `OPENAI_API_BASE` / `ANTHROPIC_API_BASE` | 规划 |
-| Cline / Roo Code | 设置内 Base URL | 规划 |
-| Continue | `config.json` → `apiBase` | 规划 |
-| Open WebUI | OpenAI 连接 Base URL | 规划 |
+| Claude Code CLI | `ANTHROPIC_BASE_URL` | 已支持 |
+| Codex CLI | `~/.codex/config.toml` → `base_url` | 已支持（API key 模式） |
+| Aider | `OPENAI_API_BASE` / `ANTHROPIC_API_BASE` | 已支持 |
+| Cline / Roo Code | 设置内 Base URL | 已支持 |
+| Continue | `config.json` → `apiBase` | 手动配置 |
+| Open WebUI | OpenAI 连接 Base URL | 手动配置 |
 
-**不覆盖（V1 明确排除）**：Cursor 的 agent 流量、ChatGPT/Claude 桌面应用、浏览器网页版——这些需要系统级 MITM，属于后续阶段（见路线图）。
+`tokenhush env <tool>` 可直接打印 claude / codex / aider / cline / roo 的可复制片段。完整的接入说明见 [docs/configuration.md](docs/configuration.md)。
 
-## 安装（规划中）
+**不覆盖（V1 明确排除）**：Cursor 的 agent 流量、ChatGPT/Claude 桌面应用、浏览器网页版——这些需要系统级 MITM，不在本仓库实现。
 
-> ⚠️ 项目处于**设计定稿 / 待实现阶段**。预期安装方式：
-> - Homebrew（mac/Linux）：`brew install tokenhush`
-> - Scoop（Windows）：`scoop install tokenhush`
-> - 安装脚本：`curl -fsSL https://…/install.sh | sh`
-> - 包管理器 wrapper 延后（V1 不分发；见私有仓库 `tokenhush-pro` 的 `docs/13-v1-technical-design.md`）
+## 安装
+
+### 从源码构建（当前可用）
+
+需要 Go 1.25 或更高版本。
+
+```bash
+go install github.com/fregie/tokenhush/cmd/tokenhush@latest
+# 或在仓库内构建：
+go build -o bin/tokenhush ./cmd/tokenhush
+```
+
+### 发行版安装包
+
+打上 `v0.1.0` 标签后，发布流水线产出 Homebrew cask、Scoop manifest 与 `curl|sh` 脚本：
+
+| 平台 | 命令 |
+|---|---|
+| macOS | `brew install --cask fregie/tap/tokenhush` |
+| Linux | `curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh \| bash` |
+| Windows | `scoop bucket add fregie https://github.com/fregie/scoop-bucket && scoop install tokenhush` |
+
+每个 release 附带 `checksums.txt`（sha256）与 SBOM（SPDX JSON）。`install.sh` 会下载对应 OS/arch 的归档、校验 sha256 后再安装（默认装到 `~/.local/bin`，支持 `--dry-run`）。
+
+> 在 `v0.1.0` 发布之前，请使用上面的**源码构建**方式；仓库中的 `main` 即 V1 实现。
+
+#### macOS：Gatekeeper
+
+发布二进制未做 Apple notarization。首次运行若被拦截：
+
+- 右键（或 Control-点击）二进制 → **Open** → 在弹窗中再次确认 **Open**；或
+- 清除隔离属性：`xattr -dr com.apple.quarantine "$(command -v tokenhush)"`
+
+#### Windows：SmartScreen
+
+手动下载 `.zip`、解压并首次运行 `tokenhush.exe` 时，SmartScreen 可能提示 “Windows protected your PC”：点击 **More info** → **Run anyway**。通过 Scoop 安装不会触发该提示。
+
+## 快速开始
+
+```bash
+# 1. 启动网关（前台；默认监听 127.0.0.1:8787）
+tokenhush run
+
+# 2. 另开一个终端，把 Claude Code 指向网关
+eval "$(tokenhush env claude)"
+claude
+```
+
+## CLI
+
+```text
+<!-- check-docs:commands:start -->
+    tokenhush run         启动网关（前台，Ctrl-C 退出）
+    tokenhush version     打印版本与构建信息
+    tokenhush env <tool>  打印工具接入片段（claude/codex/aider/cline/roo）
+<!-- check-docs:commands:end -->
+```
+
+daemon 的控制面 API（`GET /status`、`GET /audit`）已就绪，需 `run` 启动时生成的 bearer token。
 
 ## 文档
 
@@ -53,16 +107,17 @@ Tokenhush 给这类工具加一道**本地关卡**：看得见、管得住、不
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | 核心架构、数据流、模块划分 |
 | [docs/extension-api.md](docs/extension-api.md) | 扩展点接口（Router / CostSink / AuditExporter） |
-| [docs/configuration.md](docs/configuration.md) | 各 AI 工具的接入配置 |
+| [docs/plugins.md](docs/plugins.md) | 编写内容插件（Inspector / Transformer） |
+| [docs/configuration.md](docs/configuration.md) | 各 AI 工具的接入配置 + `tokenhush.yaml` 参考 |
 | [docs/security.md](docs/security.md) | 安全模型、威胁模型、硬不变量 |
 
 ## 项目角色
 
-这是**公开核心仓库**（Apache-2.0）。Pro / 企业功能在私有仓库 `tokenhush-pro` 中实现，通过导入本核心的 Go module 构建付费二进制——**Pro 代码不会进入本仓库**。见 [docs/architecture.md](docs/architecture.md) 的「Open-core 边界」。
+这是**公开核心仓库**（Apache-2.0）。Pro / 企业功能在私有仓库中实现，通过导入本核心的 Go module 构建付费二进制——**Pro 代码不会进入本仓库**。见 [docs/architecture.md](docs/architecture.md) 的「Open-core 边界」。
 
 ## 状态
 
-**设计定稿 / 待实现（2026-09）**。请勿用于生产。当前进入 V1 生产编码（跨三平台）；验证改为开发期非阻塞并行（见 `tokenhush-pro` 的 `docs/decisions/0005-skip-gate1-direct-v1.md`）。
+V1 核心已实现并通过测试：`tokenhush run`（前台网关 + 双栈 loopback）、`tokenhush version`、`tokenhush env <tool>`，以及本地审计（SQLite + HMAC 链）。纯 Go，`CGO_ENABLED=0`，CI 在 Linux / macOS / Windows 三平台运行单元测试与端到端 smoke test。
 
 ## 许可
 

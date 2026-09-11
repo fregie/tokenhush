@@ -1,6 +1,6 @@
 # Extension API — tokenhush (public core)
 
-> 状态：设计稿（2026-09）。接口签名可能调整。
+> 状态：V1 已实现（2026-09）。接口以 `pkg/extension` 与 `pkg/proxy` 的真实装配为准；面向插件作者的实操指南见 [plugins.md](plugins.md)。
 
 ## 目的
 
@@ -135,18 +135,14 @@ func main() {
     _ = reg.Register(pro.NewCredentialInspector()) // Inspector（内容插件）
     _ = reg.Register(pro.NewSemanticTransformer()) // Transformer（仅 response/metadata）
 
-    // 装配形状示意；真实 API 以 `tokenhush run`（W4.7）落地为准：
-    proxy.Run(proxy.Config{
-        Registry:  reg,
-        Router:    pro.NewMultiAccountRouter(), // extension.Router
-        CostSink:  pro.NewCostTracker(),        // extension.CostSink
-        Exporter:  pro.NewTeamAuditExporter(),  // extension.AuditExporter
-        AuditSink: pro.NewAuditSink(),          // pkg/audit.AuditSink
-    })
+    // 装配：Pro 用自己的 main 组合导入的公开原语
+    // （pkg/proxy.Listen/NewPipeline/NewResolver/NewForwarder、pkg/audit 的 store 等），
+    // 并把 reg 与私有 Router/CostSink/AuditExporter 注入。见 plugins.md「注册插件」。
+    _ = reg
 }
 ```
 
-> 装配 API 以 `tokenhush run` 的实现为准；上面的组装形状示意 registry 注入。
+> 上面只展示 registry 注入的形状；真实装配用的是 `pkg/proxy` 导出的原语，`internal/cli` 的 `run` 是参考实现（`internal/` 不可被外部模块导入）。
 
 **要点**：Pro 的能力来自**私有源码**，不是本仓库里的开关。破解公开核心无法解锁 Pro（因为公开二进制里根本没有 Pro 实现）。
 
@@ -154,17 +150,17 @@ func main() {
 
 | 接口 | 稳定性 | 说明 |
 |---|---|---|
-| `extension.Router` | 计划稳定（v1 起） | 第三方路由插件依赖 |
-| `extension.Inspector` / `Transformer` | 计划稳定（v1 起） | 内容插件契约；能力分级见上 |
-| `extension.Capabilities` / `Phase` / `Action` / `Finding` / `Document` / `Leaf` | 计划稳定（v1 起） | 插件契约核心类型 |
-| `extension.CostSink` | 计划稳定 | |
-| `extension.AuditExporter` | 计划稳定 | |
-| `extension.Registry` | **可能变动** | 依装配方式，`tokenhush run` 落地后冻结 |
+| `extension.Router` | V1 起稳定 | 第三方路由插件依赖 |
+| `extension.Inspector` / `Transformer` | V1 起稳定 | 内容插件契约；能力分级见上 |
+| `extension.Capabilities` / `Phase` / `Action` / `Finding` / `Document` / `Leaf` | V1 起稳定 | 插件契约核心类型 |
+| `extension.CostSink` | V1 起稳定 | |
+| `extension.AuditExporter` | V1 起稳定 | |
+| `extension.Registry` | **可能变动** | 依装配方式，装配稳定后冻结 |
 | `Request` / `Response` 结构 | **可能变动** | 随协议演进调整，遵循语义化版本 |
 
 - 公开接口以**语义化版本**管理；破坏性变更升级 major。
 - 第三方扩展在 v1.0 前不建议依赖未冻结的字段。
 
-## 第三方扩展（未来）
+## 第三方扩展
 
-计划支持通过 WASM 或子进程协议加载社区扩展（**不**用于保护 IP，因为 WASM 可反编译——仅用于生态）。V1 不做。
+V1 只支持**编译内置**的插件（见 [plugins.md](plugins.md)），没有运行时加载 WASM / 子进程 / 动态库的机制。这类机制（如用于生态而非 IP 保护的 WASM 沙箱）不在 V1 范围内。第三方扩展在 v1.0 前不建议依赖未冻结的字段。
