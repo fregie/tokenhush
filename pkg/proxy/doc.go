@@ -1,8 +1,10 @@
 // Package proxy implements the local reverse proxy: dual-stack loopback
-// listeners, Host allowlist validation, upstream forwarding, and SSE
-// passthrough that keeps placeholder restoration safe across chunk
+// listeners, Host allowlist and control-plane guards, upstream forwarding, and
+// SSE passthrough that keeps placeholder restoration safe across chunk
 // boundaries.
 //
-// The dual-stack loopback listener layer lives in listen.go; Host allowlist
-// validation, forwarding and SSE land in later work items.
+// The dual-stack loopback listener layer lives in listen.go; the Host
+// allowlist, control-API bearer auth and Origin policy live in guard.go; the
+// per-session control token and browser handshake URL live in token.go.
+// Forwarding and SSE land in later work items.
 package proxy
