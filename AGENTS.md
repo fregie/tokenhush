@@ -1,8 +1,8 @@
 # AGENTS.md — tokenhush (public core)
 
 **项目**：Tokenhush —— 本地 AI 流量安全网关（公开核心仓库）
-**状态**：V1 已实现（`run` / `version` / `env`）；跨三平台
-**最后更新**：2026-09-11
+**状态**：V1 已实现并发布 `v0.1.0`（`run` / `status` / `audit` / `env` / `doctor` / `version`）；跨三平台
+**最后更新**：2026-09-12
 
 ## 这是什么
 

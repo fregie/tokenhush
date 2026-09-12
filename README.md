@@ -43,7 +43,7 @@ Tokenhush 给这类工具加一道**本地关卡**：看得见、管得住、不
 
 ## 安装
 
-### 从源码构建（当前可用）
+### 从源码构建
 
 需要 Go 1.25 或更高版本。
 
@@ -55,7 +55,7 @@ go build -o bin/tokenhush ./cmd/tokenhush
 
 ### 发行版安装包
 
-打上 `v0.1.0` 标签后，发布流水线产出 Homebrew cask、Scoop manifest 与 `curl|sh` 脚本：
+**`v0.1.0` 已发布**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）：GoReleaser 产出三平台归档 + `checksums.txt` + SBOM，并更新 Homebrew cask、Scoop manifest 与 `curl|sh` 脚本：
 
 | 平台 | 命令 |
 |---|---|
@@ -65,7 +65,7 @@ go build -o bin/tokenhush ./cmd/tokenhush
 
 每个 release 附带 `checksums.txt`（sha256）与 SBOM（SPDX JSON）。`install.sh` 会下载对应 OS/arch 的归档、校验 sha256 后再安装（默认装到 `~/.local/bin`，支持 `--dry-run`）。
 
-> 在 `v0.1.0` 发布之前，请使用上面的**源码构建**方式；仓库中的 `main` 即 V1 实现。
+> `v0.1.0` 已发布；macOS `brew` 与 Windows `scoop` 的**真实安装**仍在人工验证中。若渠道安装遇到问题，可改用上面的源码构建方式（仓库中的 `main` 即 V1 实现）。
 
 #### macOS：Gatekeeper
 
@@ -117,7 +117,7 @@ daemon 的控制面 API（`GET /status`、`GET /audit`）已就绪，需 `run` �
 
 ## 状态
 
-V1 核心已实现并通过测试：`tokenhush run`（前台网关 + 双栈 loopback）、`tokenhush version`、`tokenhush env <tool>`，以及本地审计（SQLite + HMAC 链）。纯 Go，`CGO_ENABLED=0`，CI 在 Linux / macOS / Windows 三平台运行单元测试与端到端 smoke test。
+V1 核心已实现并发布 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）：`tokenhush run`（前台网关 + 双栈 loopback）、`status`、`audit`、`env <tool>`、`doctor`、`version`，以及本地审计（SQLite + HMAC 链）。纯 Go，`CGO_ENABLED=0`，CI 在 Linux / macOS / Windows 三平台运行单元测试与端到端 smoke test；`main` 上的 CI 为绿色。
 
 ## 许可
 

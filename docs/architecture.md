@@ -1,6 +1,6 @@
 # Architecture — tokenhush (public core)
 
-> 状态：V1 已实现（2026-09）。本文描述已落地的核心架构与 open-core 边界。
+> 状态：V1 已实现并发布 `v0.1.0`（2026-09）。本文描述已落地的核心架构与 open-core 边界。
 
 ## 1. 目标与非目标
 
@@ -52,7 +52,7 @@
 | `pkg/platform` | 跨平台抽象：路径 / 密钥环 / 服务（导出让 Pro 复用） |
 | `pkg/extension` | 内容插件接口（Inspector / Transformer / Registry）+ 跨层扩展点（见 `extension-api.md`、`plugins.md`） |
 | `pkg/license` | 只读 Pro 许可校验与展示（隔离、fuzz 测试） |
-| `cmd/tokenhush` | 免费 CLI：`run`（前台网关）/ `version` / `env`（打印接入片段）+ 控制面 API |
+| `cmd/tokenhush` | 免费 CLI：`run`（前台网关）/ `status` / `audit` / `env`（打印接入片段）/ `doctor` / `version` + 控制面 API |
 
 ## 4. 关键设计决策
 

@@ -98,7 +98,8 @@ upstreams:             # host/路径前缀 → 上游 base URL（自定义/兼�
 
 ```bash
 tokenhush version       # 确认二进制可用
+tokenhush doctor        # 诊断配置 / 密钥环 / 端口等常见问题
 tokenhush env claude    # 打印接入片段，含当前配置端口
 ```
 
-`run` 启动后会打印监听地址与控制 token 文件路径；控制面 `GET /status`、`GET /audit` 需携带 bearer token（`run` 每次启动重新生成）。
+`run` 启动后会打印监听地址与控制 token 文件路径；`tokenhush status` 报告运行状态，`tokenhush audit [--json]` 读取本地审计时间线。控制面 `GET /status`、`GET /audit` 需携带 bearer token（`run` 每次启动重新生成）。
