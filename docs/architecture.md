@@ -1,96 +1,117 @@
-# Architecture — tokenhush (public core)
+# Architecture
 
-> 状态：V1 已实现并发布 `v0.1.0`（2026-09）。本文描述已落地的核心架构与 open-core 边界。
+**English** | [中文](architecture.zh-CN.md)
 
-## 1. 目标与非目标
+> Status: V1 is implemented and released as `v0.1.0` (2026-09). This document describes the shipped core architecture and the open-core boundary.
 
-**目标**
-- 在 AI 编码工具的请求离开本机之前，检测并脱敏敏感内容（密钥、`.env`、PII）。
-- 提供**本地审计时间线**，默认仅记录元数据。
-- 对所有认 `*_BASE_URL` / custom endpoint 的工具，**零配置摩擦**地接入。
-- **跨平台**：Windows / Linux / macOS 均可运行。
-- 纯本地处理，**数据永不离开设备**。
+Tokenhush is a local base-URL gateway. It sits between your AI coding tool and the model provider, detects and redacts sensitive content before a request leaves the machine, and records a local audit timeline.
 
-**非目标（V1 明确排除）**
-- 系统级 MITM / 根证书安装
-- 覆盖 Cursor agent、ChatGPT/Claude 桌面版、浏览器
-- 团队协作 / 云端 / SSO
-- 三平台的系统级拦截（系统扩展 / MITM 仍 macOS-first，见 `../../tokenhush-pro/docs/decisions/0006-cross-platform-v1.md`）
-- NER 或本地小模型做语义检测
+## Goals and non-goals
 
-## 2. 数据流
+**Goals**
 
+- Detect and redact sensitive content (keys, `.env` values, PII) before a request leaves the machine.
+- Provide a **local audit timeline** that records metadata only by default.
+- Onboard tools that accept a `*_BASE_URL` or custom endpoint with **zero configuration friction**.
+- Run **cross-platform** on Windows, Linux, and macOS.
+- Process everything locally: **data never leaves the device**.
+
+**Non-goals (explicitly out of scope for V1)**
+
+- System-level MITM / root certificate installation.
+- Covering Cursor agent traffic, ChatGPT/Claude desktop apps, or browser web UIs.
+- Team collaboration, cloud, or SSO.
+- System-level interception on all three platforms; system extensions and MITM stay macOS-first, a decision recorded in the private Pro repository.
+- NER or a local small model for semantic detection.
+
+## Data flow
+
+```mermaid
+flowchart LR
+  Tool["AI coding tool<br/>Claude Code, Codex, Aider, Cline, ..."]
+  Up["Model provider<br/>Anthropic, OpenAI, ..."]
+  Store["Local audit<br/>SQLite, metadata + HMAC chain"]
+
+  subgraph GW["tokenhush local gateway"]
+    direction TB
+    S1["1. Parse JSON leaves"]
+    S2["2. Detect sensitive data"]
+    S3["3. Replace with placeholders outbound"]
+    S4["4. Forward upstream"]
+    S5["5. Stream backfill inbound"]
+    S1 --> S2 --> S3 --> S4 --> S5
+  end
+
+  Tool -- "HTTP, localhost, plaintext" --> GW
+  GW -- "HTTPS" --> Up
+  Up -- "HTTPS response" --> GW
+  GW -- "HTTP response, backfilled" --> Tool
+  GW --> Store
 ```
-┌──────────────┐   HTTP (localhost, 明文)   ┌────────────────────────────┐   HTTPS   ┌──────────────┐
-│ AI 编码工具  │ ─────────────────────────▶ │  tokenhush 本地网关        │ ────────▶ │ 模型 provider │
-│ (Claude Code │                            │                            │           │ (Anthropic/  │
-│  Codex/Aider │ ◀───────────────────────── │  ┌──────────────────────┐  │ ◀──────── │  OpenAI/…)   │
-│  Cline/…)    │   HTTP 响应（已回填）      │  │ 1 解析叶子           │  │           └──────────────┘
-└──────────────┘                            │  │ 2 检测敏感          │  │
-                                            │  │ 3 占位符替换(出站)  │  │
-                                            │  │ 4 转发上游          │  │
-                                            │  │ 5 流式回填(入站)    │  │
-                                            │  └──────────────────────┘  │
-                                            │            │               │
-                                            │            ▼               │
-                                            │   本地审计 (SQLite,        │
-                                            │   仅元数据 + HMAC 链)      │
-                                            └────────────────────────────┘
-```
 
-**关键洞察**：敏感方向是**请求**，而请求是**非流式**的——转发前可拿到完整 JSON body，因此可以完整脱敏、无流式改写难题。响应方向通常只含占位符，回填是"占位符 → 原文"的有限替换。
+**Key insight**: the sensitive direction is the **request**, and requests are **non-streaming**. The full JSON body is available before forwarding, so it can be redacted completely without the hard problem of streaming rewrites. The response direction usually carries only placeholders, so backfill is a bounded "placeholder to original" replacement.
 
-## 3. 组件
+> [!NOTE]
+> Outbound requests are read in full before redaction. Only the inbound response path needs incremental handling, and it only ever rewrites placeholders back to originals.
 
-| 包 | 职责 |
+## Components
+
+| Package | Responsibility |
 |---|---|
-| `pkg/proxy` | 本地 HTTP 反向代理：监听、路由到上游、SSE 透传、生命周期 |
-| `pkg/redact` | 检测器（确定性规则）+ 占位符生成/映射 + 回填 |
-| `pkg/protocol` | 协议无关的 JSON 叶子遍历；SSE 增量解析；tool-call 双重编码 JSON 递归 |
-| `pkg/audit` | append-only SQLite + HMAC 哈希链；仅元数据；保留策略 |
-| `pkg/config` | 配置加载与默认值（`tokenhush.yaml`） |
-| `pkg/platform` | 跨平台抽象：路径 / 密钥环 / 服务（导出让 Pro 复用） |
-| `pkg/extension` | 内容插件接口（Inspector / Transformer / Registry）+ 跨层扩展点（见 `extension-api.md`、`plugins.md`） |
-| `pkg/license` | 只读 Pro 许可校验与展示（隔离、fuzz 测试） |
-| `cmd/tokenhush` | 免费 CLI：`run`（前台网关）/ `status` / `audit` / `env`（打印接入片段）/ `doctor` / `version` + 控制面 API |
+| `pkg/proxy` | Local HTTP reverse proxy: listener, upstream routing, SSE passthrough, lifecycle |
+| `pkg/redact` | Detectors (deterministic rules) + placeholder generation/mapping + backfill |
+| `pkg/protocol` | Protocol-agnostic JSON leaf walk; incremental SSE parsing; recursive handling of double-encoded JSON in tool calls |
+| `pkg/audit` | Append-only SQLite + HMAC hash chain; metadata only; retention policy |
+| `pkg/config` | Configuration loading and defaults (`tokenhush.yaml`) |
+| `pkg/platform` | Cross-platform abstraction: paths, keyring, service. Exported for reuse by the private Pro repository |
+| `pkg/extension` | Content plugin interfaces (Inspector / Transformer / Registry) plus cross-layer extension points (see `extension-api.md`, `plugins.md`) |
+| `pkg/license` | Read-only Pro license validation and display (isolated, fuzz-tested) |
+| `cmd/tokenhush` | Free CLI: `run` (foreground gateway), `status`, `audit`, `env` (print setup snippets), `doctor`, `version`, plus the control-plane API |
 
-## 4. 关键设计决策
+## Key design decisions
 
-### 4.1 协议无关的叶子遍历（不做 API 归一化）
-不建立 Anthropic/OpenAI/Responses 的中间表示——那会随 API 演进持续腐烂。改为**递归遍历 JSON，对 string 叶子运行检测/替换**；对 tool-call 里双重编码的 JSON 字符串递归处理；对 SSE 做增量叶子解析。对 API 变化鲁棒。
+### Protocol-agnostic leaf walk (no API normalization)
 
-### 4.2 占位符与回填
-- 格式：JSON 安全 + tokenizer 友好 + 高熵，如 `__PII_email_3f9a2b__`。
-- 映射：同一 secret 用 **HMAC 确定性**映射到同一占位符，避免多会话碰撞导致"错误回填泄露另一个 secret"。
-- 存储：**仅内存、会话级**。重启失忆 → 回填失败时用户看到占位符（**安全降级，非泄露**）。
-- **硬不变量**：只在**回客户端**方向回填，**绝不出站回填**。
+No intermediate representation is built for Anthropic, OpenAI, or Responses. Such a layer would rot as the APIs evolve. Instead, the gateway **recurses through the JSON and runs detect/replace on string leaves**. Double-encoded JSON strings inside tool calls are handled recursively, and SSE is parsed incrementally at the leaf level. This stays robust across API changes.
 
-### 4.3 流式处理
-- 出站：完整读取 body 后脱敏，无缓冲问题。
-- 入站：用**定长滑动窗口**（= 最长占位符长度）处理占位符跨 SSE chunk 截断；无需整段缓冲。延迟可忽略。
+### Placeholders and backfill
 
-### 4.4 检测策略（V1）
-确定性规则，**高精确率优先**：已知 key 前缀（`sk-`/`AKIA`/`ghp_`…）、高熵串、JWT、私钥头、Luhn、邮箱/卡号校验和。提供 allow 列表 + 一键放行。措辞诚实："高置信 secrets 拦截"，不宣称"绝不泄露"。
+- **Format**: JSON-safe, tokenizer-friendly, high-entropy, for example `__PII_email_3f9a2b__`.
+- **Mapping**: the same secret maps **HMAC-deterministically** to the same placeholder, preventing cross-session collisions that would "backfill the wrong secret".
+- **Storage**: **in-memory and session-scoped only**. A restart forgets the mapping, so a failed backfill shows the user a placeholder. That is **safe degradation, not a leak**.
+- **Hard invariant**: backfill happens only toward the **client**. Never backfill outbound.
 
-## 5. Open-core 边界
+### Streaming
 
-公开核心（本仓库，Apache-2.0）提供**单用户完整可用**的能力：代理、脱敏、审计、CLI、扩展点接口。
+- **Outbound**: the full body is read, then redacted. No buffering problem.
+- **Inbound**: a **fixed-length sliding window** (equal to the longest placeholder length) handles placeholders split across SSE chunk boundaries. No need to buffer the whole stream. Latency is negligible.
 
-私有 Pro（`../../tokenhush-pro`）通过 **import 本仓库的 Go module** 构建付费二进制，提供：
-- 系统扩展 / MITM power mode（在闭源 macOS App 侧）
-- 多 provider / 多账号路由
-- 成本追踪
-- 团队审计导出 / SSO
-- Dashboard / 菜单栏 UI
+### Detector strategy (V1)
 
-**规则**：Pro 的代码与算法**永不进入本仓库**；本仓库不出现 `if license { ... }` 的付费实现分支。详见 `../../tokenhush-pro/docs/05-distribution-and-open-core.md`。
+Deterministic rules with **high precision first**: known key prefixes (`sk-`, `AKIA`, `ghp_`, ...), high-entropy strings, JWT, private-key headers, Luhn card-number checksums, and email addresses. An allowlist and one-click release are provided. The wording stays honest: **"high-confidence secret interception"**, never "never leaks".
 
-## 6. 能力阶梯（跨仓库）
+## Open-core boundary
 
-| 阶段 | 能力 | 渠道 |
+The public core (this repository, Apache-2.0) provides capabilities that are **fully usable for a single user**: proxy, redaction, audit, CLI, and the extension-point interfaces.
+
+The private Pro repository builds paid binaries by importing this repository's Go module. It provides:
+
+- System extension / MITM power mode (on the closed-source macOS app side)
+- Multi-provider / multi-account routing
+- Cost tracking
+- Team audit export / SSO
+- Dashboard / menu bar UI
+
+> [!IMPORTANT]
+> Pro code and algorithms **never enter this repository**, and this repository contains no `if license { ... }` paid implementation branches. The full distribution and open-core policy lives in the private Pro repository.
+
+## Capability ladder
+
+| Stage | Capability | Channel |
 |---|---|---|
-| V1 | base-URL 网关：内容级脱敏 + 审计（覆盖 CLI/IDE 工具） | 开源核心 + 免费 CLI |
-| V2 | 系统扩展元数据模式：全域域名/进程级拦截 + 审计（**无 CA**） | Pro（直下载） |
-| V3 | 透明代理 + 本地 CA：内容级脱敏覆盖 Cursor/浏览器/桌面应用 | Pro（显式 opt-in） |
+| V1 | base-URL gateway: content-level redaction + audit (covers CLI/IDE tools) | Open-source core + free CLI |
+| V2 | System-extension metadata mode: domain/process-level interception + audit (**no CA**) | Pro (direct download) |
+| V3 | Transparent proxy + local CA: content-level redaction covering Cursor/browser/desktop apps | Pro (explicit opt-in) |
 
-> V2/V3 依赖 macOS Network Extension 系统扩展（Developer ID 签名 + 用户批准 + Apple capability 审批），不在本仓库实现。
+> [!WARNING]
+> V2 and V3 depend on the macOS Network Extension system extension (Developer ID signing + user approval + Apple capability approval) and are **not implemented in this repository**.

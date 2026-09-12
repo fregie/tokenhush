@@ -1,124 +1,206 @@
 # Tokenhush
 
-> A local gateway that redacts secrets and sensitive data from your AI coding tools' requests — before they reach the model. Audit everything. Leak nothing. 100% local.
+**English** | [中文](README.zh-CN.md)
 
-Tokenhush 是一个**本地 base-URL 网关**：把你使用的 AI 编码工具（Claude Code、Codex CLI、Aider、Cline、Roo Code、Continue…）的 API 请求指向本机，它在转发到云端模型之前检测并脱敏敏感内容（API key、`.env`、PII、客户数据…），并留下一份**本地审计时间线**。**你的数据永不离开你的机器。**
+> A local gateway that redacts secrets and sensitive data from your AI coding tools' requests before they reach the model. Audit everything. Leak nothing. 100% local.
 
----
+[![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#supported-tools)
 
-## 为什么需要它
+Tokenhush is a local base-URL gateway that sits between your AI coding tools and the cloud model. Point Claude Code, Codex CLI, Aider, Cline, Roo Code, Continue, or any OpenAI-compatible client at `127.0.0.1`, and it detects and redacts sensitive content before the request leaves your machine. Every request also lands in a local audit timeline that stays on your disk.
 
-AI 编码代理会把整个仓库、`.env`、密钥发给云端。2026 年有开发者用抓包（mitmproxy）实锤 **Grok Build CLI 上传完整 repo（含 git 历史与 `.env`），且 opt-out 无效**（社区帖 593 赞）。同类隐私质疑在 OpenCode、Claude Code 等工具上反复出现。
+[Features](#features) · [Installation](#installation) · [Quick start](#quick-start) · [CLI](#cli) · [Documentation](#documentation) · [Contributing](#contributing)
 
-Tokenhush 给这类工具加一道**本地关卡**：看得见、管得住、不误伤。
+## Why Tokenhush
 
-## 工作原理
+AI coding agents ship the whole repository, your `.env` files, and your keys to the cloud. In 2026 a developer captured traffic with mitmproxy and proved that Grok Build CLI uploaded a full repo, including git history and `.env`, with an opt-out that did not work (a community post with 593 upvotes). The same privacy questions keep resurfacing around OpenCode, Claude Code, and other agents.
 
+Tokenhush adds one local gate in front of those tools. It sees the request, controls what goes out, and avoids false positives with deterministic detectors. Nothing leaves your machine except the redacted request.
+
+## Features
+
+- **Full-body outbound redaction.** A fixed allowlist of fields is not enough, so every request body is walked leaf by leaf. A protocol-agnostic JSON traversal covers nested structures, and SSE incremental backfill keeps streaming responses covered as they arrive.
+- **Six deterministic detectors.** Known key prefixes (`sk-`, `AKIA`, `ghp_`, and more), high-entropy strings, JWTs, PEM private-key headers, Luhn card numbers, and email addresses.
+- **HMAC-deterministic placeholders.** A match becomes a stable token such as `__PII_email_9f2c8a4b6d1e__`. The mapping is HMAC-derived, held in memory, and scoped to the session. A restart loses the mapping, so you may occasionally see a placeholder in output. That is safe degradation, not a leak.
+- **Metadata-only local audit.** Each request appends a metadata record linked by an HMAC hash chain, so tampering is detectable. Content logging is off by default and requires explicit opt-in plus encryption.
+- **Dual-stack loopback with guards.** The gateway binds `127.0.0.1` and `[::1]` only. A Host allowlist is always enforced, an Origin check applies to browser-style requests, and the control API requires a bearer token stored with `0600` permissions.
+- **`tokenhush env` onboarding.** Prints copy-paste setup snippets for `claude`, `codex`, `aider`, `cline`, and `roo`.
+- **`tokenhush doctor` diagnostics.** Runs common setup checks with clear exit codes: `0` when nothing fails, `1` on a failed check, `2` on a usage error.
+- **Cross-platform, CGO-free.** One pure Go codebase builds macOS, Linux, and Windows binaries for amd64 and arm64 with `CGO_ENABLED=0`.
+- **Fail-safe by design.** The gateway fails safe, not open.
+- **Public extension points.** Cross-layer interfaces (`Router`, `CostSink`, `AuditExporter`) and content plugins (`Inspector` / `Transformer`) let you extend the pipeline. V1 supports compile-time plugins only.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["AI coding tool"] -->|HTTP request| B["Tokenhush gateway<br/>127.0.0.1 loopback"]
+    B -->|redacted request| C["Cloud model"]
+    C -->|response with placeholders| B
+    B -->|response with originals| A
+    B -->|metadata only| D["Local audit timeline"]
 ```
-你的 AI 工具 ──HTTP──▶ 127.0.0.1 网关 ──脱敏后──▶ 云端模型
-                          │
-                          └──▶ 本地审计日志（默认仅元数据）
-```
 
-- **出站请求**：检测 → 占位符替换（如 `__PII_email_9f2c8a4b6d1e__`）→ 转发上游
-- **入站响应**：占位符 → 原文回填（**仅回客户端**）
-- **硬不变量**：绝不向出站方向回填占位符（防 prompt injection 诱导外泄）
+- **Outbound request:** the gateway walks the full JSON body and runs all six detectors. Matches become session-scoped placeholders, and the redacted request is forwarded upstream.
+- **Streaming responses:** SSE chunks are refilled incrementally, so placeholders that arrive mid-stream map back to their originals.
+- **Inbound response:** placeholders are replaced with the original values, and only the client receives them.
+- **Local audit:** the gateway records metadata such as provider, path, byte counts, and detector hits. Content stays out unless you opt in.
 
-## 支持的工具
+> [!IMPORTANT]
+> The hard invariant is that placeholders are **never** backfilled in the outbound direction. Only the client gets originals. This blocks prompt-injection attempts that try to trick the gateway into echoing a secret back to the model.
 
-**平台**：Windows / Linux / macOS（同一份纯 Go 代码，`CGO_ENABLED=0`）。
+## Supported tools
 
-| 工具 | 接入方式 | 状态 |
+| Tool | Integration | Status |
 |---|---|---|
-| Claude Code CLI | `ANTHROPIC_BASE_URL` | 已支持 |
-| Codex CLI | `~/.codex/config.toml` → `base_url` | 已支持（API key 模式） |
-| Aider | `OPENAI_API_BASE` / `ANTHROPIC_API_BASE` | 已支持 |
-| Cline / Roo Code | 设置内 Base URL | 已支持 |
-| Continue | `config.json` → `apiBase` | 手动配置 |
-| Open WebUI | OpenAI 连接 Base URL | 手动配置 |
+| Claude Code CLI | `ANTHROPIC_BASE_URL` | Supported |
+| Codex CLI | `~/.codex/config.toml` → `base_url` | Supported (API key mode) |
+| Aider | `OPENAI_API_BASE` / `ANTHROPIC_API_BASE` | Supported |
+| Cline / Roo Code | OpenAI Compatible base URL in settings | Supported |
+| Continue | `config.json` → `apiBase` | Manual setup |
+| Open WebUI | OpenAI-compatible endpoint | Manual setup |
 
-`tokenhush env <tool>` 可直接打印 claude / codex / aider / cline / roo 的可复制片段。完整的接入说明见 [docs/configuration.md](docs/configuration.md)。
+`tokenhush env <tool>` prints ready-to-paste snippets for `claude`, `codex`, `aider`, `cline`, and `roo`. See [docs/configuration.md](docs/configuration.md) for full per-tool instructions.
 
-**不覆盖（V1 明确排除）**：Cursor 的 agent 流量、ChatGPT/Claude 桌面应用、浏览器网页版——这些需要系统级 MITM，不在本仓库实现。
+> [!WARNING]
+> Not covered in V1: Cursor agent traffic, ChatGPT and Claude desktop apps, and browser web UIs. These need system-level MITM, which the public core does not implement.
 
-## 安装
+## Installation
 
-### 从源码构建
+### Package managers
 
-需要 Go 1.25 或更高版本。
-
-```bash
-go install github.com/fregie/tokenhush/cmd/tokenhush@latest
-# 或在仓库内构建：
-go build -o bin/tokenhush ./cmd/tokenhush
-```
-
-### 发行版安装包
-
-**`v0.1.0` 已发布**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）：GoReleaser 产出三平台归档 + `checksums.txt` + SBOM，并更新 Homebrew cask、Scoop manifest 与 `curl|sh` 脚本：
-
-| 平台 | 命令 |
+| Platform | Command |
 |---|---|
 | macOS | `brew install --cask fregie/tap/tokenhush` |
 | Linux | `curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh \| bash` |
 | Windows | `scoop bucket add fregie https://github.com/fregie/scoop-bucket && scoop install tokenhush` |
 
-每个 release 附带 `checksums.txt`（sha256）与 SBOM（SPDX JSON）。`install.sh` 会下载对应 OS/arch 的归档、校验 sha256 后再安装（默认装到 `~/.local/bin`，支持 `--dry-run`）。
+The Linux installer downloads the archive for your OS and architecture, verifies its sha256, and installs it. It installs to `~/.local/bin` by default, and accepts `--dry-run`, `--version`, `--dir`, and `--base-url`. It also reads `TOKENHUSH_VERSION`, `TOKENHUSH_INSTALL_DIR`, and `TOKENHUSH_BASE_URL`.
 
-> `v0.1.0` 已发布；macOS `brew` 与 Windows `scoop` 的**真实安装**仍在人工验证中。若渠道安装遇到问题，可改用上面的源码构建方式（仓库中的 `main` 即 V1 实现）。
+Every release ships archives for darwin, linux, and windows on amd64 and arm64, a `checksums.txt` with sha256 hashes, and per-archive SPDX SBOMs.
 
-#### macOS：Gatekeeper
+### From source
 
-发布二进制未做 Apple notarization。首次运行若被拦截：
-
-- 右键（或 Control-点击）二进制 → **Open** → 在弹窗中再次确认 **Open**；或
-- 清除隔离属性：`xattr -dr com.apple.quarantine "$(command -v tokenhush)"`
-
-#### Windows：SmartScreen
-
-手动下载 `.zip`、解压并首次运行 `tokenhush.exe` 时，SmartScreen 可能提示 “Windows protected your PC”：点击 **More info** → **Run anyway**。通过 Scoop 安装不会触发该提示。
-
-## 快速开始
+Go 1.25 or newer is required.
 
 ```bash
-# 1. 启动网关（前台；默认监听 127.0.0.1:8787）
+go install github.com/fregie/tokenhush/cmd/tokenhush@latest
+# or build inside the repo:
+go build -o bin/tokenhush ./cmd/tokenhush
+```
+
+### First-run prompts
+
+macOS binaries are not notarized. If Gatekeeper blocks the first launch, right-click the binary and choose **Open**, then confirm **Open** in the dialog. You can also clear the quarantine attribute:
+
+```bash
+xattr -dr com.apple.quarantine "$(command -v tokenhush)"
+```
+
+On Windows, a manually downloaded `.zip` may trigger SmartScreen on first run of `tokenhush.exe`. Click **More info**, then **Run anyway**. Scoop installs avoid this prompt.
+
+See the full [Deployment Guide](docs/deployment.md).
+
+## Quick start
+
+```bash
+# 1. Start the gateway in the foreground. It listens on 127.0.0.1:8787 by default.
 tokenhush run
 
-# 2. 另开一个终端，把 Claude Code 指向网关
+# 2. In another terminal, point Claude Code at the gateway and start it.
 eval "$(tokenhush env claude)"
 claude
+
+# 3. Confirm the gateway is running.
+tokenhush status
 ```
+
+`tokenhush run` prints `tokenhush: gateway listening on http://127.0.0.1:<port>` together with the path to the control token file.
 
 ## CLI
 
 ```text
 <!-- check-docs:commands:start -->
-    tokenhush run         启动网关（前台，Ctrl-C 退出）
-    tokenhush version     打印版本与构建信息
-    tokenhush env <tool>  打印工具接入片段（claude/codex/aider/cline/roo）
+    tokenhush run          start the gateway in the foreground
+    tokenhush status       show whether the gateway is running
+    tokenhush audit        show the local audit timeline
+    tokenhush env <tool>   print tool setup snippets
+    tokenhush doctor       diagnose common setup problems
+    tokenhush version      print version and build information
 <!-- check-docs:commands:end -->
 ```
 
-daemon 的控制面 API（`GET /status`、`GET /audit`）已就绪，需 `run` 启动时生成的 bearer token。
+| Command | Description | Key flags |
+|---|---|---|
+| `tokenhush run` | Start the gateway in the foreground. | `--config PATH`, `--port N` (1..65535), `--log-level debug\|info\|warn\|error` |
+| `tokenhush status` | Show whether the gateway is running. | `--json` |
+| `tokenhush audit` | Show the local audit timeline. | `--json`, `--limit N` (1..1000, default 20) |
+| `tokenhush env <tool>` | Print tool setup snippets. Tools: `claude`, `codex`, `aider`, `cline`, `roo`. | `--config PATH`, `--port N` |
+| `tokenhush doctor` | Diagnose common setup problems. Exits `0` when no check fails, `1` on any failure, `2` on a usage error. | `--config PATH`, `--port N`, `--json` |
+| `tokenhush version` | Print version and build information. | none |
 
-## 文档
+> [!NOTE]
+> `tokenhush run` stays in the foreground and exits on Ctrl-C. A built-in service command is not part of V1. For auto-start, manage your own OS-native wrapper: a launchd agent on macOS, a systemd user unit on Linux, or a Task Scheduler entry on Windows.
 
-| 文档 | 内容 |
+### Control API
+
+The control plane listens on loopback and requires a bearer token. `GET /status` returns JSON with `state`, `addrs`, `uptime_ms`, `requests`, and `redactions`. `GET /audit` returns a JSON array and accepts `since`, `until` (unix ms), `provider`, and `limit` (clamped to 1000) query parameters. Both require `Authorization: Bearer <token>`. The token is generated per `run` and stored with `0600` permissions in the data directory. Requests carrying an `Origin` get an origin check, and a Host allowlist is always enforced.
+
+## Configuration
+
+Tokenhush reads `tokenhush.yaml`. A missing file means defaults, and unknown keys are rejected.
+
+| Location | Path |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | 核心架构、数据流、模块划分 |
-| [docs/extension-api.md](docs/extension-api.md) | 扩展点接口（Router / CostSink / AuditExporter） |
-| [docs/plugins.md](docs/plugins.md) | 编写内容插件（Inspector / Transformer） |
-| [docs/configuration.md](docs/configuration.md) | 各 AI 工具的接入配置 + `tokenhush.yaml` 参考 |
-| [docs/security.md](docs/security.md) | 安全模型、威胁模型、硬不变量 |
+| macOS | `~/Library/Application Support/tokenhush/` |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` |
+| Windows | `%AppData%\tokenhush\` |
 
-## 项目角色
+Data lives separately: macOS uses `~/Library/Application Support/tokenhush/`, Linux uses `${XDG_DATA_HOME:-~/.local/share}/tokenhush/`, and Windows uses `%LOCALAPPDATA%\tokenhush\`. Set `TOKENHUSH_HOME` to override both directories.
 
-这是**公开核心仓库**（Apache-2.0）。Pro / 企业功能在私有仓库中实现，通过导入本核心的 Go module 构建付费二进制——**Pro 代码不会进入本仓库**。见 [docs/architecture.md](docs/architecture.md) 的「Open-core 边界」。
+| Top-level key | What it controls |
+|---|---|
+| `listen` | `host` (only `127.0.0.1`, `::1`, or `localhost`; `0.0.0.0` is rejected) and `port` (1..65535, default 8787) |
+| `detectors` | Enable or disable the six detectors: `prefixes`, `high_entropy`, `jwt`, `private_keys`, `luhn`, `email` |
+| `allowlist` | Literals that are never redacted |
+| `audit` | `enabled` and `retention_days` (>= 1) |
+| `log` | `level`: `debug`, `info`, `warn`, or `error` |
+| `upstreams` | Map a host or path prefix to your own OpenAI-compatible upstream |
 
-## 状态
+Unmatched routes fall back to built-ins: `/v1/messages` goes to Anthropic, and `/v1/chat/completions` and `/v1/responses` go to OpenAI. See [docs/configuration.md](docs/configuration.md) for the full reference.
 
-V1 核心已实现并发布 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）：`tokenhush run`（前台网关 + 双栈 loopback）、`status`、`audit`、`env <tool>`、`doctor`、`version`，以及本地审计（SQLite + HMAC 链）。纯 Go，`CGO_ENABLED=0`，CI 在 Linux / macOS / Windows 三平台运行单元测试与端到端 smoke test；`main` 上的 CI 为绿色。
+## Security model
 
-## 许可
+Tokenhush binds loopback only, enforces a Host allowlist, and keeps its audit store metadata-only by default. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. See [docs/security.md](docs/security.md) for the threat model and full invariants.
 
-[Apache License 2.0](LICENSE)。
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/deployment.md](docs/deployment.md) | Installation channels, service wrappers, and release artifacts |
+| [docs/configuration.md](docs/configuration.md) | `tokenhush.yaml` reference and per-tool setup |
+| [docs/architecture.md](docs/architecture.md) | Core architecture, data flow, and modules |
+| [docs/security.md](docs/security.md) | Security model, threat model, and hard invariants |
+| [docs/plugins.md](docs/plugins.md) | Writing content plugins (`Inspector` / `Transformer`) |
+| [docs/extension-api.md](docs/extension-api.md) | Extension interfaces (`Router`, `CostSink`, `AuditExporter`) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute |
+
+## Project status
+
+V1 is released as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)). It includes `tokenhush run` (foreground gateway with dual-stack loopback), `status`, `audit`, `env <tool>`, `doctor`, and `version`, plus a local audit store backed by SQLite with an HMAC chain. The code is pure Go with `CGO_ENABLED=0`, and CI runs unit tests and an end-to-end smoke test on Linux, macOS, and Windows.
+
+## Open-core boundary
+
+This is the public core repository, licensed under Apache-2.0. Pro and enterprise capabilities live in the private Pro repository, which imports this Go module to build paid binaries. Pro code never enters this repository.
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and pull request guidelines.
+
+## License
+
+[Apache License 2.0](LICENSE).

@@ -1,91 +1,97 @@
-# AGENTS.md — tokenhush (public core)
+# AGENTS.md: tokenhush (public core)
 
-**项目**：Tokenhush —— 本地 AI 流量安全网关（公开核心仓库）
-**状态**：V1 已实现并发布 `v0.1.0`（`run` / `status` / `audit` / `env` / `doctor` / `version`）；跨三平台
-**最后更新**：2026-09-12
+> Status: V1 implemented and released as `v0.1.0` (`run` / `status` / `audit` / `env` / `doctor` / `version`); cross-platform (macOS / Linux / Windows).
+> Last updated: 2026-09-12
 
-## 这是什么
+## What this is
 
-本地 base-URL 网关：AI 编码工具把 API 请求指向本机（如 `ANTHROPIC_BASE_URL=http://127.0.0.1:PORT`），Tokenhush 负责**出站脱敏**（密钥 / PII / 敏感文本）+ **本地审计**，响应**回填**后返回客户端。纯本地处理，数据不出设备。
+A local base-URL gateway. AI coding tools point their API requests at the local machine (for example `ANTHROPIC_BASE_URL=http://127.0.0.1:PORT`). Tokenhush performs outbound redaction (keys / PII / sensitive text) and local audit, then backfills the response before returning it to the client. Processing is local only; data does not leave the device.
 
-本仓库是 **Apache-2.0 开源核心**。私有 Pro 层在 `../tokenhush-pro`，通过导入本仓库的 Go module 构建。**绝不要把 Pro 代码放进本仓库。**
+This repository is the Apache-2.0 open-source core. The private Pro layer lives in the private Pro repository and builds by importing this repository's Go module. Never put Pro code in this repository.
 
-## 结构与布局
+## Structure and layout
 
-```
+```text
 tokenhush/
 ├── README.md
 ├── LICENSE                 # Apache-2.0
 ├── CONTRIBUTING.md
-├── AGENTS.md               # 本文件
+├── AGENTS.md               # this file
 ├── docs/
-│   ├── architecture.md     # 核心架构 + open-core 边界
-│   ├── extension-api.md    # 公开扩展点接口
-│   ├── plugins.md          # 编写内容插件（Inspector / Transformer）
-│   ├── configuration.md    # 工具接入配置 + tokenhush.yaml 参考
-│   └── security.md         # 安全/威胁模型 + 硬不变量
+│   ├── README.md           # documentation index
+│   ├── architecture.md     # core architecture + open-core boundary
+│   ├── extension-api.md    # public extension point interfaces
+│   ├── plugins.md          # writing content plugins (Inspector / Transformer)
+│   ├── configuration.md    # tool setup + tokenhush.yaml reference
+│   ├── deployment.md       # deployment + OS-native auto-start
+│   └── security.md         # security/threat model + hard invariants
 ├── scripts/
-│   └── check-docs.sh       # 校验文档与 CLI / 配置一致
-├── cmd/tokenhush/          # 免费 CLI 入口
+│   └── check-docs.sh       # verify docs match the CLI and config
+├── cmd/tokenhush/          # free CLI entry point
 └── pkg/
-    ├── proxy/              # 本地反向代理
-    ├── redact/             # 检测 / 占位符 / 回填引擎
-    ├── protocol/           # 协议无关 JSON 叶子遍历 + SSE 增量解析
-    ├── audit/              # SQLite 审计（元数据 + HMAC 哈希链）
-    ├── config/             # 配置加载
-    ├── platform/           # 跨平台抽象：paths / keyring / service（导出让 Pro 复用）
-    ├── extension/          # 扩展点接口（Router / CostSink / AuditExporter + 内容插件 Inspector/Transformer/Registry）
-    └── license/            # 只读 Pro 许可展示（隔离、fuzz 测试）
+    ├── proxy/              # local reverse proxy
+    ├── redact/             # detection / placeholder / backfill engine
+    ├── protocol/           # protocol-agnostic JSON leaf traversal + SSE incremental parsing
+    ├── audit/              # SQLite audit (metadata + HMAC hash chain)
+    ├── config/             # configuration loading
+    ├── platform/           # cross-platform abstraction: paths / keyring / service (exported for Pro reuse)
+    ├── extension/          # extension point interfaces (Router / CostSink / AuditExporter + content plugins Inspector/Transformer/Registry)
+    └── license/            # read-only Pro license display (isolated, fuzz tested)
 ```
 
-## Where to Look
+> [!NOTE]
+> `docs/README.md` is the documentation index, and `docs/deployment.md` covers deployment and user-managed OS-native auto-start. A built-in service command is not part of V1; the only run mode is the foreground `tokenhush run`.
 
-| 任务 | 位置 |
+## Where to look
+
+| Task | Location |
 |---|---|
-| 架构 / 数据流 / open-core 边界 | `docs/architecture.md` |
-| 新增/修改扩展点接口 | `docs/extension-api.md` + `pkg/extension/` |
-| 编写内容插件（Inspector/Transformer） | `docs/plugins.md` |
-| 新增工具接入方式 | `docs/configuration.md` |
-| 安全不变量 / 威胁模型 | `docs/security.md` |
-| 文档与 CLI / 配置一致性 | `scripts/check-docs.sh` |
-| 产品/市场/路线图/定价 | `../tokenhush-pro/docs/` |
+| Architecture / data flow / open-core boundary | `docs/architecture.md` |
+| Adding or changing extension point interfaces | `docs/extension-api.md` + `pkg/extension/` |
+| Writing content plugins (Inspector / Transformer) | `docs/plugins.md` |
+| Adding a tool integration | `docs/configuration.md` |
+| Deployment and OS-native auto-start | `docs/deployment.md` |
+| Documentation index | `docs/README.md` |
+| Security invariants / threat model | `docs/security.md` |
+| Docs vs CLI / config consistency | `scripts/check-docs.sh` |
+| Product, market, roadmap, pricing | the private Pro repository (maintainer-only) |
 
-## 硬约定（不可违反）
+## Hard conventions (non-negotiable)
 
-1. **绝不向出站方向回填占位符**——只回客户端。这是防 prompt-injection 外泄的核心不变量。
-2. **协议层不做归一化**：采用协议无关的 JSON 叶子遍历（递归 string 叶子检测/替换），不要为每个 API 建 IR。
-3. **V1 检测器只用确定性规则**（前缀 / 高熵 / JWT / 私钥头 / Luhn / 邮箱），**不引入 NER 或本地小模型**。
-4. **本地服务只绑双栈 loopback（127.0.0.1 + [::1]）**，并校验 `Host` 头（防 DNS rebinding）；控制面另需 bearer token + Origin 校验。
-5. **审计默认仅元数据**（provider/端点/时间/字节数/脱敏计数/类型），不存值；内容日志必须显式开启且加密。
-6. **Pro 能力不进本仓库**：不要在这里写 `if license { ... }` 的完整实现或 Pro 算法。
-7. **依赖许可**：核心依赖只允许 MIT / Apache-2.0 / BSD 等宽松许可，**禁止 GPL / AGPL**（会污染闭源 Pro 层）。
-8. **跨平台**：OS 差异收敛进 `pkg/platform`，不散落 `runtime.GOOS` 分支；绝不写 CWD / 二进制目录（安装前缀只读）；用纯 Go SQLite（`modernc.org/sqlite`）保持 `CGO_ENABLED=0` 交叉编译。
+1. Never backfill placeholders outbound. Backfill goes only to the client. This is the core anti-prompt-injection invariant.
+2. No normalization at the protocol layer: use protocol-agnostic JSON leaf traversal (recursive string-leaf detection and replacement). Do not build an IR per API.
+3. V1 detectors use deterministic rules only (prefix / high-entropy / JWT / private-key header / Luhn / email). Do not introduce NER or local small models.
+4. Local services bind dual-stack loopback only (127.0.0.1 + [::1]) and validate the `Host` header (anti DNS rebinding). The control plane additionally requires a bearer token and an Origin check.
+5. Audit is metadata-only by default (provider / endpoint / time / byte counts / redaction counts / types); no values are stored. Content logging must be explicitly enabled and encrypted.
+6. Pro capability never enters this repository. Do not write complete `if license { ... }` implementations or Pro algorithms here, and never merge Pro implementation branches into this repository.
+7. Dependency licenses: core dependencies must be permissive only (MIT / Apache-2.0 / BSD). GPL and AGPL are forbidden, because they would contaminate the closed Pro layer.
+8. Cross-platform: converge OS differences in `pkg/platform`, not scattered `runtime.GOOS` branches. Never write to the CWD or the binary directory (the install prefix is read-only). Use pure-Go SQLite (`modernc.org/sqlite`) to keep `CGO_ENABLED=0` cross-compilation working.
 
-## Anti-Patterns（不要做）
+## Anti-patterns (do not do)
 
-- ❌ 在开源代码里放付费功能的完整实现或开关分支。
-- ❌ 默认开启 MITM / 安装根证书。
-- ❌ 在 V1 引入 NER / 小模型做语义检测（误报与体积代价高）。
-- ❌ 用 `as any` 式绕过类型/错误处理。
-- ❌ 在无用户反馈时扩大配置 / 接口表面（Gate 1 已改为非阻塞并行、见私有仓库 ADR-0005；应对之道是「更少、更有主见」）。
+- Shipping a complete implementation of a paid feature, or a switch branch for it, in the open-source code.
+- Enabling MITM or installing a root certificate by default.
+- Introducing NER or small models for semantic detection in V1 (high false-positive and size cost).
+- Bypassing types or error handling (for example an `as any`-style escape).
+- Widening the config or interface surface without user feedback. Gate 1 is a non-blocking parallel track; the answer is fewer, more opinionated surfaces. The recorded decision is in the private Pro repository.
 
-## 命令
+## Commands
 
 ```bash
-# 构建
+# build
 go build -o bin/tokenhush ./cmd/tokenhush
-# 运行（前台网关）
+# run (foreground gateway)
 ./bin/tokenhush run --port 8787
-# 打印某工具接入片段
+# print an integration snippet for a tool
 ./bin/tokenhush env claude
-# 版本
+# version
 ./bin/tokenhush version
-# 测试
+# tests
 go test ./...
-# 文档一致性校验
+# docs consistency check
 bash scripts/check-docs.sh
 ```
 
-## 贡献
+## Contributing
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。提交需签署 DCO。安全漏洞请勿公开 issue，见 CONTRIBUTING 的披露流程。
+See [CONTRIBUTING.md](CONTRIBUTING.md). Commits require DCO sign-off. For security vulnerabilities, do not open a public issue; use the disclosure process in CONTRIBUTING.

@@ -21,13 +21,24 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 default_docs=(
 	"$repo_root/README.md"
+	"$repo_root/README.zh-CN.md"
 	"$repo_root/AGENTS.md"
 	"$repo_root/CONTRIBUTING.md"
+	"$repo_root/CONTRIBUTING.zh-CN.md"
+	"$repo_root/docs/README.md"
+	"$repo_root/docs/README.zh-CN.md"
 	"$repo_root/docs/architecture.md"
+	"$repo_root/docs/architecture.zh-CN.md"
 	"$repo_root/docs/configuration.md"
+	"$repo_root/docs/configuration.zh-CN.md"
+	"$repo_root/docs/deployment.md"
+	"$repo_root/docs/deployment.zh-CN.md"
 	"$repo_root/docs/extension-api.md"
+	"$repo_root/docs/extension-api.zh-CN.md"
 	"$repo_root/docs/plugins.md"
+	"$repo_root/docs/plugins.zh-CN.md"
 	"$repo_root/docs/security.md"
+	"$repo_root/docs/security.zh-CN.md"
 )
 docs=("${default_docs[@]}" "$@")
 

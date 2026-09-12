@@ -1,43 +1,64 @@
 # Contributing to Tokenhush
 
-Thanks for your interest in making AI coding tools safer.
+**English** | [中文](CONTRIBUTING.zh-CN.md)
 
-## 开发状态
+> Status: V1 core released as `v0.1.0`. Bug reports, documentation, tests, and content plugins are welcome.
 
-V1 核心已实现（`run` / `version` / `env`），跨 Windows / Linux / macOS。当前最有价值的贡献：
+Thanks for helping make AI coding tools safer. This is the public Apache-2.0 core.
 
-- 反馈各 AI 工具的 base-URL 接入方式与坑（见 `docs/configuration.md`）
-- 报告脱敏漏报 / 误报，和安全/隐私风险
-- 评审 `docs/architecture.md`、`docs/security.md`、`docs/plugins.md`
-- 编写与分享内容插件（Inspector / Transformer，见 `docs/plugins.md`）
+## Current priorities
 
-## 本地开发
+The V1 core is implemented (`run` / `status` / `audit` / `env` / `doctor` / `version`) across Windows, Linux, and macOS. The most valuable contributions right now:
 
-需要 Go 1.25 或更高版本。
+- Feedback on how each AI tool is connected via base URL, and the pitfalls you hit (see `docs/configuration.md`).
+- Reports of missed redactions (false negatives) and over-redactions (false positives), plus security and privacy risks.
+- Review of `docs/architecture.md`, `docs/security.md`, and `docs/plugins.md`.
+- Content plugins (Inspector / Transformer, see `docs/plugins.md`).
+
+## Local development
+
+Go 1.25 or newer is required.
 
 ```bash
-go build ./...          # 构建
-go vet ./...            # 静态检查
-go test ./...           # 单元测试 + 端到端 smoke
-bash scripts/check-docs.sh   # 文档与 CLI / 配置一致性校验
+go build ./...          # build
+go vet ./...            # static analysis
+go test ./...           # unit tests plus the end-to-end smoke test
+bash scripts/check-docs.sh   # verify docs match the CLI and config
 ```
 
-## 提交贡献
+> [!IMPORTANT]
+> Do not contribute any Pro or paid-feature implementation to this repository. Pro code lives in a separate private repository; the public core only ever contains the open-source implementation.
 
-1. Fork 本仓库并创建分支（`feat/...`、`fix/...`）。
-2. 遵循项目约定（Go：`gofmt`/`golangci-lint`；错误用 `fmt.Errorf("context: %w", err)` 包装）。
-3. 每个提交信息使用中文或英文均可，需清晰说明动机。
-4. 提交须包含 **DCO 签名**（`git commit -s`）。**请勿在开源核心中提交任何 Pro / 付费功能实现。**
-5. 提交 PR，描述：改了什么、为什么、验证方式。
+## Submission process
 
-## 代码规范（Go）
+1. Fork the repository and create a branch (`feat/...`, `fix/...`).
+2. Follow the project conventions (Go: `gofmt` / `golangci-lint`; wrap errors with `fmt.Errorf("context: %w", err)`).
+3. Write a clear commit message. Chinese or English is fine; explain the motivation.
+4. Sign off every commit with the DCO: `git commit -s`.
+5. Open a pull request describing what changed, why, and how you verified it.
 
-- 构造函数 `NewX(...)` 返回指针；所有 I/O 方法接受 `context.Context`
-- 错误必须包装：`fmt.Errorf("redact request: %w", err)`
-- 不吞错（禁止空 `catch`/忽略 error）
-- 新增行为需配套单元测试（stdlib `testing`，无需第三方断言库）
-- 改动 CLI 命令或 `pkg/config` 的键时，同步更新文档并让 `scripts/check-docs.sh` 通过
+> [!WARNING]
+> Commit sign-off is required. A pull request without DCO sign-off will not be merged.
 
-## 安全披露
+## Code conventions (Go)
 
-**请勿**通过公开 issue 报告漏洞。请邮件联系维护者（地址待补），或在私有安全渠道披露，并在修复发布后再公开。
+- Constructors `NewX(...)` return pointers; every I/O method accepts a `context.Context`.
+- Wrap errors with context: `fmt.Errorf("redact request: %w", err)`.
+- Never swallow an error: no empty branches and no ignored error values.
+- New behavior needs unit tests (stdlib `testing`; no third-party assertion library).
+- When you change a CLI command or a `pkg/config` key, update the docs and make `scripts/check-docs.sh` pass.
+- Format with `gofmt` and keep `golangci-lint` clean.
+
+## License boundary
+
+The public core ships under Apache-2.0. Paid and enterprise capabilities are implemented in a separate private repository that imports this module. To keep the two layers cleanly separated:
+
+- Do not contribute any Pro or paid-feature implementation, algorithm, or gating switch to this repository.
+- Keep core dependencies to permissive licenses only (MIT, Apache-2.0, BSD). GPL and AGPL are not allowed, because they would contaminate the closed Pro layer.
+
+## Security disclosure
+
+> [!CAUTION]
+> Do not report vulnerabilities through a public issue.
+
+Send a private report to the maintainer through the contact listed on the repository profile, or another private channel. We will coordinate a fix and only publish details after a release contains the fix.

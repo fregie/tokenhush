@@ -1,56 +1,62 @@
-# Security Model — tokenhush (public core)
+# Security Model
 
-> 状态：V1 已实现（2026-09）。硬不变量由 `pkg/*` 的具名测试锁定（见 §2 与 `docs/architecture.md`）。
+**English** | [中文](security.zh-CN.md)
 
-Tokenhush 本身是一个安全工具，因此**它自己必须先安全**。本文定义威胁模型与不可违反的不变量。
+> Status: V1 is implemented (2026-09). The hard invariants are locked by named tests in `pkg/*`, and are restated under Hard invariants below and in `architecture.md`.
 
-## 1. 威胁模型
+Tokenhush is itself a security tool, so **it must be secure first**. This document defines the threat model and the invariants that cannot be broken.
 
-| 威胁 | 说明 | 缓解 |
+## Threat model
+
+| Threat | Description | Mitigation |
 |---|---|---|
-| **Prompt injection → 外泄** | 攻击者诱导模型吐出占位符，若网关在出站方向回填则泄露 | **硬不变量：绝不出站回填**（见 §2） |
-| **本地恶意进程/网页访问网关** | 任意本地进程或浏览器网页可 `fetch` `127.0.0.1:8787` | 双栈 loopback（127.0.0.1 + [::1]）；校验 `Host` 头；控制面另需每次 `run` 随机生成、`0600` 落盘的 bearer token，并对携带 `Origin` 的请求做同源校验 |
-| **DNS rebinding** | 恶意域解析到 127.0.0.1 绕过同源 | 校验 `Host`/`Origin` 头 |
-| **占位符碰撞** | 两个 secret 映射到同一占位符 → 错误回填 | HMAC 确定性映射 + 高熵后缀 |
-| **审计日志被篡改** | 事后篡改日志掩盖泄露 | append-only + HMAC 哈希链（key 存 Keychain/系统密钥环） |
-| **明文在内存被读取** | 同用户进程调试/转储 | 沙盒/硬化运行时；不落盘原文 |
-| **供应链攻击** | 依赖被投毒（参见 LiteLLM 事件） | 依赖最小化 + 锁版本 + 签名发布 + SBOM |
+| **Prompt injection to exfiltration** | An attacker tricks the model into emitting a placeholder; if the gateway backfills on the outbound direction, the secret leaks | **Hard invariant: never backfill outbound** (see Hard invariants) |
+| **Local malicious process/web page reaches the gateway** | Any local process or browser page can `fetch` `127.0.0.1:8787` | Dual-stack loopback (127.0.0.1 + `[::1]`); `Host` header validation; the control plane additionally requires a bearer token generated per `run`, stored `0600` on disk, and same-origin validation for requests carrying `Origin` |
+| **DNS rebinding** | A malicious domain resolves to 127.0.0.1 to bypass same-origin | `Host`/`Origin` header validation |
+| **Placeholder collision** | Two secrets map to the same placeholder, causing a wrong backfill | HMAC-deterministic mapping + high-entropy suffix |
+| **Audit log tampering** | After-the-fact edits hide a leak | Append-only + HMAC hash chain (key stored in Keychain / OS secret store) |
+| **Plaintext read from memory** | Debug or dump by another process under the same user | Sandbox/hardened runtime; no plaintext written to disk |
+| **Supply-chain attack** | A dependency is poisoned (see the LiteLLM incident) | Minimal dependencies + pinned versions + signed releases + SBOM |
 
-## 2. 硬不变量（不可违反）
+## Hard invariants
 
-1. **绝不向出站方向回填占位符。** 回填只发生在返回客户端的响应上。
-2. **默认不存储请求/响应明文。** 审计默认仅元数据。
-3. **默认不安装根证书、不做 MITM。** MITM 是后续阶段的显式 opt-in，且不在公开核心实现。
-4. **本地服务默认只监听双栈 loopback（127.0.0.1 + [::1]）。**
-5. **检测失败时 fail-safe，而非 fail-open 泄露**：无法确定是否敏感时，宁可多脱敏或放行并记录告警，绝不静默外发明文（策略可配，见下）。
+1. **Never backfill placeholders outbound.** Backfill happens only on responses returned to the client.
+2. **Do not store request/response plaintext by default.** Audit is metadata-only by default.
+3. **No root certificate is installed and no MITM is performed by default.** MITM is an explicit opt-in in later stages and is not implemented in the public core.
+4. **The local service binds dual-stack loopback only (127.0.0.1 + `[::1]`).**
+5. **Fail-safe on detection failure, not fail-open.** When the gateway cannot determine whether content is sensitive, it prefers over-redaction, or allows with a warning, and never silently emits plaintext. The policy is configurable (see below).
 
-## 3. 检测策略的取舍
+> [!IMPORTANT]
+> Invariant 1 is the reason prompt injection cannot turn the gateway into an exfiltration path: placeholders are only ever replaced on the way back to the client.
 
-- **误报（over-redaction）** 伤体验：模型收到占位符，代码/回答变差。
-- **漏报（under-redaction）** 伤承诺：敏感内容外发。
+## Detector trade-offs
 
-V1 策略：**高精确率优先的确定性检测器**（前缀、高熵、JWT、私钥头、Luhn、邮箱/卡号校验和），辅以 allow 列表与一键放行。**不宣称"绝不泄露"**——宣称"高置信 secrets 拦截 + 全程可审计"。
+- **False positives (over-redaction)** hurt the experience: the model receives a placeholder and code or answers degrade.
+- **False negatives (under-redaction)** hurt the promise: sensitive content leaves the machine.
 
-## 4. 审计完整性
+The V1 strategy is **deterministic, high-precision-first detectors** (known key prefixes, high entropy, JWT, private-key headers, Luhn card-number checksums, and email addresses), backed by an allowlist and one-click release. The project does **not** claim "never leaks". The honest claim is **"high-confidence secret interception + full auditability"**.
 
-- 存储：SQLite，append-only。
-- 完整性：每条记录哈希包含前一条的哈希（HMAC 链），key 存系统密钥环。
-- 内容：默认仅元数据（provider、端点、时间、字节数、脱敏计数、敏感类型）。
-- 保留：默认 7–30 天，可配。
-- **诚实边界**：本地 HMAC 链无法提供第三方可验证的合规证明，不要对合规市场过度承诺。
+## Audit integrity
 
-## 5. 密钥处理
+- **Storage**: SQLite, append-only.
+- **Integrity**: each record's hash includes the previous record's hash (HMAC chain), with the key stored in the OS keyring.
+- **Content**: metadata only by default (provider, endpoint, time, byte counts, redaction counts, sensitive types).
+- **Retention**: default 14 days; the suggested range is 7 to 30, configurable.
+- **Honest boundary**: a local HMAC chain cannot provide third-party-verifiable compliance proof. Do not over-promise to the compliance market.
 
-- **V1：透传**。工具自带 provider key，网关只转发、**不存储**。
-- 多账号/路由（Pro）需要存储 key 时，经跨平台密钥环抽象（macOS Keychain / Windows Credential Manager / Linux Secret Service + 降级链，见 `../../tokenhush-pro/docs/13-v1-technical-design.md`），并引入 gateway token + Origin 校验防 CSRF。
-- **诚实降级**：无系统密钥环时降级到受限文件存储（0600），并通过 secret store 的 `Backend()` **显式报告**，不得静默。
+## Key handling
 
-## 6. 发布与供应链
+- **V1: passthrough.** Tools carry their own provider keys; the gateway only forwards and **does not store** them.
+- When multi-account/routing (Pro) needs to store keys, it goes through the cross-platform keyring abstraction (macOS Keychain / Windows Credential Manager / Linux Secret Service plus a fallback chain, a design recorded in the private Pro repository), and adds a gateway token + Origin validation to prevent CSRF.
+- **Honest degradation**: without an OS keyring, storage falls back to a restricted file (`0600`), reported **explicitly** through the secret store's `Backend()`, never silently.
 
-- 依赖审计：核心只允许宽松许可（MIT/Apache/BSD），**禁止 GPL/AGPL**。
-- 发布：签名构建 + 校验和 + SBOM；CI 中扫描依赖与密钥。
-- 更新：Homebrew / Scoop / `curl|sh` 签名分发。
+## Release and supply chain
 
-## 7. 漏洞披露
+- **Dependency audit**: the core allows permissive licenses only (MIT/Apache/BSD); **GPL/AGPL are forbidden**.
+- **Release**: signed builds + checksums + SBOM; CI scans dependencies and secrets.
+- **Updates**: Homebrew / Scoop / `curl|sh` signed distribution.
 
-**请勿公开 issue**。见 [CONTRIBUTING.md](../CONTRIBUTING.md) 的披露流程。修复发布后再公开细节。
+## Vulnerability disclosure
+
+> [!CAUTION]
+> **Do not open a public issue** for a vulnerability. Follow the disclosure process in [CONTRIBUTING.md](../CONTRIBUTING.md). Details are published only after a fix has been released.

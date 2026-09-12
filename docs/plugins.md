@@ -1,29 +1,32 @@
-# Writing Plugins — tokenhush (public core)
+# Writing plugins
 
-> 状态：V1 已实现（2026-09）。本文面向想扩展检测/改写能力的作者；接口定义见 [extension-api.md](extension-api.md)，安全边界见 [security.md](security.md)。
+**English** | [中文](plugins.zh-CN.md)
 
-Tokenhush 的内容处理是一条**编译内置、能力分级**的插件流水线。内置的六种检测器（`pkg/redact`）本身就是插件；你写的新插件走同一套接口，遵循同一套最小权限约束。V1 **没有动态加载**——插件在构建时编入二进制。
+> Status: V1 implemented (2026-09). This guide is for authors who want to extend detection and rewriting. The interface definitions live in [extension-api.md](extension-api.md); the security boundaries live in [security.md](security.md).
 
-## 心智模型
+Tokenhush processes content through a **compiled-in, capability-tiered** plugin pipeline. The six built-in detectors (`pkg/redact`) are themselves plugins. Your plugin uses the same interfaces and the same least-privilege constraints. V1 has **no dynamic loading**: plugins are compiled into the binary at build time.
 
+## Mental model
+
+```mermaid
+flowchart LR
+  A["Client request body"] --> B["Leaf walk"] --> C["Inspectors"] --> D["Policy engine"] --> E["Core redaction"] --> F["Upstream"]
+  G["Upstream response body"] --> H["Leaf walk"] --> I["Inspectors"] --> J["Policy engine"] --> K["Transformers"] --> L["Core backfill"] --> M["Client"]
 ```
-出站请求 body ──▶ 解析为叶子 ──▶ Inspectors ──▶ 策略引擎 ──▶ 核心脱敏 ──▶ 上游
-入站响应 body ──▶ 解析为叶子 ──▶ Inspectors ──▶ 策略引擎 ──▶ Transformers ──▶ 核心回填 ──▶ 客户端
-```
 
-两条铁律：
+Two rules are non-negotiable:
 
-1. **插件只提议，核心做决定。** Inspector 返回 `Finding`（含期望的 `Action`），由核心的策略引擎聚合（`Allow < Warn < Redact < Block`）并执行。
-2. **出站明文只有核心能动。** `Transformer` **只能**声明 `response_content` / `metadata`——请求内容和原始 header 永远不会交给它。占位符 ↔ 原文映射对插件不可达。
+1. **Plugins propose, the core decides.** An Inspector returns `Finding` values that carry the `Action` it wants. The core's policy engine aggregates them (`Allow < Warn < Redact < Block`) and executes the result.
+2. **Only the core touches outbound plaintext.** A `Transformer` may declare `response_content` and `metadata` only. Request content and raw headers are never handed to it, and the placeholder-to-original mapping is unreachable to plugins.
 
-## 两种插件
+## The two plugin kinds
 
-| 接口 | 作用 | 允许的 phase | 返回 |
+| Interface | Role | Allowed phases | Returns |
 |---|---|---|---|
-| `Inspector` | 检测，报告 `Finding` | 全部四种 | `[]Finding` |
-| `Transformer` | 改写文档（仅入站） | `response_content`、`metadata` | `*Document` |
+| `Inspector` | Detect and report `Finding` values | all four | `[]Finding` |
+| `Transformer` | Rewrite the document (inbound only) | `response_content`, `metadata` | `*Document` |
 
-两者都实现 `Plugin`：
+Both implement `Plugin`:
 
 ```go
 type Plugin interface {
@@ -32,45 +35,54 @@ type Plugin interface {
 }
 ```
 
-## Phase 与 Capabilities
+## Phases and capabilities
 
-`Phase` 标识生命周期位置：
+`Phase` marks the position in the request/response lifecycle:
 
-| Phase | 含义 |
+| Phase | Meaning |
 |---|---|
-| `extension.RequestContent` | 出站请求 body 的叶子 |
-| `extension.ResponseContent` | 入站响应 body 的叶子 |
-| `extension.Header` | header（**仅元数据**，取值永远被抹掉） |
-| `extension.Metadata` | 非内容元数据（工具、模型、字节数…） |
+| `extension.RequestContent` | Leaves of the outbound request body |
+| `extension.ResponseContent` | Leaves of the inbound response body |
+| `extension.Header` | Headers (**metadata only**; values are always withheld) |
+| `extension.Metadata` | Non-content metadata (tool, model, byte counts, ...) |
 
-`Capabilities` 是你申请的权限。**申请得越少，核心放行得越多**：
+`Capabilities` is the permission you request. **The less you ask for, the more the core can safely allow**:
 
 ```go
 extension.Capabilities{
     Phases:       []extension.Phase{extension.RequestContent},
-    ReadContent:  true,   // 不申请就只能看到 leaf 路径与长度
-    CanTransform: false,  // 仅 Transformer 需要
-    CanBlock:     false,  // true 才能让策略采纳 Block
-    CanNetwork:   false,  // 编译内置第三方层一律被拒
-    Priority:     100,    // 升序执行；同优先级按 id 升序
+    ReadContent:  true,   // without it you only see leaf paths and lengths
+    CanTransform: false,  // only a Transformer needs it
+    CanBlock:     false,  // true lets the policy honor a Block
+    CanNetwork:   false,  // always denied for the compiled-in third-party tier
+    Priority:     100,     // ascending; ties break by id
 }
 ```
 
-- 未申请 `ReadContent` 时，`Leaf.Content == nil`，只有 `Leaf.Path` 与 `Leaf.Len`。
-- `Header` phase 无论是否申请 `ReadContent`，`Content` 都被清空——**`Authorization` / `Cookie` / API key 取值永不进入插件**。
-- 返回 `Block` 的 `Finding` 只有在 `CanBlock` 为真时才有效；否则核心视该插件输出非法。
+| Field | Meaning |
+|---|---|
+| `Phases` | The lifecycle phases you handle; must be non-empty and defined |
+| `ReadContent` | Access to `Leaf.Content`; without it you see paths and lengths only |
+| `CanTransform` | Declares that you may return a rewritten document (Transformer only) |
+| `CanBlock` | Lets the policy honor a `Block` from this plugin |
+| `CanNetwork` | Request egress; denied at registration for the compiled-in tier |
+| `Priority` | Execution order, ascending, non-negative; ties break by plugin id |
 
-## 核心为你保证什么
+- Without `ReadContent`, `Leaf.Content == nil`; you only get `Leaf.Path` and `Leaf.Len`.
+- In the `Header` phase, `Content` is cleared whether or not you requested `ReadContent`. `Authorization`, `Cookie`, and API key values never reach a plugin.
+- A `Finding` with `Block` only takes effect when `CanBlock` is true; otherwise the core treats the plugin output as malformed.
 
-- 调用前核心已对文档做 `extension.Gate`：越权内容看不到，未声明 phase 的文档不会交给你。
-- 你返回的 `Finding.PluginID` 会被核心覆写为你自己的 `ID()`——无法伪造他人来源。
-- `Inspect` 在独立的 goroutine 中带超时调用，并 `recover` panic；插件崩溃/超时**绝不静默**。
-- 响应 Transformer 在**回填之前**运行，所以它的输出不可能包含只有回填才会还原的原文。
-- 核心只按叶子序号（优先）或路径（兜底）把你返回的内容拼回 body；`Content` 为 `nil` 或与原文相等时保持原 token。
+## What the core guarantees
 
-## 写一个 Inspector
+- Before invoking you, the core runs `extension.Gate`: content you did not ask for stays hidden, and a document whose phase you did not declare is never handed to you.
+- The core overwrites `Finding.PluginID` with your own `ID()`, so you cannot spoof another plugin's provenance.
+- `Inspect` runs in its own goroutine under a timeout, with panic recovery. A crash or timeout is never silent.
+- Response Transformers run **before backfill**, so their output cannot contain plaintext that only backfill would restore.
+- The core splices your returned content back into the body by leaf ordinal first, then by path. A `nil` `Content`, or content equal to the original, leaves the raw token untouched.
 
-下面是一个完整、可直接编译的检测器：把字面量 `INTERNAL-` 标记为 `Redact`。
+## Writing an Inspector
+
+Here is a complete, compilable detector that marks the literal `INTERNAL-` as `Redact`:
 
 ```go
 package myplugins
@@ -120,16 +132,16 @@ func (*InternalMarker) Inspect(doc *extension.Document) ([]extension.Finding, er
 }
 ```
 
-要点：
+Key points:
 
-- `Start`/`End` 是**该 leaf 内**的字节偏移，`End` 开区间；必须落在 `len(Content)` 内。
-- `Confidence` 必须在 `[0,1]`；否则整个插件被判非法。
-- 不要自作主张写占位符——核心的脱敏引擎负责替换。
-- 越界/负偏移/未知 `Action` 都会让核心把**整个插件**判为非法（不会只丢弃你那条错误 finding）。
+- `Start` and `End` are byte offsets **within that leaf**, `End` exclusive, and must lie inside the leaf content.
+- `Confidence` must be in `[0,1]`; otherwise the whole plugin is judged malformed.
+- Do not write placeholders yourself. The core's redaction engine owns the substitution.
+- A finding the core rejects (`Action` outside the known set, `Confidence` outside `[0,1]` or `NaN`, a negative `Start` or `LeafIndex`, an `End` before `Start`, or a `Block` without `CanBlock`) fails the **whole plugin**, not just that one finding. The core never drops a single bad finding, so a plugin cannot hide a real verdict behind malformed output.
 
-## 写一个 Transformer
+## Writing a Transformer
 
-Transformer 只能声明 `response_content` / `metadata`，用于改写入站响应（例如统一某类字段）。它**看不到原文 secret**。
+A Transformer may declare `response_content` and `metadata` only. It rewrites inbound responses (for example, normalizing a class of fields). It **does not see the original secrets**.
 
 ```go
 package myplugins
@@ -156,20 +168,21 @@ func (*HeaderStamper) Transform(doc *extension.Document) (*extension.Document, e
 		if len(doc.Leaves[i].Content) == 0 {
 			continue
 		}
-		// 例：仅演示改写能力；真实插件应保持结构化，避免破坏 JSON。
+		// Example only: this demonstrates the rewrite capability. A real plugin
+		// should preserve structure and avoid breaking JSON.
 		doc.Leaves[i].Content = append([]byte("handled: "), doc.Leaves[i].Content...)
 	}
 	return doc, nil
 }
 ```
 
-- 返回 `nil` 文档表示“不改写”，核心沿用上一版。
-- 多个 Transformer 按 `Priority` 链式执行，后一个看到前一个的结果。
-- Header phase 的 `Content` 始终为空，Transformer 拿不到 header 取值。
+- Returning a `nil` document means "no change"; the core keeps the previous version.
+- Multiple Transformers run in a `Priority` chain, and each one sees the previous one's result.
+- In the `Header` phase, `Content` is always empty, so a Transformer never gets header values.
 
-## 注册插件（编译内置）
+## Registering a plugin (compiled-in)
 
-插件在启动时注册进 `extension.Registry`，`Register` 就是安全闸门：
+Plugins register into `extension.Registry` at startup. `Register` is the security gate:
 
 ```go
 reg := extension.NewRegistry()
@@ -181,12 +194,12 @@ if err := reg.Register(myplugins.NewHeaderStamper()); err != nil {
 }
 ```
 
-公开核心的 `tokenhush run` 只注册内置检测器。V1 **没有**运行时加载外部插件的开关——不支持 `.so` / WASM / 子进程，也没有“插件目录”。要让自定义插件生效，有两种方式：
+The public core's `tokenhush run` registers only the built-in detectors. V1 has **no** runtime switch for loading external plugins: no `.so`, no WASM, no subprocess, and no "plugin directory". To put a custom plugin to work you have two options:
 
-1. **贡献到核心**：把插件加入内置集合，随核心一起评审发布。
-2. **构建你自己的宿主程序**：写一个导入本核心库的独立 `main` 包，用导出的 `pkg/proxy` 原语自行装配流水线，把你的 registry 传进去。私有 Pro 构建就是这个模式；它的代码永远不会出现在公开仓库。
+1. **Contribute it to the core:** add it to the built-in set so it ships and is reviewed with the core.
+2. **Build your own host program:** write a separate `main` package that imports this core library, assembles the pipeline from the exported `pkg/proxy` primitives, and passes in your registry. The private Pro build follows this pattern, and its code never appears in the public repository.
 
-用导出原语装配的大致形状（示意；字段以 `PipelineConfig` 为准）：
+The shape of an assembly built from exported primitives (illustrative; the fields are defined by `PipelineConfig`):
 
 ```go
 package main
@@ -197,7 +210,7 @@ import (
 	"github.com/fregie/tokenhush/pkg/extension"
 	"github.com/fregie/tokenhush/pkg/proxy"
 	"github.com/fregie/tokenhush/pkg/redact"
-	// ...你的插件
+	// ...your plugins
 )
 
 func main() {
@@ -219,39 +232,39 @@ func main() {
 		log.Fatal(err)
 	}
 	_ = pipe
-	// 再用 proxy.Listen / NewResolver / NewForwarder /
-	// HostAllowlist / ControlAuth / OriginPolicy 组装出你的 server。
+	// Then assemble your server from proxy.Listen / NewResolver / NewForwarder /
+	// HostAllowlist / ControlAuth / OriginPolicy.
 }
 ```
 
-> `pkg/proxy` 导出 `Listen`、`NewPipeline`、`NewResolver`、`NewForwarder`、`HostAllowlist`、`ControlAuth`、`OriginPolicy` 等原语；`internal/cli` 的 `run` 装配是它们的参考用法（`internal/` 不可被外部模块导入）。
+> `pkg/proxy` exports `Listen`, `NewPipeline`, `NewResolver`, `NewForwarder`, `HostAllowlist`, `ControlAuth`, and `OriginPolicy`. The `run` wiring in `internal/cli` is the reference usage, though `internal/` cannot be imported by an external module.
 
-## 注册期会被拒绝的情况
+## Registration-time rejections
 
-`Register` 返回**类型化错误**（用 `errors.Is` 判断），任一不满足就不入库：
+`Register` returns **typed errors** (classify them with `errors.Is`). If any requirement fails, the plugin is not admitted:
 
-| 错误 | 触发 |
+| Error | Trigger |
 |---|---|
-| `ErrNotAPlugin` | nil / typed-nil / 不实现 Inspector 或 Transformer |
-| `ErrMissingID` | id 为空或只有空白 |
-| `ErrDuplicateID` | id 已注册 |
-| `ErrNoPhases` | 没声明 phase |
-| `ErrInvalidPhase` | 声明了未定义的 phase |
-| `ErrTransformerPhase` | Transformer 声明 `request_content` / `header` |
-| `ErrNetworkDenied` | 声明 `CanNetwork` |
-| `ErrInvalidPriority` | 负优先级 |
+| `ErrNotAPlugin` | nil, typed-nil, or a type implementing neither Inspector nor Transformer |
+| `ErrMissingID` | id is empty or whitespace only |
+| `ErrDuplicateID` | id is already registered |
+| `ErrNoPhases` | no phase declared |
+| `ErrInvalidPhase` | an undefined phase declared |
+| `ErrTransformerPhase` | a Transformer declares `request_content` or `header` |
+| `ErrNetworkDenied` | `CanNetwork` declared |
+| `ErrInvalidPriority` | negative priority |
 
-同时实现 Inspector 和 Transformer 的插件会被按**更严的 Transformer 规则**校验（只能声明 `response_content` / `metadata`）。
+A plugin that implements both Inspector and Transformer is validated under the **stricter Transformer rules**, so it may declare `response_content` and `metadata` only.
 
-## 失败策略
+## Failure strategy
 
-- 默认 `FailOpenWarn`：插件报错/超时/panic 时记录一条审计告警，请求继续。
-- `FailClosed`：用于关键检测器，失败即拒绝请求（返回 `Block`）。内置检测器采用更稳健的配置。
-- 无论哪种策略，**失败都会留下审计告警**，绝不静默吞掉。
+- The default is `FailOpenWarn`: on error, timeout, or panic the core drops the plugin's findings, records an audit warning, and lets the request continue.
+- `FailClosed`: for critical detectors, a failure rejects the request (returns `Block`). The built-in detectors use this stricter setting.
+- Under either policy, **a failure always leaves an audit warning**. Nothing is swallowed silently.
 
-## 测试你的插件
+## Testing your plugin
 
-插件是普通 Go 类型，直接单测即可，不需要起网关：
+A plugin is an ordinary Go type, so unit-test it directly. No gateway needed:
 
 ```go
 func TestInternalMarker(t *testing.T) {
@@ -271,13 +284,13 @@ func TestInternalMarker(t *testing.T) {
 }
 ```
 
-也要覆盖：回归到核心注册闸门（`Register` 拒绝越权能力）、`Gate` 下的可见性（无 `ReadContent` 时 `Content == nil`）、以及越界 finding 被判非法的路径。仓库内 `pkg/redact/*_test.go` 是很好的范例。
+Also cover: the core registration gate (`Register` rejects over-broad capabilities), visibility under `Gate` (`Content == nil` without `ReadContent`), and the path where a malformed finding fails the plugin. The `pkg/redact/*_test.go` files in the repo are good examples to follow.
 
 ## Do / Don't
 
-- **Do** 申请最小 `Capabilities`；只声明你真正处理的 phase。
-- **Do** 对任意字节（含非法 UTF-8）保持健壮，绝不 panic。
-- **Do** 用 `Finding` 表达意图，让核心决定并执行。
-- **Don't** 试图持有或重建 占位符 ↔ 原文 映射——接口不提供。
-- **Don't** 在 `RequestContent` 上做改写（只有 Inspector 能在请求侧动作）。
-- **Don't** 依赖 `CanNetwork`；编译内置层会被拒绝。
+- **Do** request the minimum `Capabilities`; declare only the phases you actually handle.
+- **Do** stay robust against arbitrary bytes, including invalid UTF-8. Never panic.
+- **Do** express intent with `Finding` values and let the core decide and execute.
+- **Don't** try to hold or reconstruct the placeholder-to-original mapping. The interface does not provide it.
+- **Don't** attempt to rewrite `RequestContent`. Only an Inspector can act on the request side, and it cannot rewrite.
+- **Don't** rely on `CanNetwork`; the compiled-in tier is denied at registration.

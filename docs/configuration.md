@@ -1,105 +1,141 @@
-# Configuration — 各 AI 工具接入 Tokenhush
+# Configuration
 
-> 状态：V1 已实现（2026-09）。命令与默认值以本仓库 `main` 为准；`scripts/check-docs.sh` 会校验文中命令与配置键确实存在。
+**English** | [中文](configuration.zh-CN.md)
 
-## 通用流程
+> Status: V1 implemented (2026-09). Commands and defaults track `main`; [`scripts/check-docs.sh`](../scripts/check-docs.sh) verifies that every documented command and config key actually exists.
 
-1. 启动本地网关：`tokenhush run`（默认监听 `127.0.0.1:8787`）。
-2. 把目标工具的 API base URL 指向网关。
-3. 用 `tokenhush env <tool>` 打印可复制片段，或按下方各节手动配置。
+This page shows how to point your AI coding tools at the local Tokenhush gateway. For the security model behind redaction, see [security.md](security.md).
 
-所有请求走**明文 HTTP 到 localhost**，因此网关能看到完整内容做脱敏——**无需安装任何根证书**。
+## General workflow
 
-> **平台**：Windows / Linux / macOS 均支持。下方 `export` 为 POSIX（mac/Linux）；Windows PowerShell 用 `$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"`（持久化用 `setx`）。`tokenhush env` 会按当前平台自动选择方言。
+1. Start the gateway in the foreground: `tokenhush run`. It listens on `127.0.0.1:8787` by default.
+2. Point the tool's API base URL at the gateway.
+3. Print a ready-to-paste snippet with `tokenhush env <tool>`, or configure the tool by hand from the sections below.
+
+All requests travel as plaintext HTTP to loopback, so the gateway can read the full body and redact it. No root certificate is needed.
+
+> [!NOTE]
+> Windows, Linux, and macOS are all supported. The `export` snippets below are POSIX (macOS / Linux). On Windows PowerShell, use `$env:ANTHROPIC_BASE_URL = "http://127.0.0.1:8787"` and `setx` to persist it. `tokenhush env` picks the right dialect for the current platform automatically.
 
 ## Claude Code CLI
 
 ```bash
 export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
-# 如需自定义鉴权头，Claude Code 支持 ANTHROPIC_AUTH_TOKEN
+# Claude Code also accepts ANTHROPIC_AUTH_TOKEN if you need a custom auth header
 ```
 
-> 订阅登录（Claude Max/Pro）：推理请求遵守 `ANTHROPIC_BASE_URL`（见 [Anthropic LLM gateway 文档](https://code.claude.com/docs/en/llm-gateway)），网关需原样转发 `anthropic-beta`。OAuth 刷新/授权固定走 `platform.claude.com` / `claude.ai`，不经网关。真人会话实测流程见 `scripts/oauth-matrix.sh --capture`。
+> [!NOTE]
+> With a Claude Max/Pro subscription, inference requests honor `ANTHROPIC_BASE_URL` (see the [Anthropic LLM gateway docs](https://code.claude.com/docs/en/llm-gateway)), and the gateway must forward `anthropic-beta` verbatim. OAuth refresh and authorization always go to `platform.claude.com` and `claude.ai`, never through the gateway. For a live-session capture flow, see [`scripts/oauth-matrix.sh`](../scripts/oauth-matrix.sh) `--capture`.
 
 ## Codex CLI
 
-编辑 `~/.codex/config.toml`：
+Edit `~/.codex/config.toml`:
 
 ```toml
 model_providers.tokenhush = { name = "Tokenhush", base_url = "http://127.0.0.1:8787/v1" }
 ```
-> 注意：Codex 默认走 **Responses API**（`/v1/responses`），Tokenhush 已适配该协议（含 SSE 增量回填）。
-> **ChatGPT 订阅登录（非 API key）当前不支持经网关使用**：订阅令牌只对 ChatGPT 服务路径有效，转发到 OpenAI 平台 API 会 401（[openai/codex#34608](https://github.com/openai/codex/issues/34608)）。请使用 API key 模式。
+
+Codex uses the **Responses API** (`/v1/responses`) by default. Tokenhush supports that protocol, including incremental SSE backfill.
+
+> [!WARNING]
+> ChatGPT subscription login (non-API-key) is **not supported** through the gateway today. The subscription token is only valid for ChatGPT service paths, and forwarding it to the OpenAI platform API returns 401 (see [openai/codex#34608](https://github.com/openai/codex/issues/34608)). Use API key mode instead.
 
 ## Aider
 
 ```bash
 export OPENAI_API_BASE=http://127.0.0.1:8787/v1
 export ANTHROPIC_API_BASE=http://127.0.0.1:8787
-# 或命令行：aider --openai-api-base http://127.0.0.1:8787/v1
+# or on the command line:
+aider --openai-api-base http://127.0.0.1:8787/v1
 ```
 
-## Cline / Roo Code（VS Code 扩展）
+## Cline / Roo Code
 
-在扩展设置中选择 "OpenAI Compatible"（或 Anthropic），把 **Base URL** 设为 `http://127.0.0.1:8787/v1`。
+These are VS Code extensions. In the extension settings choose "OpenAI Compatible" (or Anthropic) and set the base URL:
+
+```text
+Base URL: http://127.0.0.1:8787/v1
+```
 
 ## Continue
 
-编辑 `~/.continue/config.json`，在 `models` 中设置 `apiBase: "http://127.0.0.1:8787/v1"`。
+Edit `~/.continue/config.json` and set `apiBase` inside `models`:
+
+```json
+{
+  "models": [
+    {
+      "apiBase": "http://127.0.0.1:8787/v1"
+    }
+  ]
+}
+```
 
 ## Open WebUI
 
-在「连接」中添加 OpenAI 兼容端点，URL 填 `http://127.0.0.1:8787/v1`。
+Under **Connections**, add an OpenAI-compatible endpoint and use this URL:
 
-## `tokenhush.yaml` 参考
+```text
+Base URL: http://127.0.0.1:8787/v1
+```
 
-配置文件按平台放在配置目录（`pkg/platform.ConfigDir()`）：macOS `~/Library/Application Support/tokenhush/`，Linux `$XDG_CONFIG_HOME/tokenhush/`（默认 `~/.config/tokenhush/`），Windows `%AppData%\tokenhush\`。可用 `--config PATH` 覆盖。文件缺失即使用默认值；**未知键会被拒绝**（防止拼写错误静默失效）。
+## `tokenhush.yaml` reference
 
-完整默认配置：
+The config file lives in the platform config directory (`pkg/platform.ConfigDir()`): macOS `~/Library/Application Support/tokenhush/`, Linux `${XDG_CONFIG_HOME:-~/.config}/tokenhush/`, Windows `%AppData%\tokenhush\`. Override it with `--config PATH`, or move both the config and data directories with `TOKENHUSH_HOME`. A missing file means "use defaults"; **unknown keys are rejected**, so a typo cannot silently disable protection.
+
+Full defaults:
 
 <!-- check-docs:config:start -->
 ```yaml
 listen:
-  host: 127.0.0.1      # 只允许 127.0.0.1 / ::1 / localhost；0.0.0.0 会被拒绝
+  host: 127.0.0.1      # only 127.0.0.1 / ::1 / localhost; 0.0.0.0 is rejected
   port: 8787           # 1..65535
 detectors:
-  prefixes: true       # 已知 key 前缀（sk-、AKIA、ghp_ …）
-  high_entropy: true   # 高熵串
-  jwt: true            # JWT
-  private_keys: true   # PEM 私钥头
-  luhn: true           # 卡号（Luhn 校验）
-  email: true          # 邮箱
-allowlist: []          # 永不脱敏的字面量列表
+  prefixes: true       # known key prefixes (sk-, AKIA, ghp_, ...)
+  high_entropy: true   # high-entropy strings
+  jwt: true            # JWTs
+  private_keys: true   # PEM private-key headers
+  luhn: true           # card numbers (Luhn)
+  email: true          # email addresses
+allowlist: []          # literals that are never redacted
 audit:
-  enabled: true        # 本地审计（默认仅元数据）
-  retention_days: 14   # >= 1；7..30 为建议区间
+  enabled: true        # local audit (metadata only by default)
+  retention_days: 14   # >= 1 (7-30 is the suggested range)
 log:
   level: info          # debug | info | warn | error
-upstreams:             # host/路径前缀 → 上游 base URL（自定义/兼容端点）
+upstreams:             # host or path prefix -> upstream base URL
   api.example.com: https://api.example.com
 ```
 <!-- check-docs:config:end -->
 
-要点：
+Key points:
 
-- `listen.host` 只接受 loopback；网关**绝不**绑定 `0.0.0.0` 或空 host。
-- 同名 key 的 YAML 名与检测器 id 有意不同：`prefixes` → `prefix`，`private_keys` → `private_key`（见 `pkg/config` 注释）。
-- `upstreams:` 用于把某个 host 或路径前缀转发到你自己的 OpenAI 兼容上游；未命中的请求走内建解析（`/v1/messages` → Anthropic，`/v1/chat/completions`、`/v1/responses` → OpenAI）。未知路径返回明确错误，绝不静默错转。
+- `listen.host` accepts loopback only. The gateway **never** binds `0.0.0.0` or an empty host; it binds dual-stack loopback (`127.0.0.1` and `[::1]`).
+- The six detectors are deterministic and tuned for high precision: known key prefixes, high-entropy strings, JWT, PEM private-key headers, Luhn card numbers, and email.
+- Two YAML keys deliberately differ from their detector id: `prefixes` maps to id `prefix`, and `private_keys` maps to id `private_key` (see the `pkg/config` comments).
+- `allowlist` holds literals that are never redacted.
+- `audit.enabled` and `audit.retention_days` control the local audit timeline, which is metadata-only by default.
+- `upstreams:` forwards a host or path prefix to your own OpenAI-compatible upstream. Unmatched requests fall back to the built-ins: `/v1/messages` routes to Anthropic; `/v1/chat/completions` and `/v1/responses` route to OpenAI. An unknown path returns an explicit error and is never silently misrouted.
 
-## 已知限制（重要）
+## Known limitations
 
-- **订阅式 OAuth 登录**：
-  - Claude Code（订阅登录）：推理请求遵守 base URL（Anthropic 官方文档已确认；网关须原样转发 `anthropic-beta`）。认证/刷新固定走 `platform.claude.com` 等域名，不经网关。真人会话实测流程见 `scripts/oauth-matrix.sh --capture`。
-  - Codex CLI（ChatGPT 订阅登录）：**V1 不支持**，见上方 Codex 小节；请用 API key。
-- **遥测端点不走 base URL**：部分工具会向 PostHog / Sentry 等发送遥测，含内容较少但需知晓。
-- **不覆盖**：Cursor agent 流量（走 `api2.cursor.sh`）、ChatGPT/Claude 桌面版、浏览器网页版——需系统级方案，不在公开核心实现。
+> [!IMPORTANT]
+> Read this section before you rely on the gateway for a subscription login.
 
-## 连通性自检
+- **Subscription OAuth login**
+  - **Claude Code (subscription login):** inference requests honor the base URL (Anthropic's docs confirm this; the gateway must forward `anthropic-beta` verbatim). Auth and refresh stay on `platform.claude.com` and similar domains, so they never pass through the gateway. See the live-session flow in [`scripts/oauth-matrix.sh`](../scripts/oauth-matrix.sh).
+  - **Codex CLI (ChatGPT subscription login):** not supported in V1. See the Codex section above and use an API key.
+- **Telemetry endpoints bypass the base URL:** some tools send telemetry to PostHog, Sentry, and similar services. It carries little content, but you should know it happens.
+- **Not covered:** Cursor agent traffic (which goes to `api2.cursor.sh`), the ChatGPT and Claude desktop apps, and browser web UIs. These need a system-level approach and are not implemented in the public core.
+
+## Connectivity self-check
 
 ```bash
-tokenhush version       # 确认二进制可用
-tokenhush doctor        # 诊断配置 / 密钥环 / 端口等常见问题
-tokenhush env claude    # 打印接入片段，含当前配置端口
+<!-- check-docs:commands:start -->
+tokenhush version       # confirm the binary runs
+tokenhush doctor        # diagnose config, keyring, and port problems
+tokenhush env claude    # print the setup snippet, including the current port
+<!-- check-docs:commands:end -->
 ```
 
-`run` 启动后会打印监听地址与控制 token 文件路径；`tokenhush status` 报告运行状态，`tokenhush audit [--json]` 读取本地审计时间线。控制面 `GET /status`、`GET /audit` 需携带 bearer token（`run` 每次启动重新生成）。
+`run` prints the listening address and the control-token file path when it starts. `tokenhush status` reports whether the gateway is running, and `tokenhush audit [--json]` reads the local audit timeline. Both `env` and `doctor` accept `--config PATH` and `--port N`, so a self-check matches the gateway you actually started. The control plane (`GET /status`, `GET /audit`) requires the bearer token, which is regenerated on every `run`.
