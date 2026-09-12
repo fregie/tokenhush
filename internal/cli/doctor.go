@@ -445,12 +445,25 @@ var doctorToolsConfig = []doctorTool{
 	{name: "aider", bin: "aider", configFiles: []string{".aider.conf.yml", ".aider.conf.yaml"}},
 	{name: "cline", extPrefixes: []string{"saoudrizwan.claude-dev-"}},
 	{name: "roo", extPrefixes: []string{"rooveterinaryinc.roo-cline-"}},
+	{name: "opencode", bin: "opencode", configFiles: []string{".config/opencode/opencode.json"}},
+	{name: "qwen", bin: "qwen", configFiles: []string{".qwen/settings.json"}},
+	{name: "crush", bin: "crush", configFiles: []string{".config/crush/crush.json"}},
+	{name: "zed", configFiles: []string{".config/zed/settings.json", "Library/Application Support/Zed/settings.json"}},
+	{name: "continue", configFiles: []string{".continue/config.yaml", ".continue/config.json"}},
+	{name: "openwebui"},
+	{name: "goose", bin: "goose", configFiles: []string{".config/goose/config.yaml"}},
+	{name: "openhands", bin: "openhands", configFiles: []string{".openhands/config.toml"}},
+	{name: "kilo", extPrefixes: []string{"kilocode.kilo-code-"}},
 }
 
 // doctorToolEnvVars are the environment overrides that carry a tool's base URL.
 var doctorToolEnvVars = map[string][]string{
-	"claude": {"ANTHROPIC_BASE_URL"},
-	"aider":  {"OPENAI_API_BASE", "ANTHROPIC_API_BASE"},
+	"claude":    {"ANTHROPIC_BASE_URL"},
+	"aider":     {"OPENAI_API_BASE", "ANTHROPIC_API_BASE"},
+	"qwen":      {"OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"},
+	"openwebui": {"OPENAI_API_BASE_URL"},
+	"goose":     {"OPENAI_HOST", "OPENAI_BASE_PATH"},
+	"openhands": {"LLM_BASE_URL"},
 }
 
 // doctorExtensionDirs are the VS Code-family extension roots checked for

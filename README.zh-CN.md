@@ -29,7 +29,7 @@ AI 编码工具要有用，就得读到你的代码和配置。可一次请求�
 - **逐字段扫描，六个检测器。** Tokenhush 把整个请求体逐叶走一遍，嵌套 JSON 也能覆盖，流式响应边到边处理。它会认出已知密钥前缀（`sk-`、`AKIA`、`ghp_` 等）、高熵字符串、JWT、PEM 私钥头、Luhn 卡号、邮箱地址。
 - **占位符稳定可还原。** 命中项会变成 `__PII_email_9f2c8a4b6d1e__` 这样的令牌。映射存在内存里，只在当前会话有效。重启后映射丢失，输出里可能偶尔看到占位符，这是安全降级，不是泄露。
 - **只在本机，出错就关。** 网关只绑定 `127.0.0.1` 和 `[::1]`，始终校验 Host，浏览器类请求还查 Origin；控制 API 用 bearer token 保护，token 以 `0600` 权限保存。出问题时网关选择关闭，而不是继续转发。
-- **自带助手。** `tokenhush env` 为 `claude`、`codex`、`aider`、`cline`、`roo` 打印可直接粘贴的配置片段。`tokenhush doctor` 跑常见检查，退出码一看就懂：全部通过是 `0`，有检查失败是 `1`，用法错误是 `2`。
+- **自带助手。** `tokenhush env` 为 14 个工具打印可直接粘贴的配置片段：`claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands` 和 `kilo`。`tokenhush doctor` 跑常见检查，退出码一看就懂：全部通过是 `0`，有检查失败是 `1`，用法错误是 `2`。
 - **一套代码，扩展点开放。** 纯 Go 编写，`CGO_ENABLED=0`，为 macOS、Linux、Windows 的 amd64 和 arm64 构建。跨层接口（`Router`、`CostSink`）和内容插件（`Inspector` / `Transformer`）可以扩展流水线；V1 只支持编译期插件。
 
 ## 工作原理
@@ -56,10 +56,17 @@ flowchart LR
 | Codex CLI | `~/.codex/config.toml` → `base_url` | 支持（API key 模式） |
 | Aider | `OPENAI_API_BASE` / `ANTHROPIC_API_BASE` | 支持 |
 | Cline / Roo Code | 设置中的 OpenAI Compatible base URL | 支持 |
-| Continue | `config.json` → `apiBase` | 手动配置 |
-| Open WebUI | OpenAI 兼容端点 | 手动配置 |
+| opencode | `opencode.json` → `provider.options.baseURL` | 支持 |
+| Qwen Code | `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | 支持 |
+| Charm Crush | `crush.json` → `providers.<id>.base_url` | 支持 |
+| Zed | `settings.json` → `openai_compatible.<id>.api_url` | 支持 |
+| Continue.dev | `config.yaml` → `models[].apiBase` | 支持 |
+| Open WebUI | `OPENAI_API_BASE_URL` | 支持 |
+| Goose | `OPENAI_HOST` + `OPENAI_BASE_PATH` | 支持 |
+| OpenHands | `LLM_BASE_URL` | 支持 |
+| Kilo Code | 扩展设置中的 OpenAI Compatible base URL | 支持 |
 
-`tokenhush env <tool>` 会为 `claude`、`codex`、`aider`、`cline` 和 `roo` 打印可直接粘贴的配置片段。每种工具的完整说明见 [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)。
+`tokenhush env <tool>` 会为 `claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands` 和 `kilo` 打印可直接粘贴的配置片段。每种工具的完整说明与路由可达性矩阵见 [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)。
 
 > [!WARNING]
 > V1 未覆盖：Cursor 代理流量、ChatGPT 和 Claude 桌面应用，以及浏览器 Web UI。这些需要系统级 MITM，公开核心并未实现。
@@ -128,7 +135,7 @@ tokenhush status
 |---|---|---|
 | `tokenhush run` | 在前台启动网关。 | `--config PATH`、`--port N`（1..65535）、`--log-level debug\|info\|warn\|error` |
 | `tokenhush status` | 显示网关是否正在运行。 | `--json` |
-| `tokenhush env <tool>` | 打印工具配置片段。工具：`claude`、`codex`、`aider`、`cline`、`roo`。 | `--config PATH`、`--port N` |
+| `tokenhush env <tool>` | 打印工具配置片段。工具：`claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands`、`kilo`。 | `--config PATH`、`--port N` |
 | `tokenhush doctor` | 诊断常见配置问题。无检查失败时退出码为 `0`，任一项失败为 `1`，用法错误为 `2`。 | `--config PATH`、`--port N`、`--json` |
 | `tokenhush version` | 打印版本与构建信息。 | 无 |
 

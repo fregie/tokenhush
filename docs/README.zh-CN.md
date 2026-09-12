@@ -11,7 +11,7 @@ Tokenhush 是一个本地基础 URL 网关。把 AI 编程工具指向 `http://1
 | 文档 | 内容 |
 |---|---|
 | [deployment.zh-CN.md](deployment.zh-CN.md) | 在 macOS、Linux 和 Windows 上安装；首次运行；前台标志；交给操作系统后台运行；目录；升级与卸载；故障排查 |
-| [configuration.zh-CN.md](configuration.zh-CN.md) | 各工具配置（Claude Code、Codex、Aider、Cline、Roo、Continue、Open WebUI）与 `tokenhush.yaml` 参考 |
+| [configuration.zh-CN.md](configuration.zh-CN.md) | 各工具配置（Claude Code、Codex、Aider、Cline、Roo、opencode、Qwen Code、Charm Crush、Zed、Continue.dev、Open WebUI、Goose、OpenHands、Kilo Code）、路由可达性矩阵与 `tokenhush.yaml` 参考 |
 | [architecture.zh-CN.md](architecture.zh-CN.md) | 请求路径、模块布局与开源核心边界 |
 | [security.zh-CN.md](security.zh-CN.md) | 威胁模型、硬性不变量、检测器取舍与披露 |
 | [plugins.zh-CN.md](plugins.zh-CN.md) | 编写内容插件（Inspector / Transformer） |

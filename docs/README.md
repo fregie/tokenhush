@@ -11,7 +11,7 @@ Tokenhush is a local base-URL gateway. Point your AI coding tools at `http://127
 | Document | What it covers |
 |---|---|
 | [deployment.md](deployment.md) | Install on macOS, Linux, and Windows; first run; foreground flags; OS-managed background operation; directories; upgrade and uninstall; troubleshooting |
-| [configuration.md](configuration.md) | Per-tool setup (Claude Code, Codex, Aider, Cline, Roo, Continue, Open WebUI) and the `tokenhush.yaml` reference |
+| [configuration.md](configuration.md) | Per-tool setup (Claude Code, Codex, Aider, Cline, Roo, opencode, Qwen Code, Charm Crush, Zed, Continue.dev, Open WebUI, Goose, OpenHands, Kilo Code), the route reachability matrix, and the `tokenhush.yaml` reference |
 | [architecture.md](architecture.md) | Request path, module layout, and the open-core boundary |
 | [security.md](security.md) | Threat model, hard invariants, detector trade-offs, and disclosure |
 | [plugins.md](plugins.md) | Writing content plugins (Inspector / Transformer) |

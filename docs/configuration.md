@@ -57,27 +57,131 @@ VS Code extensions: pick "OpenAI Compatible" (or Anthropic) in settings and set 
 Base URL: http://127.0.0.1:8787/v1
 ```
 
-## Continue
+## opencode
 
-Edit `~/.continue/config.json`, `apiBase` inside `models`:
+Add a provider to `opencode.json` (OpenAI-compatible):
 
 ```json
 {
-  "models": [
-    {
-      "apiBase": "http://127.0.0.1:8787/v1"
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "tokenhush": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Tokenhush",
+      "options": { "baseURL": "http://127.0.0.1:8787/v1" }
     }
-  ]
+  }
 }
 ```
 
+## Qwen Code
+
+Point the CLI at the gateway before launching it. Anthropic-mode requests use the bare origin; OpenAI-mode requests use `/v1`:
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8787/v1
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+```
+
+## Charm Crush
+
+Add a provider to `crush.json`:
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "providers": {
+    "tokenhush": {
+      "type": "openai",
+      "base_url": "http://127.0.0.1:8787/v1"
+    }
+  }
+}
+```
+
+## Zed
+
+Add an OpenAI-compatible provider to `settings.json`:
+
+```json
+{
+  "language_models": {
+    "openai_compatible": {
+      "tokenhush": { "api_url": "http://127.0.0.1:8787/v1" }
+    }
+  }
+}
+```
+
+## Continue.dev
+
+Add a model to `~/.continue/config.yaml`:
+
+```yaml
+models:
+  - name: tokenhush
+    provider: openai
+    apiBase: "http://127.0.0.1:8787/v1"
+```
+
+Older Continue builds use `~/.continue/config.json` with the same `apiBase` key.
+
 ## Open WebUI
 
-Under **Connections**, add an OpenAI-compatible endpoint:
+Set the OpenAI-compatible endpoint before starting the server, or add it under **Connections**:
+
+```bash
+export OPENAI_API_BASE_URL=http://127.0.0.1:8787/v1
+```
+
+The model picker calls `GET /v1/models`, which the gateway routes through its one named exception (see [security.md](security.md#named-routing-exceptions)).
+
+## Goose
+
+Set the host and the base path separately before launching `goose`:
+
+```bash
+export OPENAI_HOST=http://127.0.0.1:8787
+export OPENAI_BASE_PATH=v1
+```
+
+## OpenHands
+
+Point the LLM at the gateway with an environment variable, or set `[llm].base_url` in its config:
+
+```bash
+export LLM_BASE_URL=http://127.0.0.1:8787/v1
+```
+
+## Kilo Code
+
+VS Code extension: pick "OpenAI Compatible" under Settings -> API Provider and set the base URL:
 
 ```text
 Base URL: http://127.0.0.1:8787/v1
 ```
+
+## Route reachability matrix
+
+Every tool `tokenhush env` onboards must send a request path the gateway routes. The table lists the paths each integration uses, and `TestToolRouteMatrix` in `internal/cli` asserts each one resolves through `pkg/proxy`:
+
+| Tool | Request path(s) | Upstream |
+|---|---|---|
+| Claude Code | `/v1/messages` | Anthropic |
+| Codex CLI | `/v1/responses` | OpenAI |
+| Aider | `/v1/chat/completions` | OpenAI |
+| Cline / Roo Code | `/v1/chat/completions` | OpenAI |
+| opencode | `/v1/chat/completions`, `/v1/models` | OpenAI |
+| Qwen Code | `/v1/chat/completions`, `/v1/messages` | OpenAI / Anthropic |
+| Charm Crush | `/v1/chat/completions` | OpenAI |
+| Zed | `/v1/chat/completions`, `/v1/models` | OpenAI |
+| Continue.dev | `/v1/chat/completions`, `/v1/models` | OpenAI |
+| Open WebUI | `/v1/models`, `/v1/chat/completions` | OpenAI |
+| Goose | `/v1/chat/completions` | OpenAI |
+| OpenHands | `/v1/chat/completions` | OpenAI |
+| Kilo Code | `/v1/chat/completions`, `/v1/messages` | OpenAI / Anthropic |
+
+`/v1/models` resolves only because of the named exception (see [security.md](security.md#named-routing-exceptions)). A tool that needs a protocol outside this table — for example Google GenAI `generateContent`, used by Gemini CLI — is marked **未验证 (unverified)** and is not onboarded until the gateway routes it. There are currently no unverified tools.
 
 ## `tokenhush.yaml` reference
 

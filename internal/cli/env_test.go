@@ -4,17 +4,28 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/extension"
 	"github.com/fregie/tokenhush/pkg/platform"
+	"github.com/fregie/tokenhush/pkg/proxy"
 )
+
+// resolveMatrixHost is the Host a local tool presents to the gateway; the route
+// matrix exercises path routing, so a loopback Host keeps it realistic.
+const resolveMatrixHost = "127.0.0.1:8787"
 
 // envTestTools mirrors the tools `tokenhush env <tool>` advertises. W6.1's
 // acceptance is per tool/OS pair: every pair must render a snippet that
-// contains the configured port.
-var envTestTools = []string{"claude", "codex", "aider", "cline", "roo"}
+// contains the configured port. The nine A-group tools added by WA.5 are
+// covered here and by TestToolRouteMatrix (route reachability).
+var envTestTools = []string{
+	"claude", "codex", "aider", "cline", "roo",
+	"opencode", "qwen", "crush", "zed", "continue", "openwebui", "goose", "openhands", "kilo",
+}
 
 // envTestModes pins both shell dialects deterministically, independent of the
 // host the tests run on.
@@ -102,6 +113,54 @@ func TestEnvSnippets(t *testing.T) {
 					} else {
 						mustContain(t, snippet, "Cline")
 					}
+				case "opencode":
+					mustContain(t, snippet, `"baseURL": "http://127.0.0.1:8787/v1"`)
+					mustContain(t, snippet, "opencode.json")
+				case "qwen":
+					mustContain(t, snippet, "OPENAI_BASE_URL")
+					mustContain(t, snippet, "ANTHROPIC_BASE_URL")
+					if m.mode == platform.ShellPOSIX {
+						mustContain(t, snippet, `export OPENAI_BASE_URL="http://127.0.0.1:8787/v1"`)
+						mustContain(t, snippet, `export ANTHROPIC_BASE_URL="http://127.0.0.1:8787"`)
+					} else {
+						mustContain(t, snippet, `$env:OPENAI_BASE_URL = "http://127.0.0.1:8787/v1"`)
+						mustContain(t, snippet, `setx OPENAI_BASE_URL "http://127.0.0.1:8787/v1"`)
+					}
+				case "crush":
+					mustContain(t, snippet, `"base_url": "http://127.0.0.1:8787/v1"`)
+					mustContain(t, snippet, "crush.json")
+				case "zed":
+					mustContain(t, snippet, `"api_url": "http://127.0.0.1:8787/v1"`)
+				case "continue":
+					mustContain(t, snippet, `apiBase: "http://127.0.0.1:8787/v1"`)
+					mustContain(t, snippet, "config.yaml")
+				case "openwebui":
+					mustContain(t, snippet, "OPENAI_API_BASE_URL")
+					if m.mode == platform.ShellPOSIX {
+						mustContain(t, snippet, `export OPENAI_API_BASE_URL="http://127.0.0.1:8787/v1"`)
+					} else {
+						mustContain(t, snippet, `$env:OPENAI_API_BASE_URL = "http://127.0.0.1:8787/v1"`)
+					}
+				case "goose":
+					mustContain(t, snippet, "OPENAI_HOST")
+					mustContain(t, snippet, "OPENAI_BASE_PATH")
+					if m.mode == platform.ShellPOSIX {
+						mustContain(t, snippet, `export OPENAI_HOST="http://127.0.0.1:8787"`)
+						mustContain(t, snippet, `export OPENAI_BASE_PATH="v1"`)
+					} else {
+						mustContain(t, snippet, `$env:OPENAI_HOST = "http://127.0.0.1:8787"`)
+						mustContain(t, snippet, `$env:OPENAI_BASE_PATH = "v1"`)
+					}
+				case "openhands":
+					mustContain(t, snippet, "LLM_BASE_URL")
+					if m.mode == platform.ShellPOSIX {
+						mustContain(t, snippet, `export LLM_BASE_URL="http://127.0.0.1:8787/v1"`)
+					} else {
+						mustContain(t, snippet, `$env:LLM_BASE_URL = "http://127.0.0.1:8787/v1"`)
+					}
+				case "kilo":
+					mustContain(t, snippet, "Base URL: http://127.0.0.1:8787/v1")
+					mustContain(t, snippet, "Kilo Code")
 				}
 
 				// Dialect hygiene: shell syntax only where the tool consumes
@@ -112,7 +171,10 @@ func TestEnvSnippets(t *testing.T) {
 				} else {
 					mustNotContain(t, snippet, "export ")
 				}
-				if tool == "codex" || tool == "cline" || tool == "roo" {
+				switch tool {
+				case "codex", "cline", "roo", "opencode", "crush", "zed", "continue", "kilo":
+					// Config-file / UI tools consume no environment variables, so
+					// no shell dialect may leak into their snippet.
 					mustNotContain(t, snippet, "export ")
 					mustNotContain(t, snippet, "$env:")
 					mustNotContain(t, snippet, "setx ")
@@ -144,6 +206,16 @@ func TestEnvSnippetsCommand(t *testing.T) {
 		{"aider both variables", []string{"aider"}, []string{"OPENAI_API_BASE", "ANTHROPIC_API_BASE"}, ExitOK},
 		{"cline", []string{"cline"}, []string{"Base URL: http://127.0.0.1:8787/v1"}, ExitOK},
 		{"roo maps to cline config", []string{"roo"}, []string{"Roo Code", "Base URL: http://127.0.0.1:8787/v1"}, ExitOK},
+		{"opencode baseURL", []string{"opencode"}, []string{"opencode.json", `"baseURL": "http://127.0.0.1:8787/v1"`}, ExitOK},
+		{"qwen both variables", []string{"qwen"}, []string{"OPENAI_BASE_URL", "ANTHROPIC_BASE_URL"}, ExitOK},
+		{"crush base_url", []string{"crush"}, []string{"crush.json", `"base_url": "http://127.0.0.1:8787/v1"`}, ExitOK},
+		{"zed api_url", []string{"zed"}, []string{`"api_url": "http://127.0.0.1:8787/v1"`}, ExitOK},
+		{"continue config.yaml", []string{"continue"}, []string{"config.yaml", `apiBase: "http://127.0.0.1:8787/v1"`}, ExitOK},
+		{"openwebui base url", []string{"openwebui"}, []string{"OPENAI_API_BASE_URL", "127.0.0.1:8787/v1"}, ExitOK},
+		{"goose host and path", []string{"goose"}, []string{"OPENAI_HOST", "OPENAI_BASE_PATH", `OPENAI_BASE_PATH="v1"`}, ExitOK},
+		{"openhands llm base", []string{"openhands"}, []string{"LLM_BASE_URL", "127.0.0.1:8787/v1"}, ExitOK},
+		{"kilo custom provider", []string{"kilo"}, []string{"Kilo Code", "Base URL: http://127.0.0.1:8787/v1"}, ExitOK},
+		{"opencode port override", []string{"--port", "9123", "opencode"}, []string{`"baseURL": "http://127.0.0.1:9123/v1"`}, ExitOK},
 		{"port lower bound", []string{"--port", "1", "claude"}, []string{"127.0.0.1:1"}, ExitOK},
 		{"port upper bound", []string{"--port", "65535", "claude"}, []string{"127.0.0.1:65535"}, ExitOK},
 	}
@@ -237,7 +309,7 @@ func TestEnvSnippetsBadTool(t *testing.T) {
 		t.Errorf("stdout = %q, want empty", stdout.String())
 	}
 	mustContain(t, stderr.String(), `unknown tool "cursor"`)
-	mustContain(t, stderr.String(), "supported tools: claude, codex, aider, cline, roo")
+	mustContain(t, stderr.String(), "supported tools: claude, codex, aider, cline, roo, opencode, qwen, crush, zed, continue, openwebui, goose, openhands, kilo")
 }
 
 // TestEnvSnippetsUsage covers missing and extra arguments plus an invalid
@@ -290,4 +362,113 @@ func TestEnvSnippetsConfigError(t *testing.T) {
 		t.Errorf("stdout = %q, want empty", stdout.String())
 	}
 	mustContain(t, stderr.String(), "tokenhush: env:")
+}
+
+// envToolRoute is one actual request path an onboarded agent tool sends once
+// its snippet points the tool at the gateway, plus the provider the gateway
+// must resolve it to.
+type envToolRoute struct {
+	path     string
+	provider string
+	base     string
+}
+
+// envToolRoutes is the route-reachability matrix for every tool `tokenhush env`
+// onboards. The paths are the concrete requests each integration issues once
+// the snippet's base URL is applied, and each must resolve via proxy.Resolve.
+// The A-group tools added by WA.5 all speak a protocol the gateway already
+// routes, so none are unreachable today. A tool that needs a protocol outside
+// the built-in table (for example Google GenAI generateContent) must instead be
+// listed in envUnverifiedTools with a reason and documented as "未验证" in
+// docs/configuration.md, until the gateway routes it.
+var envToolRoutes = map[string][]envToolRoute{
+	"claude": {{path: "/v1/messages", provider: proxy.ProviderAnthropic, base: proxy.AnthropicBaseURL}},
+	"codex":  {{path: "/v1/responses", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL}},
+	"aider":  {{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL}},
+	"cline":  {{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL}},
+	"roo":    {{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL}},
+	"opencode": {
+		{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+		{path: "/v1/models", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+	},
+	"qwen": {
+		{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+		{path: "/v1/messages", provider: proxy.ProviderAnthropic, base: proxy.AnthropicBaseURL},
+	},
+	"crush": {{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL}},
+	"zed": {
+		{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+		{path: "/v1/models", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+	},
+	"continue": {
+		{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+		{path: "/v1/models", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+	},
+	"openwebui": {
+		// Model picker hits /v1/models, reachable only because of the WA.4
+		// named exception; chat then goes to /v1/chat/completions.
+		{path: "/v1/models", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+		{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+	},
+	"goose":     {{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL}},
+	"openhands": {{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL}},
+	"kilo": {
+		{path: "/v1/chat/completions", provider: proxy.ProviderOpenAI, base: proxy.OpenAIBaseURL},
+		{path: "/v1/messages", provider: proxy.ProviderAnthropic, base: proxy.AnthropicBaseURL},
+	},
+}
+
+// envUnverifiedTools maps a tool whose request path cannot be network-verified
+// against the current routing table to the reason it is marked "未验证". Empty
+// today: every A-group tool speaks Chat Completions, Messages, Responses, or
+// model discovery, all reachable (the last via the WA.4 named exception).
+var envUnverifiedTools = map[string]string{}
+
+// TestToolRouteMatrix asserts the route-reachability matrix: for every tool the
+// `env` command onboards, each concrete request path its integration sends must
+// resolve through proxy.Resolve to the expected provider and base URL. Tools
+// that cannot be reached must be listed in envUnverifiedTools with a reason, so
+// an untestable integration is explicit instead of silently missing.
+func TestToolRouteMatrix(t *testing.T) {
+	resolver := proxy.NewResolver(nil, nil)
+
+	for _, tool := range envTools {
+		routes, verified := envToolRoutes[tool]
+		reason, unverified := envUnverifiedTools[tool]
+		switch {
+		case verified && unverified:
+			t.Errorf("tool %q is in both envToolRoutes and envUnverifiedTools", tool)
+		case !verified && !unverified:
+			t.Errorf("tool %q is in neither envToolRoutes nor envUnverifiedTools", tool)
+		case unverified && strings.TrimSpace(reason) == "":
+			t.Errorf("tool %q is marked 未验证 without a reason", tool)
+		}
+		if !verified {
+			t.Logf("tool %q: 未验证 (%s)", tool, reason)
+			continue
+		}
+		for _, route := range routes {
+			got, err := resolver.Resolve(&extension.Request{Method: "POST", Host: resolveMatrixHost, Path: route.path})
+			if err != nil {
+				t.Errorf("tool %q path %q did not resolve: %v", tool, route.path, err)
+				continue
+			}
+			if got.Name != route.provider || got.BaseURL != route.base {
+				t.Errorf("tool %q path %q = %+v, want {Name:%q BaseURL:%q}", tool, route.path, got, route.provider, route.base)
+				continue
+			}
+			t.Logf("tool %q path %q -> %s %s", tool, route.path, got.Name, got.BaseURL)
+		}
+	}
+
+	for tool := range envToolRoutes {
+		if !slices.Contains(envTools, tool) {
+			t.Errorf("envToolRoutes has tool %q not advertised by envTools", tool)
+		}
+	}
+	for tool := range envUnverifiedTools {
+		if !slices.Contains(envTools, tool) {
+			t.Errorf("envUnverifiedTools has tool %q not advertised by envTools", tool)
+		}
+	}
 }

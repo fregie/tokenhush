@@ -29,7 +29,7 @@ AI coding tools need to read your code and config to be useful, but a request se
 - **Every field, six detectors.** Tokenhush walks the whole request body, leaf by leaf, so nested JSON is covered, and streaming responses are handled as they arrive. It flags known key prefixes (`sk-`, `AKIA`, `ghp_`, and more), high-entropy strings, JWTs, PEM private-key headers, Luhn card numbers, and email addresses.
 - **Stable placeholders.** A secret becomes a token such as `__PII_email_9f2c8a4b6d1e__`. The mapping lives in memory and lasts for the session. A restart drops it, so you may see a placeholder in output; that's safe degradation, not a leak.
 - **Local and fail-safe.** The gateway binds `127.0.0.1` and `[::1]` only, always checks the Host header, checks Origin for browser-style requests, and guards the control API with a bearer token stored with `0600` permissions. When something goes wrong, it closes instead of forwarding blindly.
-- **Helpers built in.** `tokenhush env` prints copy-paste setup for `claude`, `codex`, `aider`, `cline`, and `roo`. `tokenhush doctor` runs setup checks with clear exit codes: `0` when nothing fails, `1` on a failed check, `2` on a usage error.
+- **Helpers built in.** `tokenhush env` prints copy-paste setup for 14 tools: `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, and `kilo`. `tokenhush doctor` runs setup checks with clear exit codes: `0` when nothing fails, `1` on a failed check, `2` on a usage error.
 - **One codebase, public extension points.** Pure Go with `CGO_ENABLED=0` builds for macOS, Linux, and Windows on amd64 and arm64. Cross-layer interfaces (`Router`, `CostSink`) and content plugins (`Inspector` / `Transformer`) let you extend the pipeline; V1 supports compile-time plugins only.
 
 ## How it works
@@ -56,10 +56,17 @@ flowchart LR
 | Codex CLI | `~/.codex/config.toml` → `base_url` | Supported (API key mode) |
 | Aider | `OPENAI_API_BASE` / `ANTHROPIC_API_BASE` | Supported |
 | Cline / Roo Code | OpenAI Compatible base URL in settings | Supported |
-| Continue | `config.json` → `apiBase` | Manual setup |
-| Open WebUI | OpenAI-compatible endpoint | Manual setup |
+| opencode | `opencode.json` → `provider.options.baseURL` | Supported |
+| Qwen Code | `OPENAI_BASE_URL` / `ANTHROPIC_BASE_URL` | Supported |
+| Charm Crush | `crush.json` → `providers.<id>.base_url` | Supported |
+| Zed | `settings.json` → `openai_compatible.<id>.api_url` | Supported |
+| Continue.dev | `config.yaml` → `models[].apiBase` | Supported |
+| Open WebUI | `OPENAI_API_BASE_URL` | Supported |
+| Goose | `OPENAI_HOST` + `OPENAI_BASE_PATH` | Supported |
+| OpenHands | `LLM_BASE_URL` | Supported |
+| Kilo Code | OpenAI Compatible base URL in extension settings | Supported |
 
-`tokenhush env <tool>` prints ready-to-paste snippets for `claude`, `codex`, `aider`, `cline`, and `roo`. See [docs/configuration.md](docs/configuration.md) for per-tool instructions.
+`tokenhush env <tool>` prints ready-to-paste snippets for `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, and `kilo`. See [docs/configuration.md](docs/configuration.md) for per-tool instructions and the route reachability matrix.
 
 > [!WARNING]
 > Not covered in V1: Cursor agent traffic, the ChatGPT and Claude desktop apps, and browser web UIs. These need system-level MITM, which the public core doesn't implement.
@@ -128,7 +135,7 @@ tokenhush status
 |---|---|---|
 | `tokenhush run` | Start the gateway in the foreground. | `--config PATH`, `--port N` (1..65535), `--log-level debug\|info\|warn\|error` |
 | `tokenhush status` | Show whether the gateway is running. | `--json` |
-| `tokenhush env <tool>` | Print tool setup snippets. Tools: `claude`, `codex`, `aider`, `cline`, `roo`. | `--config PATH`, `--port N` |
+| `tokenhush env <tool>` | Print tool setup snippets. Tools: `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, `kilo`. | `--config PATH`, `--port N` |
 | `tokenhush doctor` | Diagnose common setup problems. Exits `0` when no check fails, `1` on any failure, `2` on a usage error. | `--config PATH`, `--port N`, `--json` |
 | `tokenhush version` | Print version and build information. | none |
 

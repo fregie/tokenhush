@@ -14,8 +14,14 @@ import (
 // envTools lists the client tools `tokenhush env <tool>` can onboard, in the
 // order usage and error messages advertise them. Roo Code shares Cline's
 // OpenAI-compatible configuration (Roo is a Cline fork), so both render the
-// same snippet body.
-var envTools = []string{"claude", "codex", "aider", "cline", "roo"}
+// same snippet body. The nine A-group tools below (opencode, Qwen Code, Charm
+// Crush, Zed, Continue.dev, Open WebUI, Goose, OpenHands, Kilo Code) all speak
+// a protocol the gateway already routes, so their snippets need no new proxy
+// support; their request paths are locked by TestToolRouteMatrix.
+var envTools = []string{
+	"claude", "codex", "aider", "cline", "roo",
+	"opencode", "qwen", "crush", "zed", "continue", "openwebui", "goose", "openhands", "kilo",
+}
 
 // envCommand is the CLI entry for `tokenhush env <tool>` (docs/12 §6). It
 // resolves the configured port (tokenhush.yaml or --port), then prints a
@@ -142,6 +148,65 @@ func envSnippet(tool string, mode platform.ShellMode, port config.Port) (string,
 			name = "Roo Code"
 		}
 		return fmt.Sprintf("%s (VS Code): Settings -> API Provider -> \"OpenAI Compatible\"\nBase URL: %s\n", name, openAI), nil
+	case "opencode":
+		return fmt.Sprintf("# opencode: add this provider to opencode.json (OpenAI-compatible).\n"+
+			"{\n"+
+			"  \"$schema\": \"https://opencode.ai/config.json\",\n"+
+			"  \"provider\": {\n"+
+			"    \"tokenhush\": {\n"+
+			"      \"npm\": \"@ai-sdk/openai-compatible\",\n"+
+			"      \"name\": \"Tokenhush\",\n"+
+			"      \"options\": { \"baseURL\": %q }\n"+
+			"    }\n"+
+			"  }\n"+
+			"}\n", openAI), nil
+	case "qwen":
+		return "# Qwen Code: run this before launching `qwen`.\n" +
+			envVars(mode, [][2]string{
+				{"OPENAI_BASE_URL", openAI},
+				{"ANTHROPIC_BASE_URL", root},
+			}), nil
+	case "crush":
+		return fmt.Sprintf("# Charm Crush: add this provider to crush.json.\n"+
+			"{\n"+
+			"  \"$schema\": \"https://charm.land/crush.json\",\n"+
+			"  \"providers\": {\n"+
+			"    \"tokenhush\": {\n"+
+			"      \"type\": \"openai\",\n"+
+			"      \"base_url\": %q\n"+
+			"    }\n"+
+			"  }\n"+
+			"}\n", openAI), nil
+	case "zed":
+		return fmt.Sprintf("# Zed: add this provider to settings.json (openai_compatible).\n"+
+			"{\n"+
+			"  \"language_models\": {\n"+
+			"    \"openai_compatible\": {\n"+
+			"      \"tokenhush\": { \"api_url\": %q }\n"+
+			"    }\n"+
+			"  }\n"+
+			"}\n", openAI), nil
+	case "continue":
+		return fmt.Sprintf("# Continue.dev: add this model to ~/.continue/config.yaml.\n"+
+			"# Older Continue builds use config.json with the same apiBase key.\n"+
+			"models:\n"+
+			"  - name: tokenhush\n"+
+			"    provider: openai\n"+
+			"    apiBase: %q\n", openAI), nil
+	case "openwebui":
+		return "# Open WebUI: set this before starting the server (Connections pick it up).\n" +
+			envVars(mode, [][2]string{{"OPENAI_API_BASE_URL", openAI}}), nil
+	case "goose":
+		return "# Goose: run this before launching `goose` (host and /v1 path are separate).\n" +
+			envVars(mode, [][2]string{
+				{"OPENAI_HOST", root},
+				{"OPENAI_BASE_PATH", "v1"},
+			}), nil
+	case "openhands":
+		return "# OpenHands: run this before launching OpenHands, or set [llm].base_url.\n" +
+			envVars(mode, [][2]string{{"LLM_BASE_URL", openAI}}), nil
+	case "kilo":
+		return fmt.Sprintf("Kilo Code (VS Code): Settings -> API Provider -> \"OpenAI Compatible\"\nBase URL: %s\n", openAI), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", tool)
 	}

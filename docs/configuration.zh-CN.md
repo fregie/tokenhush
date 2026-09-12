@@ -57,27 +57,131 @@ VS Code 扩展：在设置里选 "OpenAI Compatible"（或 Anthropic）并填基
 Base URL: http://127.0.0.1:8787/v1
 ```
 
-## Continue
+## opencode
 
-编辑 `~/.continue/config.json`，在 `models` 里设 `apiBase`：
+在 `opencode.json` 里添加一个 provider（OpenAI 兼容）：
 
 ```json
 {
-  "models": [
-    {
-      "apiBase": "http://127.0.0.1:8787/v1"
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "tokenhush": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Tokenhush",
+      "options": { "baseURL": "http://127.0.0.1:8787/v1" }
     }
-  ]
+  }
 }
 ```
 
+## Qwen Code
+
+启动前把 CLI 指向网关。Anthropic 模式用裸 origin；OpenAI 模式用 `/v1`：
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:8787/v1
+export ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+```
+
+## Charm Crush
+
+在 `crush.json` 里添加一个 provider：
+
+```json
+{
+  "$schema": "https://charm.land/crush.json",
+  "providers": {
+    "tokenhush": {
+      "type": "openai",
+      "base_url": "http://127.0.0.1:8787/v1"
+    }
+  }
+}
+```
+
+## Zed
+
+在 `settings.json` 里添加一个 OpenAI 兼容 provider：
+
+```json
+{
+  "language_models": {
+    "openai_compatible": {
+      "tokenhush": { "api_url": "http://127.0.0.1:8787/v1" }
+    }
+  }
+}
+```
+
+## Continue.dev
+
+在 `~/.continue/config.yaml` 里添加一个 model：
+
+```yaml
+models:
+  - name: tokenhush
+    provider: openai
+    apiBase: "http://127.0.0.1:8787/v1"
+```
+
+旧版 Continue 用 `~/.continue/config.json`，键名同为 `apiBase`。
+
 ## Open WebUI
 
-在 **Connections** 里添加 OpenAI 兼容端点：
+启动服务前设置 OpenAI 兼容端点，或在 **Connections** 里添加：
+
+```bash
+export OPENAI_API_BASE_URL=http://127.0.0.1:8787/v1
+```
+
+模型选择器会调 `GET /v1/models`，网关通过唯一的具名例外把它路由出去（见 [security.zh-CN.md](security.zh-CN.md#具名路由例外清单)）。
+
+## Goose
+
+启动 `goose` 前分别设置主机与基础路径：
+
+```bash
+export OPENAI_HOST=http://127.0.0.1:8787
+export OPENAI_BASE_PATH=v1
+```
+
+## OpenHands
+
+用环境变量把 LLM 指向网关，或在其配置里设 `[llm].base_url`：
+
+```bash
+export LLM_BASE_URL=http://127.0.0.1:8787/v1
+```
+
+## Kilo Code
+
+VS Code 扩展：在 Settings -> API Provider 里选 "OpenAI Compatible" 并填基础 URL：
 
 ```text
 Base URL: http://127.0.0.1:8787/v1
 ```
+
+## 路由可达性矩阵
+
+`tokenhush env` 接入的每个工具，都必须发出网关能路由的请求路径。下表列出各集成实际使用的路径，`internal/cli` 的 `TestToolRouteMatrix` 断言每条路径都能经 `pkg/proxy` 解析：
+
+| 工具 | 请求路径 | 上游 |
+|---|---|---|
+| Claude Code | `/v1/messages` | Anthropic |
+| Codex CLI | `/v1/responses` | OpenAI |
+| Aider | `/v1/chat/completions` | OpenAI |
+| Cline / Roo Code | `/v1/chat/completions` | OpenAI |
+| opencode | `/v1/chat/completions`、`/v1/models` | OpenAI |
+| Qwen Code | `/v1/chat/completions`、`/v1/messages` | OpenAI / Anthropic |
+| Charm Crush | `/v1/chat/completions` | OpenAI |
+| Zed | `/v1/chat/completions`、`/v1/models` | OpenAI |
+| Continue.dev | `/v1/chat/completions`、`/v1/models` | OpenAI |
+| Open WebUI | `/v1/models`、`/v1/chat/completions` | OpenAI |
+| Goose | `/v1/chat/completions` | OpenAI |
+| OpenHands | `/v1/chat/completions` | OpenAI |
+| Kilo Code | `/v1/chat/completions`、`/v1/messages` | OpenAI / Anthropic |
+
+`/v1/models` 能解析，只因为那条具名例外（见 [security.zh-CN.md](security.zh-CN.md#具名路由例外清单)）。若某工具需要表外协议——例如 Gemini CLI 用的 Google GenAI `generateContent`——会标注为**未验证（unverified）**，在网关支持前不予接入。当前没有未验证的工具。
 
 ## `tokenhush.yaml` 参考
 

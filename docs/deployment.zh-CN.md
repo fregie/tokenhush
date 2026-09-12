@@ -132,7 +132,7 @@ tokenhush doctor
 tokenhush env claude
 ```
 
-`env` 支持 `claude`、`codex`、`aider`、`cline`、`roo`，按当前平台打印对应写法。各工具的完整配置（含 `tokenhush.yaml` 上游映射）见 [configuration.zh-CN.md](configuration.zh-CN.md)。定工作流前先看清下面的 V1 限制。
+`env` 支持 `claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands` 和 `kilo`，按当前平台打印对应写法。各工具的完整配置（含 `tokenhush.yaml` 上游映射）见 [configuration.zh-CN.md](configuration.zh-CN.md)。定工作流前先看清下面的 V1 限制。
 
 > [!IMPORTANT]
 > Codex CLI 只能用 API key 模式，ChatGPT 订阅登录无法走网关。Cursor 智能体流量、ChatGPT 和 Claude 桌面应用、浏览器 Web UI 在 V1 都不覆盖；它们要系统级 MITM，而公开核心不实现。
@@ -384,7 +384,7 @@ rm "$(command -v tokenhush)"
 |---|---|
 | `run` | `--config PATH`、`--port N`、`--log-level debug\|info\|warn\|error` |
 | `status` | `--json` |
-| `env <tool>` | `--config PATH`、`--port N`；工具：`claude`、`codex`、`aider`、`cline`、`roo` |
+| `env <tool>` | `--config PATH`、`--port N`；工具：`claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands`、`kilo` |
 | `doctor` | `--config PATH`、`--port N`、`--json` |
 | `version` | 无 |
 

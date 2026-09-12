@@ -132,7 +132,7 @@ Print a ready-to-paste snippet:
 tokenhush env claude
 ```
 
-`env` supports `claude`, `codex`, `aider`, `cline`, and `roo`, and prints the dialect for your platform. For full per-tool setup, including the `tokenhush.yaml` upstream map, see [configuration.md](configuration.md). See the V1 limits below.
+`env` supports `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, and `kilo`, and prints the dialect for your platform. For full per-tool setup, including the `tokenhush.yaml` upstream map, see [configuration.md](configuration.md). See the V1 limits below.
 
 > [!IMPORTANT]
 > Codex CLI works in API key mode only; ChatGPT subscription login cannot pass through the gateway. Cursor agent traffic, the ChatGPT and Claude desktop apps, and browser web UIs are not covered in V1; they need system-level MITM, which the public core does not implement.
@@ -384,7 +384,7 @@ Useful flags:
 |---|---|
 | `run` | `--config PATH`, `--port N`, `--log-level debug\|info\|warn\|error` |
 | `status` | `--json` |
-| `env <tool>` | `--config PATH`, `--port N`; tools: `claude`, `codex`, `aider`, `cline`, `roo` |
+| `env <tool>` | `--config PATH`, `--port N`; tools: `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, `kilo` |
 | `doctor` | `--config PATH`, `--port N`, `--json` |
 | `version` | none |
 

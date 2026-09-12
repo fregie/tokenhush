@@ -48,7 +48,7 @@ func TestRun(t *testing.T) {
 			name:        "env without a tool reports usage",
 			args:        []string{"env"},
 			wantCode:    ExitUsage,
-			wantStderr:  []string{"usage: tokenhush env", "supported tools:", "claude, codex, aider, cline, roo"},
+			wantStderr:  []string{"usage: tokenhush env", "supported tools:", "claude, codex, aider, cline, roo, opencode, qwen, crush, zed, continue, openwebui, goose, openhands, kilo"},
 			emptyStdout: true,
 		},
 		{
