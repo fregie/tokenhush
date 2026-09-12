@@ -17,7 +17,7 @@
 //
 //	{
 //	  "version": 1,
-//	  "key_id": "core-test-2026-09",
+//	  "key_id": "prod-2026-09",
 //	  "license_id": "lic_example",
 //	  "subject": "user@example.com",
 //	  "features": ["pro"],
@@ -30,7 +30,7 @@
 // Unix seconds, and features are sorted and comma-joined:
 //
 //	tokenhush-license-v1
-//	key_id:core-test-2026-09
+//	key_id:prod-2026-09
 //	license_id:lic_example
 //	subject:user@example.com
 //	features:pro

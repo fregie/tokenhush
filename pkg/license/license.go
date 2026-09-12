@@ -43,21 +43,21 @@ const (
 
 // KeyID is the rotation ID of the embedded public key. Tokens must carry a
 // key_id that names an embedded key; rotation ships a new key set in an app
-// update while old tokens keep verifying.
-const KeyID = "core-test-2026-09"
+// update while old tokens keep verifying. This ID names the shared production
+// key set issued by the closed-source license service.
+const KeyID = "prod-2026-09"
 
-// embeddedPublicKey is the Ed25519 public key compiled into the open-source
-// core. ONLY a public key is embedded: the private half is held by the
-// closed-source license service and must never be committed to this
-// repository. The V1 value is a freshly generated placeholder for the
-// read-only display path; the production key set is swapped in when the
-// license service ships (W10.3). Even a forged token for this key only ever
-// renders the read-only badge - it gates no capability by design.
+// embeddedPublicKey is the shared production Ed25519 public key compiled into
+// the open-source core. ONLY a public key is embedded: the private half is
+// held by the closed-source license service and must never be committed to
+// this repository. The key set is shared with the Pro build so tokens issued
+// by one service verify against both. Even a forged token for this key only
+// ever renders the read-only badge - it gates no capability by design.
 var embeddedPublicKey = ed25519.PublicKey{
-	0x34, 0x4c, 0x42, 0xcb, 0xd8, 0x9d, 0xfb, 0x73,
-	0xea, 0x47, 0x29, 0xec, 0x25, 0x53, 0xf3, 0x48,
-	0xe7, 0x0a, 0x13, 0xc3, 0x21, 0xec, 0xf5, 0x95,
-	0x3b, 0x99, 0xbd, 0x59, 0x0b, 0x9c, 0x4e, 0xf3,
+	0xc8, 0xc3, 0x60, 0x0c, 0x87, 0xe1, 0xb7, 0x29,
+	0xe4, 0x6d, 0x0e, 0x33, 0x27, 0x34, 0x56, 0xfe,
+	0x7e, 0x94, 0x8b, 0x64, 0x93, 0x02, 0x44, 0xa5,
+	0xff, 0x5b, 0x95, 0x83, 0xbe, 0xd6, 0xca, 0x37,
 }
 
 // Errors classify every rejection. The CLI collapses all of them into "no

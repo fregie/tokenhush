@@ -252,7 +252,7 @@ func TestParseErrorClassification(t *testing.T) {
 func TestSigningInputCanonical(t *testing.T) {
 	lic := License{
 		Version:   Version,
-		KeyID:     "core-test-2026-09",
+		KeyID:     "prod-2026-09",
 		LicenseID: "lic_example",
 		Subject:   "user@example.com",
 		Features:  []string{"team", "pro"},
@@ -260,7 +260,7 @@ func TestSigningInputCanonical(t *testing.T) {
 		ExpiresAt: time.Unix(1821139200, 0).UTC(),
 	}
 	want := "tokenhush-license-v1\n" +
-		"key_id:core-test-2026-09\n" +
+		"key_id:prod-2026-09\n" +
 		"license_id:lic_example\n" +
 		"subject:user@example.com\n" +
 		"features:pro,team\n" +
@@ -399,5 +399,28 @@ func moduleRoot() (string, error) {
 			return "", errors.New("go.mod not found in any parent directory")
 		}
 		dir = parent
+	}
+}
+
+// TestEmbeddedKeyConstant locks the shared production key set: the embedded
+// key_id and public bytes must equal this checked-in expectation. The literal
+// is written independently of embeddedPublicKey so a placeholder regression or
+// an accidental key swap fails here instead of shipping silently.
+func TestEmbeddedKeyConstant(t *testing.T) {
+	want := ed25519.PublicKey{
+		0xc8, 0xc3, 0x60, 0x0c, 0x87, 0xe1, 0xb7, 0x29,
+		0xe4, 0x6d, 0x0e, 0x33, 0x27, 0x34, 0x56, 0xfe,
+		0x7e, 0x94, 0x8b, 0x64, 0x93, 0x02, 0x44, 0xa5,
+		0xff, 0x5b, 0x95, 0x83, 0xbe, 0xd6, 0xca, 0x37,
+	}
+	keys := DefaultKeys()
+	if len(keys) != 1 {
+		t.Fatalf("DefaultKeys() has %d entries, want exactly 1", len(keys))
+	}
+	if got := keys[0].ID; got != "prod-2026-09" {
+		t.Errorf("DefaultKeys()[0].ID = %q, want %q", got, "prod-2026-09")
+	}
+	if got := keys[0].Public; !got.Equal(want) {
+		t.Errorf("DefaultKeys()[0].Public = %#v, want %#v", []byte(got), []byte(want))
 	}
 }
