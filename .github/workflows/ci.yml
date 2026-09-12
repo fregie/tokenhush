@@ -85,6 +85,14 @@ jobs:
           fi
           echo "module is tidy (go.sum present: $(test -e go.sum && echo yes || echo no))"
 
+      - name: Lint (golangci-lint v1.64.8)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
+          "$(go env GOPATH)/bin/golangci-lint" version
+          "$(go env GOPATH)/bin/golangci-lint" run ./...
+
       - name: License allowlist gate (go-licenses v1.6.0)
         shell: bash
         run: |
