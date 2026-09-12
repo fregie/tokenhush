@@ -183,7 +183,12 @@ func TestGoldenBaseline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read golden baseline (regenerate with -update-golden): %v", err)
 	}
-	if string(gotRaw) != want {
+	// Windows 上 core.autocrlf 会把提交的 .txt 检出为 CRLF，而测试写出的始终是
+	// LF；这里把两侧都归一化为 LF 再比较，使基线判定与平台无关。Linux/macOS 上
+	// 两侧本就都是 LF，因此该归一化是 no-op（不改变任何已提交的期望内容）。
+	wantLF := strings.ReplaceAll(want, "\r\n", "\n")
+	gotLF := strings.ReplaceAll(string(gotRaw), "\r\n", "\n")
+	if gotLF != wantLF {
 		t.Errorf("golden baseline mismatch for %s\n--- want ---\n%s\n--- got ---\n%s",
 			goldenBaselinePath, want, gotRaw)
 	}
