@@ -2,9 +2,9 @@
 
 **English** | [中文](plugins.zh-CN.md)
 
-> Status: V1 implemented (2026-09). This guide is for authors who want to extend detection and rewriting. The interface definitions live in [extension-api.md](extension-api.md); the security boundaries live in [security.md](security.md).
+> Status: V1 implemented (2026-09). This guide is for authors extending detection and rewriting. Interfaces: [extension-api.md](extension-api.md); security boundaries: [security.md](security.md).
 
-Tokenhush processes content through a **compiled-in, capability-tiered** plugin pipeline. The six built-in detectors (`pkg/redact`) are themselves plugins. Your plugin uses the same interfaces and the same least-privilege constraints. V1 has **no dynamic loading**: plugins are compiled into the binary at build time.
+Tokenhush runs content through a **compiled-in, capability-tiered** plugin pipeline. The six built-in detectors (`pkg/redact`) are plugins themselves, and yours follows the same interfaces and least-privilege rules. V1 has **no dynamic loading**: plugins compile into the binary at build time.
 
 ## Mental model
 
@@ -16,8 +16,8 @@ flowchart LR
 
 Two rules are non-negotiable:
 
-1. **Plugins propose, the core decides.** An Inspector returns `Finding` values that carry the `Action` it wants. The core's policy engine aggregates them (`Allow < Warn < Redact < Block`) and executes the result.
-2. **Only the core touches outbound plaintext.** A `Transformer` may declare `response_content` and `metadata` only. Request content and raw headers are never handed to it, and the placeholder-to-original mapping is unreachable to plugins.
+1. **Plugins propose, the core decides.** An Inspector returns `Finding` values, each carrying the `Action` it wants. The core's policy engine aggregates them (`Allow < Warn < Redact < Block`) and executes the result. A plugin states intent; the core applies it.
+2. **Only the core touches outbound plaintext.** A `Transformer` may declare `response_content` and `metadata` only. It never sees request content or raw headers, and it can't reach the placeholder-to-original mapping.
 
 ## The two plugin kinds
 
@@ -37,7 +37,7 @@ type Plugin interface {
 
 ## Phases and capabilities
 
-`Phase` marks the position in the request/response lifecycle:
+`Phase` marks a point in the request/response lifecycle. It tells the core where your plugin runs.
 
 | Phase | Meaning |
 |---|---|
@@ -46,7 +46,7 @@ type Plugin interface {
 | `extension.Header` | Headers (**metadata only**; values are always withheld) |
 | `extension.Metadata` | Non-content metadata (tool, model, byte counts, ...) |
 
-`Capabilities` is the permission you request. **The less you ask for, the more the core can safely allow**:
+`Capabilities` is the permission set you request. **Ask for less, and the core can allow more**:
 
 ```go
 extension.Capabilities{
@@ -68,21 +68,21 @@ extension.Capabilities{
 | `CanNetwork` | Request egress; denied at registration for the compiled-in tier |
 | `Priority` | Execution order, ascending, non-negative; ties break by plugin id |
 
-- Without `ReadContent`, `Leaf.Content == nil`; you only get `Leaf.Path` and `Leaf.Len`.
-- In the `Header` phase, `Content` is cleared whether or not you requested `ReadContent`. `Authorization`, `Cookie`, and API key values never reach a plugin.
-- A `Finding` with `Block` only takes effect when `CanBlock` is true; otherwise the core treats the plugin output as malformed.
+- Without `ReadContent`, `Leaf.Content == nil`; you get only `Leaf.Path` and `Leaf.Len`.
+- In the `Header` phase the core clears `Content` whether or not you requested `ReadContent`. `Authorization`, `Cookie`, and API key values never reach a plugin.
+- A `Finding` carrying `Block` takes effect only when `CanBlock` is true; otherwise the core treats the plugin's output as malformed.
 
 ## What the core guarantees
 
-- Before invoking you, the core runs `extension.Gate`: content you did not ask for stays hidden, and a document whose phase you did not declare is never handed to you.
-- The core overwrites `Finding.PluginID` with your own `ID()`, so you cannot spoof another plugin's provenance.
-- `Inspect` runs in its own goroutine under a timeout, with panic recovery. A crash or timeout is never silent.
-- Response Transformers run **before backfill**, so their output cannot contain plaintext that only backfill would restore.
-- The core splices your returned content back into the body by leaf ordinal first, then by path. A `nil` `Content`, or content equal to the original, leaves the raw token untouched.
+- The core runs `extension.Gate` first: content you didn't request stays hidden, and you never get a document for an undeclared phase.
+- The core overwrites `Finding.PluginID` with your `ID()`, so you can't spoof provenance.
+- `Inspect` runs in its own goroutine with a timeout and panic recovery, so crashes and timeouts are never silent.
+- Response Transformers run **before backfill**, so their output can't hold plaintext that only backfill would restore.
+- The core splices returned content into the body by leaf ordinal first, then by path. A `nil` `Content`, or content equal to the original, leaves the raw token untouched.
 
 ## Writing an Inspector
 
-Here is a complete, compilable detector that marks the literal `INTERNAL-` as `Redact`:
+An Inspector reads leaves and reports findings. This compilable detector marks the literal `INTERNAL-` as `Redact`:
 
 ```go
 package myplugins
@@ -134,14 +134,14 @@ func (*InternalMarker) Inspect(doc *extension.Document) ([]extension.Finding, er
 
 Key points:
 
-- `Start` and `End` are byte offsets **within that leaf**, `End` exclusive, and must lie inside the leaf content.
-- `Confidence` must be in `[0,1]`; otherwise the whole plugin is judged malformed.
-- Do not write placeholders yourself. The core's redaction engine owns the substitution.
-- A finding the core rejects (`Action` outside the known set, `Confidence` outside `[0,1]` or `NaN`, a negative `Start` or `LeafIndex`, an `End` before `Start`, or a `Block` without `CanBlock`) fails the **whole plugin**, not just that one finding. The core never drops a single bad finding, so a plugin cannot hide a real verdict behind malformed output.
+- `Start` and `End` are byte offsets **within that leaf**. `End` is exclusive and must lie inside the leaf content.
+- `Confidence` must be in `[0,1]`; outside it the core judges the whole plugin malformed.
+- Don't write placeholders yourself. The core's redaction engine owns substitution.
+- A finding the core rejects fails the **whole plugin**, not just that finding. Triggers: `Action` outside the known set, `Confidence` outside `[0,1]` or `NaN`, a negative `Start` or `LeafIndex`, an `End` before `Start`, or a `Block` without `CanBlock`. The core never drops a single bad finding, so a plugin can't hide a real verdict behind malformed output.
 
 ## Writing a Transformer
 
-A Transformer may declare `response_content` and `metadata` only. It rewrites inbound responses (for example, normalizing a class of fields). It **does not see the original secrets**.
+A Transformer rewrites inbound responses (say, normalizing a class of fields). It may declare `response_content` and `metadata` only. It **never sees the original secrets**: it works on already-redacted content, so there's no plaintext to leak.
 
 ```go
 package myplugins
@@ -176,13 +176,13 @@ func (*HeaderStamper) Transform(doc *extension.Document) (*extension.Document, e
 }
 ```
 
-- Returning a `nil` document means "no change"; the core keeps the previous version.
-- Multiple Transformers run in a `Priority` chain, and each one sees the previous one's result.
-- In the `Header` phase, `Content` is always empty, so a Transformer never gets header values.
+- Returning `nil` means "no change"; the core keeps the previous version.
+- Multiple Transformers run as a `Priority` chain, each seeing the previous result.
+- In the `Header` phase `Content` is always empty, so a Transformer never gets header values.
 
 ## Registering a plugin (compiled-in)
 
-Plugins register into `extension.Registry` at startup. `Register` is the security gate:
+Plugins register into `extension.Registry` at startup. `Register` is the security gate: it validates every capability before admitting a plugin.
 
 ```go
 reg := extension.NewRegistry()
@@ -194,12 +194,12 @@ if err := reg.Register(myplugins.NewHeaderStamper()); err != nil {
 }
 ```
 
-The public core's `tokenhush run` registers only the built-in detectors. V1 has **no** runtime switch for loading external plugins: no `.so`, no WASM, no subprocess, and no "plugin directory". To put a custom plugin to work you have two options:
+The public core's `tokenhush run` registers only the built-in detectors. V1 has **no** runtime switch for external plugins: no `.so`, no WASM, no subprocess, no "plugin directory". Two options:
 
-1. **Contribute it to the core:** add it to the built-in set so it ships and is reviewed with the core.
-2. **Build your own host program:** write a separate `main` package that imports this core library, assembles the pipeline from the exported `pkg/proxy` primitives, and passes in your registry. The private Pro build follows this pattern, and its code never appears in the public repository.
+1. **Contribute it to the core.** Add it to the built-in set, so it ships and is reviewed with the core.
+2. **Build your own host program.** Write a separate `main` that imports this core, assembles the pipeline from exported `pkg/proxy` primitives, and passes in your registry. The private Pro build follows this pattern; its code never appears in the public repo.
 
-The shape of an assembly built from exported primitives (illustrative; the fields are defined by `PipelineConfig`):
+An assembly built from those primitives (illustrative; `PipelineConfig` defines the fields):
 
 ```go
 package main
@@ -237,11 +237,11 @@ func main() {
 }
 ```
 
-> `pkg/proxy` exports `Listen`, `NewPipeline`, `NewResolver`, `NewForwarder`, `HostAllowlist`, `ControlAuth`, and `OriginPolicy`. The `run` wiring in `internal/cli` is the reference usage, though `internal/` cannot be imported by an external module.
+> `pkg/proxy` exports `Listen`, `NewPipeline`, `NewResolver`, `NewForwarder`, `HostAllowlist`, `ControlAuth`, and `OriginPolicy`. The `run` wiring in `internal/cli` is the reference usage, though an external module can't import `internal/`.
 
 ## Registration-time rejections
 
-`Register` returns **typed errors** (classify them with `errors.Is`). If any requirement fails, the plugin is not admitted:
+`Register` returns **typed errors**; classify them with `errors.Is`. If any requirement fails, the plugin isn't admitted:
 
 | Error | Trigger |
 |---|---|
@@ -254,13 +254,13 @@ func main() {
 | `ErrNetworkDenied` | `CanNetwork` declared |
 | `ErrInvalidPriority` | negative priority |
 
-A plugin that implements both Inspector and Transformer is validated under the **stricter Transformer rules**, so it may declare `response_content` and `metadata` only.
+A plugin implementing both Inspector and Transformer is validated under the **stricter Transformer rules**, so it may declare `response_content` and `metadata` only.
 
 ## Failure strategy
 
 - The default is `FailOpenWarn`: on error, timeout, or panic the core drops the plugin's findings, emits an audit warning through the injected `AuditSink` seam, and lets the request continue.
 - `FailClosed`: for critical detectors, a failure rejects the request (returns `Block`). The built-in detectors use this stricter setting.
-- Under either policy, **a failure always emits an audit warning through the seam**. Nothing is swallowed silently. The core default sink is a no-op; the private Pro layer persists the warning.
+- Under either policy, **a failure always emits an audit warning through the seam**. Nothing is swallowed silently. The default sink is a no-op; the private Pro layer persists the warning.
 
 ## Testing your plugin
 
@@ -284,13 +284,13 @@ func TestInternalMarker(t *testing.T) {
 }
 ```
 
-Also cover: the core registration gate (`Register` rejects over-broad capabilities), visibility under `Gate` (`Content == nil` without `ReadContent`), and the path where a malformed finding fails the plugin. The `pkg/redact/*_test.go` files in the repo are good examples to follow.
+Also cover: the registration gate (`Register` rejects over-broad capabilities), visibility under `Gate` (`Content == nil` without `ReadContent`), and the path where a malformed finding fails the plugin. The `pkg/redact/*_test.go` files are good examples.
 
 ## Do / Don't
 
-- **Do** request the minimum `Capabilities`; declare only the phases you actually handle.
-- **Do** stay robust against arbitrary bytes, including invalid UTF-8. Never panic.
+- **Do** request the minimum `Capabilities`; declare only the phases you handle.
+- **Do** handle arbitrary bytes safely, including invalid UTF-8. Never panic.
 - **Do** express intent with `Finding` values and let the core decide and execute.
-- **Don't** try to hold or reconstruct the placeholder-to-original mapping. The interface does not provide it.
-- **Don't** attempt to rewrite `RequestContent`. Only an Inspector can act on the request side, and it cannot rewrite.
+- **Don't** try to hold or reconstruct the placeholder-to-original mapping. The interface doesn't provide it.
+- **Don't** rewrite `RequestContent`. Only an Inspector acts on the request side, and it can't rewrite.
 - **Don't** rely on `CanNetwork`; the compiled-in tier is denied at registration.

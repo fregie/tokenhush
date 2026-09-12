@@ -4,15 +4,14 @@
 
 > Status: V1 is implemented and released as `v0.1.0` (2026-09). This document describes the shipped core architecture and the open-core boundary.
 
-Tokenhush is a local base-URL gateway. It sits between your AI coding tool and the model provider, detects and redacts sensitive content before a request leaves the machine, and exposes a metadata-only audit seam.
+Tokenhush is a local base-URL gateway between your AI coding tool and the model provider. Before a request leaves the machine, it finds sensitive content and replaces it.
 
 ## Goals and non-goals
 
 **Goals**
 
 - Detect and redact sensitive content (keys, `.env` values, PII) before a request leaves the machine.
-- Expose a **metadata-only audit seam** that private builds can wire to a local audit store; the core itself stores no audit data.
-- Onboard tools that accept a `*_BASE_URL` or custom endpoint with **zero configuration friction**.
+- Onboard tools that accept a `*_BASE_URL` or custom endpoint with almost no setup.
 - Run **cross-platform** on Windows, Linux, and macOS.
 - Process everything locally: **data never leaves the device**.
 
@@ -30,7 +29,6 @@ Tokenhush is a local base-URL gateway. It sits between your AI coding tool and t
 flowchart LR
   Tool["AI coding tool<br/>Claude Code, Codex, Aider, Cline, ..."]
   Up["Model provider<br/>Anthropic, OpenAI, ..."]
-  Store["Audit seam<br/>store in Pro"]
 
   subgraph GW["tokenhush local gateway"]
     direction TB
@@ -46,10 +44,9 @@ flowchart LR
   GW -- "HTTPS" --> Up
   Up -- "HTTPS response" --> GW
   GW -- "HTTP response, backfilled" --> Tool
-  GW --> Store
 ```
 
-**Key insight**: the sensitive direction is the **request**, and requests are **non-streaming**. The full JSON body is available before forwarding, so it can be redacted completely without the hard problem of streaming rewrites. The response direction usually carries only placeholders, so backfill is a bounded "placeholder to original" replacement.
+**Key insight**: the sensitive direction is the **request**, and requests are **non-streaming**. The tool sends the whole JSON body in one piece, so the gateway can redact it completely before forwarding, with no streaming-rewrite problem. Responses usually carry only placeholders, so backfill is a bounded "placeholder to original" swap.
 
 > [!NOTE]
 > Outbound requests are read in full before redaction. Only the inbound response path needs incremental handling, and it only ever rewrites placeholders back to originals.
@@ -61,7 +58,6 @@ flowchart LR
 | `pkg/proxy` | Local HTTP reverse proxy: listener, upstream routing, SSE passthrough, lifecycle |
 | `pkg/redact` | Detectors (deterministic rules) + placeholder generation/mapping + backfill |
 | `pkg/protocol` | Protocol-agnostic JSON leaf walk; incremental SSE parsing; recursive handling of double-encoded JSON in tool calls |
-| `pkg/audit` | Audit seam: `Record` / `Query` types and the `AuditSink` / `AuditQuerier` interfaces plus a no-op sink; the concrete store is in the private Pro layer |
 | `pkg/config` | Configuration loading and defaults (`tokenhush.yaml`) |
 | `pkg/platform` | Cross-platform abstraction: paths, keyring, service. Exported for reuse by the private Pro repository |
 | `pkg/extension` | Content plugin interfaces (Inspector / Transformer / Registry) plus cross-layer extension points (see `extension-api.md`, `plugins.md`) |
@@ -72,19 +68,26 @@ flowchart LR
 
 ### Protocol-agnostic leaf walk (no API normalization)
 
-No intermediate representation is built for Anthropic, OpenAI, or Responses. Such a layer would rot as the APIs evolve. Instead, the gateway **recurses through the JSON and runs detect/replace on string leaves**. Double-encoded JSON strings inside tool calls are handled recursively, and SSE is parsed incrementally at the leaf level. This stays robust across API changes.
+A "leaf" is a string value buried inside the request JSON. Take this body:
+
+```json
+{"messages": [{"content": "my key is sk-abc123"}]}
+```
+
+The gateway walks the JSON tree and runs detect/replace on `"my key is sk-abc123"`. It does not translate Anthropic, OpenAI, or Responses into one internal shape, because that shape would rot as APIs change. Double-encoded JSON inside tool calls is handled recursively, and SSE is parsed incrementally at the leaf level.
 
 ### Placeholders and backfill
 
-- **Format**: JSON-safe, tokenizer-friendly, high-entropy, for example `__PII_email_3f9a2b__`.
-- **Mapping**: the same secret maps **HMAC-deterministically** to the same placeholder, preventing cross-session collisions that would "backfill the wrong secret".
+A **placeholder** is the fake string that replaces a real secret on the way out. Format: JSON-safe, tokenizer-friendly, high-entropy, for example `__PII_email_3f9a2b__`.
+
+- **Mapping**: the same secret maps **HMAC-deterministically** to the same placeholder. HMAC is a keyed hash: same input, same output. Two secrets cannot collide onto one placeholder and "backfill the wrong secret".
 - **Storage**: **in-memory and session-scoped only**. A restart forgets the mapping, so a failed backfill shows the user a placeholder. That is **safe degradation, not a leak**.
 - **Hard invariant**: backfill happens only toward the **client**. Never backfill outbound.
 
 ### Streaming
 
 - **Outbound**: the full body is read, then redacted. No buffering problem.
-- **Inbound**: a **fixed-length sliding window** (equal to the longest placeholder length) handles placeholders split across SSE chunk boundaries. No need to buffer the whole stream. Latency is negligible.
+- **Inbound**: a **fixed-length sliding window** (equal to the longest placeholder length) matches a placeholder split across SSE chunk boundaries. Without it, `__PII_ema` in one chunk and `il_3f9a2b__` in the next never match. No need to buffer the whole stream, and the added latency is negligible.
 
 ### Detector strategy (V1)
 
@@ -92,15 +95,14 @@ Deterministic rules with **high precision first**: known key prefixes (`sk-`, `A
 
 ## Open-core boundary
 
-The public core (this repository, Apache-2.0) provides capabilities that are **fully usable for a single user**: proxy, redaction, the metadata-only audit seam, CLI, and the extension-point interfaces.
+The public core (this repository, Apache-2.0) is **fully usable for a single user**: proxy, redaction, the CLI, and the extension-point interfaces.
 
 The private Pro repository builds paid binaries by importing this repository's Go module. It provides:
 
 - System extension / MITM power mode (on the closed-source macOS app side)
-- Concrete local audit store (persistence, tamper-evident HMAC chain, retention), the `audit` subcommand, and the audit control endpoint
 - Multi-provider / multi-account routing
 - Cost tracking
-- Team audit export / SSO
+- Team export / SSO
 - Dashboard / menu bar UI
 
 > [!IMPORTANT]
@@ -110,8 +112,8 @@ The private Pro repository builds paid binaries by importing this repository's G
 
 | Stage | Capability | Channel |
 |---|---|---|
-| V1 | base-URL gateway: content-level redaction + metadata-only audit seam (concrete store in Pro) | Open-source core + free CLI |
-| V2 | System-extension metadata mode: domain/process-level interception + audit (**no CA**) | Pro (direct download) |
+| V1 | base-URL gateway: content-level redaction | Open-source core + free CLI |
+| V2 | System-extension metadata mode: domain/process-level interception (**no CA**) | Pro (direct download) |
 | V3 | Transparent proxy + local CA: content-level redaction covering Cursor/browser/desktop apps | Pro (explicit opt-in) |
 
 > [!WARNING]

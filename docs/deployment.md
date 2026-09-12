@@ -2,9 +2,9 @@
 
 **English** | [中文](deployment.zh-CN.md)
 
-> Status: V1 (2026-09). This guide covers release installs, first run, and running the gateway under an OS service manager. Every command, flag, and path below matches the V1 CLI; `scripts/check-docs.sh` checks the command list against the built binary.
+> Status: V1 (2026-09). Covers release installs, first run, and OS-managed background operation. Every command, flag, and path matches the V1 CLI; `scripts/check-docs.sh` checks the command list against the built binary.
 
-Tokenhush ships as a single static binary. It has no runtime dependencies, no background daemon of its own, and no root certificate. You install it, start it in the foreground, and point your AI tools at `http://127.0.0.1:8787`.
+Tokenhush is one static binary: no runtime dependencies, no daemon, no root certificate. Install it, run it in the foreground, then point your AI tools at `http://127.0.0.1:8787`.
 
 ## 1. Requirements
 
@@ -14,9 +14,9 @@ Tokenhush ships as a single static binary. It has no runtime dependencies, no ba
 | Architecture | amd64 or arm64 |
 | Go (source builds only) | Go 1.25 or newer |
 | Network | Loopback only. The gateway binds `127.0.0.1` and `[::1]`. |
-| Disk | Room for runtime session files (the core keeps no audit database) |
+| Disk | Room for runtime session files (the core stores no request or response content) |
 
-Release binaries are pure Go (`CGO_ENABLED=0`), so they run without a C toolchain. The gateway refuses to bind `0.0.0.0` or an empty host: only `127.0.0.1`, `::1`, and `localhost` are accepted. This is deliberate. The gateway is a local component, not a network service.
+Release binaries are pure Go (`CGO_ENABLED=0`), so no C toolchain is needed. The gateway refuses `0.0.0.0` and empty hosts; it binds only `127.0.0.1`, `::1`, and `localhost`, because it is a local component, not a network service.
 
 ## 2. Install
 
@@ -39,7 +39,7 @@ scoop install tokenhush
 curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh | bash
 ```
 
-The script downloads the archive for your OS and architecture, verifies it against the release `checksums.txt` (sha256), and installs the binary to `~/.local/bin` by default. It refuses to install if the checksum does not match.
+The script downloads the archive for your OS and architecture, checks it against the release `checksums.txt` (sha256), and installs to `~/.local/bin`. It refuses to install on a checksum mismatch.
 
 | Flag | Meaning |
 |---|---|
@@ -54,7 +54,7 @@ The script downloads the archive for your OS and architecture, verifies it again
 | `TOKENHUSH_INSTALL_DIR` | Destination directory (default `~/.local/bin`) |
 | `TOKENHUSH_BASE_URL` | Download base URL for mirrors or testing |
 
-Exit codes are `0` on success, `1` on a runtime failure, and `2` on a usage error. When the script prints `note: ~/.local/bin is not on your PATH`, add that directory to your shell profile so `tokenhush` resolves. On Windows the script is not supported; use Scoop instead.
+Exit codes: `0` success, `1` runtime failure, `2` usage error. If the script prints `note: ~/.local/bin is not on your PATH`, add that directory to your shell profile so `tokenhush` resolves. The script does not support Windows; use Scoop instead.
 
 ### Build from source
 
@@ -64,7 +64,7 @@ Go 1.25 or newer is required.
 go install github.com/fregie/tokenhush/cmd/tokenhush@latest
 ```
 
-Or, from a checkout:
+Or from a checkout:
 
 ```bash
 go build -o bin/tokenhush ./cmd/tokenhush
@@ -74,9 +74,9 @@ go build -o bin/tokenhush ./cmd/tokenhush
 
 ### Verify the installation
 
-Every release publishes `checksums.txt` (sha256) and a per-archive SPDX SBOM. `install.sh` verifies the checksum for you before installing; Homebrew and Scoop verify their own artifacts.
+Every release publishes `checksums.txt` (sha256) and a per-archive SPDX SBOM. `install.sh` verifies the checksum before installing; Homebrew and Scoop verify their own artifacts.
 
-To check a manual download, compare the archive hash with the matching line in `checksums.txt`:
+For a manual download, compare the archive hash with the matching line in `checksums.txt`:
 
 ```bash
 curl -fsSLO https://github.com/fregie/tokenhush/releases/latest/download/checksums.txt
@@ -84,18 +84,18 @@ sha256sum tokenhush_0.1.0_linux_amd64.tar.gz
 grep tokenhush_0.1.0_linux_amd64.tar.gz checksums.txt
 ```
 
-Archive names follow `tokenhush_<version>_<os>_<arch>.tar.gz`. On macOS, `shasum -a 256 <archive>` does the same job.
+Archive names follow `tokenhush_<version>_<os>_<arch>.tar.gz`. On macOS, use `shasum -a 256 <archive>`.
 
-Finally, confirm the binary runs:
+Confirm the binary runs:
 
 ```bash
 tokenhush version
 ```
 
-`version` prints the version and build information and takes no flags.
+`version` prints the version and build information, and takes no flags.
 
 > [!NOTE]
-> The macOS Homebrew and Windows Scoop channels are still under manual verification for `v0.1.0`. If a channel install fails, build from source as shown above; `main` carries the same V1 implementation.
+> The macOS Homebrew and Windows Scoop channels are still under manual verification for `v0.1.0`. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
 
 ## 3. First run
 
@@ -112,9 +112,9 @@ tokenhush: gateway listening on http://127.0.0.1:8787
 tokenhush: control token file: <data-dir>/control.token
 ```
 
-The first line is the base URL your tools use. The second is the per-session bearer token file for the control API; the token is regenerated on every `run` and written `0600`.
+The first line is the base URL your tools use. The second is the per-session bearer token file for the control API; it is regenerated on every `run` and written `0600`.
 
-If the configured port is already in use, `run` fails instead of picking a random one. Check the running state with `tokenhush status` or run diagnostics with `tokenhush doctor`, then either stop the other process or start on a different port with `--port`.
+If the port is in use, `run` fails instead of picking a random one. Check state with `tokenhush status`, or diagnose with `tokenhush doctor`; then stop the other process or start with `--port`.
 
 ### Run diagnostics
 
@@ -122,7 +122,7 @@ If the configured port is already in use, `run` fails instead of picking a rando
 tokenhush doctor
 ```
 
-`doctor` checks the config file, the directory permissions, the secret store, and whether the configured port matches a running session. It exits `0` when no check fails, `1` when any check fails, and `2` on a usage error.
+`doctor` checks the config file, directory permissions, the secret store, and whether the configured port matches a running session. It exits `0` when no check fails, `1` when any fails, and `2` on a usage error.
 
 ### Point a tool at the gateway
 
@@ -132,14 +132,14 @@ Print a ready-to-paste snippet:
 tokenhush env claude
 ```
 
-`env` supports `claude`, `codex`, `aider`, `cline`, and `roo`, and prints the dialect for your current platform. For the full per-tool setup, including the `tokenhush.yaml` upstream map, see [configuration.md](configuration.md). Note the V1 limits below before you commit to a workflow.
+`env` supports `claude`, `codex`, `aider`, `cline`, and `roo`, and prints the dialect for your platform. For full per-tool setup, including the `tokenhush.yaml` upstream map, see [configuration.md](configuration.md). See the V1 limits below.
 
 > [!IMPORTANT]
-> Codex CLI works in API key mode only. ChatGPT subscription login cannot pass through the gateway. Cursor agent traffic, the ChatGPT and Claude desktop apps, and browser web UIs are not covered in V1; they need system-level MITM, which the public core does not implement.
+> Codex CLI works in API key mode only; ChatGPT subscription login cannot pass through the gateway. Cursor agent traffic, the ChatGPT and Claude desktop apps, and browser web UIs are not covered in V1; they need system-level MITM, which the public core does not implement.
 
 ## 4. Run modes
 
-The only run mode in V1 is the foreground gateway: `tokenhush run`. It stays attached to the terminal and exits on `Ctrl-C`. There is no daemon mode and no service subcommand.
+V1 has one run mode: the foreground gateway `tokenhush run`, which stays attached to the terminal and exits on `Ctrl-C`. There is no daemon mode and no service subcommand.
 
 | Flag | Value | Notes |
 |---|---|---|
@@ -170,9 +170,9 @@ The control API stays loopback-only and needs the bearer token from `<data-dir>/
 ### Keep it running in the background
 
 > [!WARNING]
-> A built-in service command such as `tokenhush service install` is **not implemented in V1**. Background operation is user-managed: you wrap the foreground `tokenhush run` in the native service manager for your OS. The three examples below are starting points, not shipped features. Adjust paths to your install location and config.
+> A built-in service command such as `tokenhush service install` is **not implemented in V1**. Background operation is user-managed: wrap the foreground `tokenhush run` in your OS service manager. The three examples below are starting points, not shipped features. Adjust paths to your install and config.
 
-Each manager should restart the process if it exits, and each must pass an absolute path to the binary. The examples pass `--port 8787` explicitly so the intent is clear.
+Each manager should restart the process if it exits, and each needs an absolute path to the binary. Each example passes `--port 8787` so the intent is clear.
 
 #### macOS (launchd agent)
 
@@ -269,7 +269,7 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -RestartCount 
 Register-ScheduledTask -TaskName "Tokenhush Gateway" -Action $action -Trigger $trigger -Settings $settings
 ```
 
-Start it now without waiting for the next logon, and inspect it:
+Start it now without waiting for the next logon, then inspect it:
 
 ```powershell
 Start-ScheduledTask -TaskName "Tokenhush Gateway"
@@ -292,7 +292,7 @@ Tokenhush uses two directories: a config directory for `tokenhush.yaml`, and a d
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` | `${XDG_DATA_HOME:-~/.local/share}/tokenhush/` |
 | Windows | `%AppData%\tokenhush\` | `%LOCALAPPDATA%\tokenhush\` |
 
-`TOKENHUSH_HOME`, when set to a non-blank value, overrides both directories. This is handy for tests and for keeping an isolated profile.
+`TOKENHUSH_HOME`, when non-blank, overrides both directories. Useful for tests and isolated profiles.
 
 The data directory holds:
 
@@ -301,15 +301,15 @@ The data directory holds:
 | `control.token` | Per-session bearer token for the control API, written `0600`, regenerated on every `run` |
 | `run.json` | Session metadata (pid, port, start time). Carries no secrets and no request content. |
 
-`run.json` and `control.token` are session files. `run` removes them on clean shutdown, and a stale `run.json` only affects diagnostics, not data safety. The core writes no audit database; the concrete audit store lives in the private Pro layer.
+`run.json` and `control.token` are session files. `run` removes them on clean shutdown, and a stale `run.json` only affects diagnostics, not data safety. The core stores no request or response content.
 
 ## 6. Configuration
 
 Tokenhush reads `tokenhush.yaml` from the config directory, or from the path passed to `--config`. A missing file means defaults. Unknown keys are rejected, so a typo fails loudly instead of being ignored.
 
-The settings you are most likely to touch are the listen port, the six detectors, the allowlist, the log level, and the `upstreams` map that routes a host or path prefix to your own OpenAI-compatible endpoint.
+The settings you are most likely to touch: the listen port, the six detectors, the allowlist, the log level, and the `upstreams` map that routes a host or path prefix to your own OpenAI-compatible endpoint.
 
-The full annotated defaults and every supported key live in [configuration.md](configuration.md). That file is the reference; this guide does not repeat the YAML sample.
+Full annotated defaults and every supported key live in [configuration.md](configuration.md); this guide does not repeat the YAML sample.
 
 ## 7. Upgrade
 
@@ -320,7 +320,7 @@ The full annotated defaults and every supported key live in [configuration.md](c
 | install.sh | Re-run the install command; it resolves the latest release |
 | Source | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-Config keys are validated on load, so an upgrade that adds a key does not break an older file, and an upgrade that removes one fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: the `audit:` block was removed and the audit capability moved to the private Pro layer, so delete that block before restarting. See [migration-v0.2.0.md](migration-v0.2.0.md). Restart the gateway after upgrading so the new binary is the one serving traffic.
+Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: delete the removed `audit:` block before restarting. See [migration-v0.2.0.md](migration-v0.2.0.md). Restart the gateway after upgrading so the new binary serves traffic.
 
 ## 8. Uninstall
 
@@ -340,11 +340,11 @@ For an `install.sh` or source install, delete the binary directly:
 rm "$(command -v tokenhush)"
 ```
 
-If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories if you want a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the session files (the control token and `run.json`).
+If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories for a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the session files (the control token and `run.json`).
 
 ## 9. Troubleshooting
 
-Start with `tokenhush doctor`. It reports the config path, directory permissions, secret store, and session state in one pass, and its exit code tells you whether anything failed.
+Start with `tokenhush doctor`. It reports the config path, directory permissions, secret store, and session state in one pass; the exit code tells you whether anything failed.
 
 | Symptom | Cause and fix |
 |---|---|
@@ -360,8 +360,7 @@ Start with `tokenhush doctor`. It reports the config path, directory permissions
 These properties are load-bearing. Do not work around them.
 
 - **Loopback only.** The gateway binds `127.0.0.1` and `[::1]` and validates the `Host` header. It never binds `0.0.0.0`.
-- **No root certificate, no MITM.** The public core does not install a CA or intercept TLS. Requests reach the gateway as plain HTTP on localhost, which is how it can see and redact content.
-- **Metadata-only audit seam.** The core forwards provider, endpoint, timing, byte counts, redaction counts, and detector types to an injected audit sink, and defaults to a no-op sink. The concrete store, its tamper-evident HMAC chain, and content-logging options live in the private Pro layer.
+- **No root certificate, no MITM.** The public core installs no CA and intercepts no TLS. Requests reach the gateway as plain HTTP on localhost, so it can see and redact content.
 - **Never backfill outbound.** Placeholders are restored only on responses returning to the client. The gateway never rewrites a placeholder back to its secret in an outbound request, which blocks prompt-injection exfiltration.
 - **Fail-safe, not fail-open.** When a detector cannot decide, Tokenhush over-redacts or blocks and records an alert rather than silently emitting a secret.
 

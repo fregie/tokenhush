@@ -2,9 +2,9 @@
 
 [English](deployment.md) | **中文**
 
-> 状态：V1（2026-09）。本指南涵盖发行版安装、首次运行，以及如何在操作系统服务管理器下运行网关。下文所有命令、标志、路径都与 V1 CLI 一致；`scripts/check-docs.sh` 会用构建出的二进制核对命令列表。
+> 状态：V1（2026-09）。涵盖安装、首次运行，以及用系统服务管理器后台运行。下文命令、标志、路径与 V1 CLI 一致；`scripts/check-docs.sh` 用构建出的二进制核对命令列表。
 
-Tokenhush 以单个静态二进制形式分发。它没有运行时依赖，自身不带后台守护进程，也不安装根证书。安装后，你在前台启动它，然后把 AI 工具指向 `http://127.0.0.1:8787`。
+Tokenhush 就是一个静态二进制：无运行时依赖，不起后台守护进程，也不装根证书。前台启动后，把 AI 工具指向 `http://127.0.0.1:8787`。
 
 ## 1. 环境要求
 
@@ -14,9 +14,9 @@ Tokenhush 以单个静态二进制形式分发。它没有运行时依赖，自�
 | 架构 | amd64 或 arm64 |
 | Go（仅从源码构建） | Go 1.25 或更新版本 |
 | 网络 | 仅环回。网关绑定 `127.0.0.1` 和 `[::1]`。 |
-| 磁盘 | 存放运行时会话文件的空间（核心不保留审计数据库） |
+| 磁盘 | 存放运行时会话文件的空间（核心不保存请求/响应内容） |
 
-发行版二进制是纯 Go（`CGO_ENABLED=0`），因此无需 C 工具链即可运行。网关拒绝绑定 `0.0.0.0` 或空主机：只接受 `127.0.0.1`、`::1` 和 `localhost`。这是有意为之。网关是本地组件，不是网络服务。
+发行版二进制是纯 Go（`CGO_ENABLED=0`），不需要 C 工具链。网关拒绝 `0.0.0.0` 和空主机，只绑定 `127.0.0.1`、`::1`、`localhost`；它是本地组件，不是网络服务。
 
 ## 2. 安装
 
@@ -39,7 +39,7 @@ scoop install tokenhush
 curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh | bash
 ```
 
-脚本会下载匹配你操作系统和架构的归档，用发行版的 `checksums.txt`（sha256）校验，默认把二进制安装到 `~/.local/bin`。如果校验和不匹配，它会拒绝安装。
+脚本按系统和架构下载归档，用 `checksums.txt`（sha256）校验后装到 `~/.local/bin`；校验和不匹配就拒绝。
 
 | 标志 | 含义 |
 |---|---|
@@ -54,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh | 
 | `TOKENHUSH_INSTALL_DIR` | 目标目录（默认 `~/.local/bin`） |
 | `TOKENHUSH_BASE_URL` | 供镜像或测试使用的下载基础 URL |
 
-退出码为：成功 `0`，运行时失败 `1`，用法错误 `2`。当脚本输出 `note: ~/.local/bin is not on your PATH` 时，把该目录加入你的 shell 配置文件，让 `tokenhush` 能被解析到。Windows 不支持该脚本；请改用 Scoop。
+退出码：成功 `0`，运行时失败 `1`，用法错误 `2`。脚本若输出 `note: ~/.local/bin is not on your PATH`，就把该目录写进 shell 配置，让 `tokenhush` 能被找到。Windows 请改用 Scoop。
 
 ### 从源码构建
 
@@ -64,19 +64,19 @@ curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh | 
 go install github.com/fregie/tokenhush/cmd/tokenhush@latest
 ```
 
-或者，从本地检出构建：
+从本地检出构建也行：
 
 ```bash
 go build -o bin/tokenhush ./cmd/tokenhush
 ```
 
-`go install` 会把二进制放到 `$(go env GOPATH)/bin`，该目录必须在你的 `PATH` 上。
+`go install` 会把二进制放进 `$(go env GOPATH)/bin`，该目录要在 `PATH` 上。
 
 ### 验证安装
 
-每个发行版都会发布 `checksums.txt`（sha256）和每个归档的 SPDX SBOM。`install.sh` 会在安装前为你校验校验和；Homebrew 和 Scoop 会各自校验自己的产物。
+每个发行版都发布 `checksums.txt`（sha256）和每个归档的 SPDX SBOM。`install.sh` 装前就校验，Homebrew 和 Scoop 各自校验产物。
 
-要检查手动下载，把归档哈希与 `checksums.txt` 中对应行比对：
+手动下载的，把归档哈希和 `checksums.txt` 对应行比一比：
 
 ```bash
 curl -fsSLO https://github.com/fregie/tokenhush/releases/latest/download/checksums.txt
@@ -84,9 +84,9 @@ sha256sum tokenhush_0.1.0_linux_amd64.tar.gz
 grep tokenhush_0.1.0_linux_amd64.tar.gz checksums.txt
 ```
 
-归档命名遵循 `tokenhush_<version>_<os>_<arch>.tar.gz`。在 macOS 上，`shasum -a 256 <archive>` 完成同样的事。
+归档命名是 `tokenhush_<version>_<os>_<arch>.tar.gz`。macOS 上换成 `shasum -a 256 <archive>`。
 
-最后，确认二进制能运行：
+确认二进制能跑：
 
 ```bash
 tokenhush version
@@ -95,26 +95,26 @@ tokenhush version
 `version` 打印版本和构建信息，不接受任何标志。
 
 > [!NOTE]
-> macOS Homebrew 和 Windows Scoop 渠道在 `v0.1.0` 下仍在手动验证中。如果某个渠道安装失败，按上文从源码构建；`main` 携带相同的 V1 实现。
+> macOS Homebrew 和 Windows Scoop 渠道在 `v0.1.0` 下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
 
 ## 3. 首次运行
 
-在前台启动网关：
+前台启动网关：
 
 ```bash
 tokenhush run
 ```
 
-成功时它会打印监听地址和控制令牌文件：
+成功后打印监听地址和控制令牌文件：
 
 ```text
 tokenhush: gateway listening on http://127.0.0.1:8787
 tokenhush: control token file: <data-dir>/control.token
 ```
 
-第一行是工具要使用的 base URL。第二行是控制面 API 的每会话 bearer 令牌文件；令牌在每次 `run` 时重新生成，并以 `0600` 写入。
+第一行是工具要用的 base URL。第二行是控制面 API 的每会话 bearer 令牌文件，每次 `run` 重新生成，写入权限 `0600`。
 
-如果配置的端口已被占用，`run` 会失败，而不是随机挑一个。用 `tokenhush status` 检查运行状态，或用 `tokenhush doctor` 运行诊断，然后要么停止另一个进程，要么用 `--port` 换个端口启动。
+端口被占用时 `run` 直接失败，不会随机换一个。先 `tokenhush status` 看状态，或 `tokenhush doctor` 做诊断；然后停掉占用进程，或用 `--port` 换端口。
 
 ### 运行诊断
 
@@ -122,7 +122,7 @@ tokenhush: control token file: <data-dir>/control.token
 tokenhush doctor
 ```
 
-`doctor` 检查配置文件、目录权限、密钥存储，以及配置端口是否匹配正在运行的会话。无检查失败时退出 `0`，任一检查失败时退出 `1`，用法错误时退出 `2`。
+`doctor` 检查配置文件、目录权限、密钥存储，以及配置端口是否匹配运行中的会话。无检查失败退出 `0`，任一失败退出 `1`，用法错误退出 `2`。
 
 ### 让工具指向网关
 
@@ -132,14 +132,14 @@ tokenhush doctor
 tokenhush env claude
 ```
 
-`env` 支持 `claude`、`codex`、`aider`、`cline` 和 `roo`，并打印你当前平台的方言。完整的按工具设置（包括 `tokenhush.yaml` 上游映射）见 [configuration.zh-CN.md](configuration.zh-CN.md)。在确定工作流之前，请注意下面的 V1 限制。
+`env` 支持 `claude`、`codex`、`aider`、`cline`、`roo`，按当前平台打印对应写法。各工具的完整配置（含 `tokenhush.yaml` 上游映射）见 [configuration.zh-CN.md](configuration.zh-CN.md)。定工作流前先看清下面的 V1 限制。
 
 > [!IMPORTANT]
-> Codex CLI 仅在 API key 模式下可用。ChatGPT 订阅登录无法通过网关。Cursor 智能体流量、ChatGPT 和 Claude 桌面应用，以及浏览器 Web UI 在 V1 中未覆盖；它们需要系统级 MITM，而公开核心不实现该能力。
+> Codex CLI 只能用 API key 模式，ChatGPT 订阅登录无法走网关。Cursor 智能体流量、ChatGPT 和 Claude 桌面应用、浏览器 Web UI 在 V1 都不覆盖；它们要系统级 MITM，而公开核心不实现。
 
 ## 4. 运行模式
 
-V1 中唯一的运行模式是前台网关：`tokenhush run`。它保持附着在终端上，按 `Ctrl-C` 退出。没有守护进程模式，也没有 service 子命令。
+V1 只有一种运行模式：前台网关 `tokenhush run`，挂在终端上，按 `Ctrl-C` 退出。没有守护进程模式，也没有 service 子命令。
 
 | 标志 | 值 | 说明 |
 |---|---|---|
@@ -147,13 +147,13 @@ V1 中唯一的运行模式是前台网关：`tokenhush run`。它保持附着�
 | `--port N` | `1` 到 `65535` | 默认 `8787`（或配置的 `listen.port`） |
 | `--log-level LEVEL` | `debug`、`info`、`warn`、`error` | 默认 `info` |
 
-在自定义端口上启动：
+在自定义端口启动：
 
 ```bash
 tokenhush run --port 9000
 ```
 
-使用显式配置启动：
+用显式配置启动：
 
 ```bash
 tokenhush run --config ~/.config/tokenhush/tokenhush.yaml
@@ -165,14 +165,14 @@ tokenhush run --config ~/.config/tokenhush/tokenhush.yaml
 tokenhush run --log-level debug
 ```
 
-控制面 API 保持仅环回，并需要来自 `<data-dir>/control.token` 的 bearer 令牌。请求路径见 [architecture.zh-CN.md](architecture.zh-CN.md)。
+控制面 API 只在环回可用，需要 `<data-dir>/control.token` 里的 bearer 令牌。请求路径见 [architecture.zh-CN.md](architecture.zh-CN.md)。
 
 ### 让它在后台持续运行
 
 > [!WARNING]
-> 诸如 `tokenhush service install` 的内置 service 命令**在 V1 中未实现**。后台运行由用户自行管理：你把前台 `tokenhush run` 包装进操作系统原生的服务管理器。下面三个示例只是起点，不是已发布的功能。请按你的安装位置和配置调整路径。
+> 像 `tokenhush service install` 这样的内置 service 命令**在 V1 中未实现**。后台运行由你自己管：把前台 `tokenhush run` 包进操作系统原生的服务管理器。下面三个示例只是起点，不是已发布功能，请按你的安装位置和配置改路径。
 
-每个管理器都应在进程退出时重启它，并且都必须传入二进制的绝对路径。示例显式传入 `--port 8787`，让意图更清晰。
+每个管理器都应在进程退出后重启它，且必须传二进制的绝对路径。示例都显式写 `--port 8787`，让意图更清楚。
 
 #### macOS（launchd agent）
 
@@ -251,7 +251,7 @@ systemctl --user status tokenhush.service
 journalctl --user -u tokenhush.service -f
 ```
 
-要在你未登录时仍保持网关运行，为你的用户开启 lingering：
+想在你未登录时也让网关运行，给用户开启 lingering：
 
 ```bash
 sudo loginctl enable-linger "$USER"
@@ -259,7 +259,7 @@ sudo loginctl enable-linger "$USER"
 
 #### Windows（任务计划程序）
 
-注册一个在登录时启动网关的任务。通过 Scoop shim 解析可执行文件，确保路径正确：
+注册一个登录时启动网关的任务。通过 Scoop shim 解析可执行文件，确保路径正确：
 
 ```powershell
 $exe = (Get-Command tokenhush).Source
@@ -269,7 +269,7 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -RestartCount 
 Register-ScheduledTask -TaskName "Tokenhush Gateway" -Action $action -Trigger $trigger -Settings $settings
 ```
 
-立即启动它，无需等待下次登录，并检查它：
+不用等下次登录，立刻启动并查看它：
 
 ```powershell
 Start-ScheduledTask -TaskName "Tokenhush Gateway"
@@ -284,7 +284,7 @@ Unregister-ScheduledTask -TaskName "Tokenhush Gateway" -Confirm:$false
 
 ## 5. 目录与环境
 
-Tokenhush 使用两个目录：存放 `tokenhush.yaml` 的配置目录，以及存放运行时状态的数据目录。在 macOS 上两者是同一路径；在 Linux 和 Windows 上不同。
+Tokenhush 用两个目录：存 `tokenhush.yaml` 的配置目录，存运行时状态的数据目录。macOS 上两者同路径，Linux 和 Windows 上分开。
 
 | 操作系统 | 配置目录 | 数据目录 |
 |---|---|---|
@@ -292,24 +292,24 @@ Tokenhush 使用两个目录：存放 `tokenhush.yaml` 的配置目录，以及�
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` | `${XDG_DATA_HOME:-~/.local/share}/tokenhush/` |
 | Windows | `%AppData%\tokenhush\` | `%LOCALAPPDATA%\tokenhush\` |
 
-`TOKENHUSH_HOME` 设为非空值时，会同时覆盖两个目录。这在测试和保持隔离配置时很方便。
+`TOKENHUSH_HOME` 非空时会覆盖这两个目录，测试和隔离配置时很好用。
 
-数据目录包含：
+数据目录里有：
 
 | 文件 | 用途 |
 |---|---|
 | `control.token` | 控制面 API 的每会话 bearer 令牌，以 `0600` 写入，每次 `run` 重新生成 |
 | `run.json` | 会话元数据（pid、端口、启动时间）。不携带任何秘密和请求内容。 |
 
-`run.json` 和 `control.token` 是会话文件。`run` 在干净关闭时删除它们，陈旧的 `run.json` 只影响诊断，不影响数据安全。核心不写入审计数据库；具体审计存储位于私有 Pro 层。
+`run.json` 和 `control.token` 都是会话文件。干净关闭时 `run` 会删掉；`run.json` 残留只影响诊断，不影响数据安全。核心不保存请求或响应内容。
 
 ## 6. 配置
 
-Tokenhush 从配置目录读取 `tokenhush.yaml`，或从传给 `--config` 的路径读取。文件缺失表示使用默认值。未知键会被拒绝，因此拼写错误会大声失败，而不是被忽略。
+Tokenhush 从配置目录读 `tokenhush.yaml`，或从 `--config` 指定的路径读。文件不存在就用默认值。未知键会被拒绝，所以拼错会直接报错，不会悄悄忽略。
 
-你最可能调整的设置是监听端口、六个检测器、白名单、日志级别，以及把主机或路径前缀路由到你自己的 OpenAI 兼容端点的 `upstreams` 映射。
+最常改的设置：监听端口、六个检测器、白名单、日志级别，以及把主机或路径前缀路由到你自己的 OpenAI 兼容端点的 `upstreams` 映射。
 
-完整的带注释默认值和所有受支持的键见 [configuration.zh-CN.md](configuration.zh-CN.md)。该文件是参考；本指南不重复 YAML 示例。
+完整的带注释默认值和全部受支持的键见 [configuration.zh-CN.md](configuration.zh-CN.md)，本指南不重复 YAML 示例。
 
 ## 7. 升级
 
@@ -320,11 +320,11 @@ Tokenhush 从配置目录读取 `tokenhush.yaml`，或从传给 `--config` 的�
 | install.sh | 重新运行安装命令；它会解析最新发行版 |
 | 源码 | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-配置键在加载时校验，因此添加键的升级不会破坏旧文件，删除键的升级会以 "unknown field" 错误快速失败。`v0.2.0` 升级就是一个具体例子：`audit:` 块已被移除，审计能力移至私有 Pro 层，因此请在重启前删除该块。见 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。升级后重启网关，让新二进制接管流量。
+配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：重启前先删掉被移除的 `audit:` 块。见 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。升级后重启网关，让新二进制接管流量。
 
 ## 8. 卸载
 
-通过安装时使用的渠道移除二进制：
+用当初安装的渠道移除二进制：
 
 ```bash
 brew uninstall --cask tokenhush
@@ -334,36 +334,35 @@ brew uninstall --cask tokenhush
 scoop uninstall tokenhush
 ```
 
-对于 `install.sh` 或源码安装，直接删除二进制：
+`install.sh` 或源码安装的，直接删二进制：
 
 ```bash
 rm "$(command -v tokenhush)"
 ```
 
-如果你添加过 launchd agent、systemd unit 或计划任务，先移除该条目（见[让它在后台持续运行](#让它在后台持续运行)）。然后，如果你想彻底清理，删除配置和数据目录。在 macOS 上两者都位于 `~/Library/Application Support/tokenhush/`；在 Linux 上它们是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；在 Windows 上它们是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删除数据目录会丢弃会话文件（控制令牌和 `run.json`）。
+若加过 launchd agent、systemd unit 或计划任务，先删掉那个条目（见[让它在后台持续运行](#让它在后台持续运行)）。想彻底清干净，再删配置目录和数据目录。macOS 上两者都在 `~/Library/Application Support/tokenhush/`；Linux 上是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；Windows 上是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删数据目录会丢掉会话文件（控制令牌和 `run.json`）。
 
 ## 9. 故障排查
 
-先用 `tokenhush doctor`。它一次性报告配置路径、目录权限、密钥存储和会话状态，其退出码告诉你是否有任何失败。
+先跑 `tokenhush doctor`。它一次报出配置路径、目录权限、密钥存储和会话状态，退出码直接告诉你有无失败。
 
 | 症状 | 原因与修复 |
 |---|---|
-| `run` 报告端口已被占用 | 另一个进程（可能是先前的 `tokenhush run`）占用了端口。检查 `tokenhush status`，停止另一个进程，或用 `--port` 启动 |
-| 安装后找不到 `tokenhush` | `~/.local/bin` 或 `$(go env GOPATH)/bin` 不在 `PATH` 上。把它加入你的 shell 配置文件，然后打开新 shell |
-| 仅在公司网络内请求失败 | HTTP 代理拦截了环回流量。把 `127.0.0.1,localhost,::1` 加入 `NO_PROXY`（以及 `no_proxy`），或在代理设置中排除它 |
-| macOS 首次运行阻止该二进制 | 发行版二进制未公证。右键点击二进制并选择"打开"，然后确认。或运行 `xattr -dr com.apple.quarantine "$(command -v tokenhush)"` |
-| Windows SmartScreen 阻止 `tokenhush.exe` | 点击"更多信息"，然后点击"仍要运行"。Scoop 安装不会触发该提示 |
-| `status` 报控制令牌错误 | 没有活跃会话，或令牌已陈旧。再次启动 `tokenhush run`；令牌按会话重新生成 |
+| `run` 报告端口已被占用 | 另一个进程（可能是先前的 `tokenhush run`）占用了端口。检查 `tokenhush status`，停掉那个进程，或换 `--port` 启动 |
+| 安装后找不到 `tokenhush` | `~/.local/bin` 或 `$(go env GOPATH)/bin` 不在 `PATH` 上。把它写进 shell 配置，再开一个新 shell |
+| 仅在公司网络内请求失败 | HTTP 代理拦了环回流量。把 `127.0.0.1,localhost,::1` 加进 `NO_PROXY`（以及 `no_proxy`），或在代理设置里排除 |
+| macOS 首次运行拦下二进制 | 发行版二进制未公证。右键点二进制，选“打开”，再确认。或运行 `xattr -dr com.apple.quarantine "$(command -v tokenhush)"` |
+| Windows SmartScreen 拦下 `tokenhush.exe` | 点“更多信息”，再点“仍要运行”。Scoop 安装不会触发该提示 |
+| `status` 报控制令牌错误 | 没有活跃会话，或令牌已过期。重新启动 `tokenhush run`；令牌按会话重新生成 |
 
 ## 10. 安全说明
 
-这些属性是承重的。不要绕过它们。
+下面这些是底线，别绕过。
 
-- **仅环回。** 网关绑定 `127.0.0.1` 和 `[::1]`，并校验 `Host` 头。它绝不绑定 `0.0.0.0`。
-- **无根证书，无 MITM。** 公开核心不安装 CA，也不拦截 TLS。请求以纯 HTTP 到达 localhost 上的网关，这正是它能看到并脱敏内容的方式。
-- **仅元数据的审计接缝。** 核心把提供方、端点、时间、字节数、脱敏计数和检测器类型转发到注入的审计 sink，并默认使用 no-op sink。具体存储、其防篡改 HMAC 链和内容日志选项位于私有 Pro 层。
-- **绝不向出站方向回填。** 占位符只在返回客户端的响应中恢复。网关绝不把占位符在出站请求中改写回其秘密，这阻断了提示注入外泄。
-- **失败安全，而非失败开放（fail-open）。** 当检测器无法判断时，Tokenhush 会过度脱敏或阻断并记录告警，而不是静默放出一个秘密。
+- **仅环回。** 网关绑定 `127.0.0.1` 和 `[::1]`，并校验 `Host` 头，绝不绑定 `0.0.0.0`。
+- **不装根证书，不做 MITM。** 公开核心不装 CA，也不拦 TLS。请求以纯 HTTP 打到 localhost 上的网关，它才看得到并脱敏内容。
+- **绝不向出站回填。** 占位符只在返回客户端的响应里还原。出站请求里，网关绝不把占位符改回秘密，挡住了提示注入外泄。
+- **失败时偏保守，不放行。** 检测器拿不准时，Tokenhush 宁可过度脱敏或直接阻断并记告警，也不悄悄放出一个秘密。
 
 完整的威胁模型和不变量见 [security.zh-CN.md](security.zh-CN.md)。请求路径和模块布局见 [architecture.zh-CN.md](architecture.zh-CN.md)。
 

@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> 一个本地网关，在你的 AI 编码工具请求到达模型之前，对其中包含的密钥和敏感数据进行脱敏。拦截每个密钥。零泄露。100% 本地。
+> 本地小工具，把密钥挡在 AI 编码工具的请求之外。100% 在本机运行。
 
 [![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
@@ -10,28 +10,27 @@
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#支持的工具)
 
-Tokenhush 是一个本地 base-URL 网关，位于你的 AI 编码工具与云端模型之间。把 Claude Code、Codex CLI、Aider、Cline、Roo Code、Continue 或任何 OpenAI 兼容客户端指向 `127.0.0.1`，它就会在请求离开你的机器之前检测并脱敏其中的敏感内容。核心提供仅元数据的审计接缝；具体的本地审计存储（持久化、防篡改链、保留策略）位于私有 Pro 层。
+AI 编码工具会把整个项目传到云端，`.env` 文件和 API 密钥也在里面。上传开关未必可靠，请求一旦发出去，就收不回来。Tokenhush 装在你自己的机器上，夹在工具和模型之间。请求出门之前，它先把真密钥换成占位符；云端只看到占位符，你的工具拿到回复时，真值还在。它只是一个监听本机的小程序，不装根证书，也不动其他应用。
+
+```text
+工具发出：      OPENAI_API_KEY=sk-proj-abc123
+云端收到：      OPENAI_API_KEY=__PII_prefix_9f2c__
+工具仍然拿到：  OPENAI_API_KEY=sk-proj-abc123
+```
 
 [功能特性](#功能特性) · [安装](#安装) · [快速开始](#快速开始) · [CLI](#cli) · [文档](#文档) · [贡献](#贡献)
 
-## 为什么选择 Tokenhush
+## 为什么需要 Tokenhush
 
-AI 编码代理会把整个仓库、你的 `.env` 文件和你的密钥发送到云端。2026 年，一位开发者用 mitmproxy 抓取流量，证实 Grok Build CLI 上传了完整仓库，包括 git 历史与 `.env`，而且它的退出开关并未生效（一条获得 593 个赞的社区帖子）。围绕 OpenCode、Claude Code 和其他代理，同样的隐私问题不断出现。
-
-Tokenhush 在这些工具前加了一道本地关卡。它能看到请求、控制外发内容，并用确定性检测器避免误报。除了脱敏后的请求，没有任何东西离开你的机器。
+AI 编码工具要有用，就得读到你的代码和配置。可一次请求带出去的东西，往往比你正在编辑的文件多得多：整个仓库、`.env` 文件、各种密钥，都会一起上传。功能可以关，但关了未必一直有效；数据一旦出门，就没有撤销键。Tokenhush 在这些工具前面加一道关卡：每条请求进来，它把像密钥的内容换掉，再把干净的请求转出去。高置信拦截；除了脱敏后的请求，什么都不会离开你的机器。
 
 ## 功能特性
 
-- **全量请求体外发脱敏。** 固定字段白名单还不够，因此每个请求体都会逐叶遍历。协议无关的 JSON 遍历可覆盖嵌套结构，SSE 增量回填让流式响应在到达过程中始终受到保护。
-- **六个确定性检测器。** 已知密钥前缀（`sk-`、`AKIA`、`ghp_` 等）、高熵字符串、JWT、PEM 私钥头、Luhn 卡号以及邮箱地址。
-- **HMAC 确定性占位符。** 命中项会变成稳定令牌，例如 `__PII_email_9f2c8a4b6d1e__`。映射由 HMAC 派生，保存在内存中，作用域为当前会话。重启会丢失映射，因此你可能偶尔在输出里看到占位符。这是安全降级，不是泄露。
-- **仅元数据的审计接缝。** 核心定义审计接口（`AuditSink` / `AuditQuerier`）和默认的 no-op 实现；一条记录携带提供方、路径、字节数、检测器命中等元数据。具体的本地存储（持久化、防篡改 HMAC 链、保留策略）在私有 Pro 层实现，不在本仓库中。
-- **带防护的双栈环回。** 网关仅绑定 `127.0.0.1` 和 `[::1]`。始终强制执行 Host 白名单，浏览器风格的请求还会做 Origin 检查，控制面 API 需要以 `0600` 权限存储的 bearer token。
-- **`tokenhush env` 引导。** 为 `claude`、`codex`、`aider`、`cline` 和 `roo` 打印可复制粘贴的配置片段。
-- **`tokenhush doctor` 诊断。** 运行常见配置检查，并提供清晰的退出码：无检查失败时为 `0`，检查失败时为 `1`，用法错误时为 `2`。
-- **跨平台、无 CGO。** 一套纯 Go 代码库用 `CGO_ENABLED=0` 为 amd64 和 arm64 构建 macOS、Linux 和 Windows 二进制文件。
-- **失败安全设计。** 网关选择失败安全（fail-safe），而非失败开放（fail-open）。
-- **公开扩展点。** 跨层接口（`Router`、`CostSink`、`AuditExporter`）和内容插件（`Inspector` / `Transformer`）让你扩展流水线。V1 仅支持编译期插件。
+- **逐字段扫描，六个检测器。** Tokenhush 把整个请求体逐叶走一遍，嵌套 JSON 也能覆盖，流式响应边到边处理。它会认出已知密钥前缀（`sk-`、`AKIA`、`ghp_` 等）、高熵字符串、JWT、PEM 私钥头、Luhn 卡号、邮箱地址。
+- **占位符稳定可还原。** 命中项会变成 `__PII_email_9f2c8a4b6d1e__` 这样的令牌。映射存在内存里，只在当前会话有效。重启后映射丢失，输出里可能偶尔看到占位符，这是安全降级，不是泄露。
+- **只在本机，出错就关。** 网关只绑定 `127.0.0.1` 和 `[::1]`，始终校验 Host，浏览器类请求还查 Origin；控制 API 用 bearer token 保护，token 以 `0600` 权限保存。出问题时网关选择关闭，而不是继续转发。
+- **自带助手。** `tokenhush env` 为 `claude`、`codex`、`aider`、`cline`、`roo` 打印可直接粘贴的配置片段。`tokenhush doctor` 跑常见检查，退出码一看就懂：全部通过是 `0`，有检查失败是 `1`，用法错误是 `2`。
+- **一套代码，扩展点开放。** 纯 Go 编写，`CGO_ENABLED=0`，为 macOS、Linux、Windows 的 amd64 和 arm64 构建。跨层接口（`Router`、`CostSink`）和内容插件（`Inspector` / `Transformer`）可以扩展流水线；V1 只支持编译期插件。
 
 ## 工作原理
 
@@ -41,16 +40,13 @@ flowchart LR
     B -->|脱敏后的请求| C["云端模型"]
     C -->|带占位符的响应| B
     B -->|还原原文的响应| A
-    B -->|仅元数据| D["审计接缝<br/>（存储在 Pro）"]
 ```
 
-- **外发请求：** 网关遍历完整 JSON 请求体并运行全部六个检测器。命中项变成会话级占位符，脱敏后的请求随后转发到上游。
-- **流式响应：** SSE 分块会增量回填，因此流中途到达的占位符能映射回其原文。
-- **入站响应：** 占位符被替换为原始值，且只有客户端会收到它们。
-- **审计接缝：** 网关把提供方、路径、字节数、检测器命中等元数据发送到注入的审计 sink。默认 sink 是 no-op，私有 Pro 层提供具体存储；该接缝绝不记录内容。
+- **外发与流式：** 网关把 JSON 请求体走一遍，跑完六个检测器，命中项变成会话级占位符，再转发到上游。响应分块到达时边到边还原，中途出现的占位符也能对应回真值。
+- **入站：** 网关把占位符换回真值，只有你的工具能看到它们。
 
 > [!IMPORTANT]
-> 硬性不变量是：占位符**绝不**在外发方向回填。只有客户端会拿到原文。这能阻止提示注入试图诱骗网关把密钥回显给模型。
+> 硬性规则：占位符**绝不**在外发方向回填。只有客户端能拿到真值。这样，提示注入想骗网关把密钥回显给模型，也做不到。
 
 ## 支持的工具
 
@@ -78,9 +74,7 @@ flowchart LR
 | Linux | `curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh \| bash` |
 | Windows | `scoop bucket add fregie https://github.com/fregie/scoop-bucket && scoop install tokenhush` |
 
-Linux 安装脚本会下载匹配你操作系统和架构的压缩包，校验其 sha256，然后安装。它默认安装到 `~/.local/bin`，并接受 `--dry-run`、`--version`、`--dir` 和 `--base-url`。它还会读取 `TOKENHUSH_VERSION`、`TOKENHUSH_INSTALL_DIR` 和 `TOKENHUSH_BASE_URL`。
-
-每个发行版都提供 darwin、linux 和 windows 在 amd64 与 arm64 上的压缩包、包含 sha256 的 `checksums.txt`，以及每个压缩包的 SPDX SBOM。
+Linux 安装脚本会按你的系统和架构下载压缩包，校验 sha256 后安装，默认装到 `~/.local/bin`。它接受 `--dry-run`、`--version`、`--dir`、`--base-url`，也会读 `TOKENHUSH_VERSION`、`TOKENHUSH_INSTALL_DIR`、`TOKENHUSH_BASE_URL`。每个版本都提供 darwin、linux、windows 的 amd64 与 arm64 压缩包、带 sha256 的 `checksums.txt`，以及每个压缩包的 SPDX SBOM。
 
 ### 从源码构建
 
@@ -94,15 +88,13 @@ go build -o bin/tokenhush ./cmd/tokenhush
 
 ### 首次运行提示
 
-macOS 二进制文件未经过公证。如果 Gatekeeper 阻止首次启动，请右键点按二进制文件并选择 **打开**，然后在对话框中确认 **打开**。你也可以清除隔离属性：
+macOS 二进制没有公证。如果首次启动被 Gatekeeper 拦下，右键点按二进制，选择 **打开**，再确认 **打开**。也可以直接清掉隔离属性：
 
 ```bash
 xattr -dr com.apple.quarantine "$(command -v tokenhush)"
 ```
 
-在 Windows 上，手动下载的 `.zip` 在首次运行 `tokenhush.exe` 时可能触发 SmartScreen。点击 **更多信息**，然后点击 **仍要运行**。用 Scoop 安装可避免此提示。
-
-完整的[部署指南](docs/deployment.zh-CN.md)。
+Windows 上，手动下载的 `.zip` 首次运行 `tokenhush.exe` 可能触发 SmartScreen。点 **更多信息**，再点 **仍要运行**。用 Scoop 安装不会有这个提示。完整的[部署指南](docs/deployment.zh-CN.md)。
 
 ## 快速开始
 
@@ -141,15 +133,15 @@ tokenhush status
 | `tokenhush version` | 打印版本与构建信息。 | 无 |
 
 > [!NOTE]
-> `tokenhush run` 保持在前台运行，按 Ctrl-C 退出。内置服务命令不属于 V1。若需自动启动，请自行管理操作系统原生的包装方式：macOS 上的 launchd agent、Linux 上的 systemd user unit，或 Windows 上的任务计划程序条目。
+> `tokenhush run` 留在前台运行，按 Ctrl-C 退出。V1 没有内置服务命令。要开机自启，请用系统自带的方式：macOS 用 launchd agent，Linux 用 systemd user unit，Windows 用任务计划程序。
 
 ### 控制面 API
 
-控制面在环回地址上监听，并需要 bearer token。`GET /status` 返回包含 `state`、`addrs`、`uptime_ms`、`requests` 和 `redactions` 的 JSON，且需要 `Authorization: Bearer <token>`。令牌按每次 `run` 生成，并以 `0600` 权限存储在数据目录中。携带 `Origin` 的请求会进行源检查，且始终强制执行 Host 白名单。核心控制面只暴露 `GET /status`；私有 Pro 层会添加自己的审计端点。
+控制面在环回地址上监听，需要 bearer token。`GET /status` 返回包含 `state`、`addrs`、`uptime_ms`、`requests` 和 `redactions` 的 JSON，且需要 `Authorization: Bearer <token>`。令牌每次 `run` 重新生成，以 `0600` 权限存在数据目录里。带 `Origin` 的请求会做源检查，Host 白名单始终生效。核心只暴露 `GET /status`。
 
 ## 配置
 
-Tokenhush 读取 `tokenhush.yaml`。文件缺失时使用默认值，未知键会被拒绝。
+Tokenhush 读取 `tokenhush.yaml`。文件缺失就用默认值，未知键会被拒绝。
 
 | 位置 | 路径 |
 |---|---|
@@ -157,7 +149,7 @@ Tokenhush 读取 `tokenhush.yaml`。文件缺失时使用默认值，未知键�
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` |
 | Windows | `%AppData%\tokenhush\` |
 
-数据单独存放：macOS 使用 `~/Library/Application Support/tokenhush/`，Linux 使用 `${XDG_DATA_HOME:-~/.local/share}/tokenhush/`，Windows 使用 `%LOCALAPPDATA%\tokenhush\`。设置 `TOKENHUSH_HOME` 可同时覆盖这两个目录。
+数据单独存放：macOS 用 `~/Library/Application Support/tokenhush/`，Linux 用 `${XDG_DATA_HOME:-~/.local/share}/tokenhush/`，Windows 用 `%LOCALAPPDATA%\tokenhush\`。设置 `TOKENHUSH_HOME` 可以同时覆盖这两个目录。
 
 | 顶层键 | 控制内容 |
 |---|---|
@@ -167,13 +159,11 @@ Tokenhush 读取 `tokenhush.yaml`。文件缺失时使用默认值，未知键�
 | `log` | `level`：`debug`、`info`、`warn` 或 `error` |
 | `upstreams` | 将主机或路径前缀映射到你自己的 OpenAI 兼容上游 |
 
-> `audit` 键不再是核心配置的一部分。仍包含 `audit:` 块的配置会加载失败，并给出可操作的迁移错误；见 [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md)。
-
 未匹配的路由回退到内置规则：`/v1/messages` 走 Anthropic，`/v1/chat/completions` 和 `/v1/responses` 走 OpenAI。完整参考见 [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)。
 
 ## 安全模型
 
-Tokenhush 仅绑定环回地址，强制执行 Host 白名单，并通过仅元数据的接缝路由审计、不存储任何内容。它绝不在外发方向回填占位符，不附带根证书，也不做 MITM，并选择失败安全而非失败开放。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)。
+Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响应内容。它绝不在外发方向回填占位符，不带根证书，也不做 MITM，出错时选择关闭而非放行。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)。
 
 ## 文档
 
@@ -185,13 +175,13 @@ Tokenhush 仅绑定环回地址，强制执行 Host 白名单，并通过仅元�
 | [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) | 核心架构、数据流和模块 |
 | [docs/security.zh-CN.md](docs/security.zh-CN.md) | 安全模型、威胁模型和硬性不变量 |
 | [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`） |
-| [docs/extension-api.zh-CN.md](docs/extension-api.zh-CN.md) | 扩展接口（`Router`、`CostSink`、`AuditExporter`） |
+| [docs/extension-api.zh-CN.md](docs/extension-api.zh-CN.md) | 跨层扩展接口 |
 | [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
 | [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) | 如何构建、测试和贡献 |
 
 ## 项目状态
 
-V1 核心已作为 **`v0.1.0`** 发布（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）。`v0.2.0` 线保留 `tokenhush run`（带双栈环回的前台网关）、`status`、`env <tool>`、`doctor` 和 `version`，以及仅元数据的审计接缝。具体审计存储、`audit` 子命令和 `/audit` 控制端点已移至私有 Pro 层，因此仍携带 `audit:` 块的配置必须迁移（见 [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md)）。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS 和 Windows 上运行单元测试和端到端冒烟测试。
+V1 核心已作为 **`v0.1.0`** 发布（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）。`v0.2.0` 线保留 `tokenhush run`（带双栈环回的前台网关）、`status`、`env <tool>`、`doctor` 和 `version`。从 v0.1.x 升级请见 [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md)。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS 和 Windows 上运行单元测试和端到端冒烟测试。
 
 ## 开源核心边界
 

@@ -2,15 +2,17 @@
 
 [English](extension-api.md) | **中文**
 
-> 状态：V1 已实现（2026-09）。下列接口与 `pkg/extension` 和 `pkg/proxy` 中的真实接线一致。面向插件作者的上手指南见 [plugins.zh-CN.md](plugins.zh-CN.md)。
+> 状态：V1 已实现（2026-09）。下列接口与 `pkg/extension`、`pkg/proxy` 的真实接线一致。插件作者上手指南见 [plugins.zh-CN.md](plugins.zh-CN.md)。
 
 ## 目的
 
-公开核心只提供单账号直连实现。私有构建（闭源）与第三方通过扩展点接口挂载额外能力。接口公开并不意味着实现公开。
+公开核心只带一种实现：单账号直连。私有构建（闭源）和第三方通过扩展点接口挂载额外能力。接口公开，不等于实现公开。
 
 ## 接口（`pkg/extension`）
 
 ### 跨层扩展点
+
+三个钩子：选上游、记成本、读审计记录。
 
 ```go
 package extension
@@ -38,7 +40,7 @@ type AuditExporter interface {
 
 ### 内容插件（编译期内置，最小权限）
 
-架构决策记录在私有 Pro 仓库中。内置检测器本身就是 `Inspector` 实现；私有构建与第三方通过同一接口挂载更多插件。接口公开并不意味着实现公开：明文生成、出站写入和占位符映射仍仅限核心。
+插件能检查或改写请求与响应内容，但只能走核心开放的通道。架构决策记录在私有 Pro 仓库。内置检测器本身就是 `Inspector` 实现；私有构建和第三方用同一套接口挂载更多插件。边界同前：明文生成、出站写入、占位符映射都只留在核心。
 
 ```go
 type Phase string  // RequestContent | ResponseContent | Header | Metadata
@@ -108,29 +110,29 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 **安全约束（注册期与运行时）**
 
 > [!IMPORTANT]
-> 插件只能提议；由核心决定并执行。占位符到明文的映射无法从 `pkg/extension` 访问。
+> 插件只能提议；决定和执行都在核心。`pkg/extension` 访问不到占位符到明文的映射。
 
-- `Register` 以类型化错误拒绝：非插件或 typed-nil（`ErrNotAPlugin`）、空 id 或重复 id（`ErrMissingID` / `ErrDuplicateID`）、`CanNetwork`（`ErrNetworkDenied`）、负优先级（`ErrInvalidPriority`）、空 phase 或未知 phase（`ErrNoPhases` / `ErrInvalidPhase`），以及声明 `RequestContent` 或 `Header` 的 `Transformer`（`ErrTransformerPhase`）。只有全部检查通过才会存储任何东西。
-- 未开启 `ReadContent` 的 `Inspector` 只能看到 `Leaf.Len`；`Leaf.Content` 为 `nil`。
-- `Transformer` 只能声明 `ResponseContent` 或 `Metadata`。声明 `RequestContent` 或 `Header` 会在注册时被拒绝。
-- 明文生成和所有出站写入仅限核心。`ResponseContent` 重写在回填之前运行，因此其输出不可能包含原始机密。
-- `Header` phase 始终清空 `Content`，即使已授予 `ReadContent`。只有 header 名称和长度保留，因此 `Authorization` 及其他任何凭据值都不会到达插件。
-- 插件无法访问占位符到明文的映射（`pkg/extension` 不暴露任何映射 API）。
-- 策略引擎位于核心：优先级为 `Allow < Warn < Redact < Block`（`Block` 最严重）。按插件的失败策略为 `FailOpenWarn`（提示性，默认）或 `FailClosed`（关键性）。panic 或超时绝不会静默。
+- `Register` 用类型化错误拒绝以下情况：非插件或 typed-nil（`ErrNotAPlugin`）；id 为空或重复（`ErrMissingID` / `ErrDuplicateID`）；开启 `CanNetwork`（`ErrNetworkDenied`）；优先级为负（`ErrInvalidPriority`）；phase 为空或未知（`ErrNoPhases` / `ErrInvalidPhase`）；`Transformer` 声明 `RequestContent` 或 `Header`（`ErrTransformerPhase`）。全部检查通过，才会写入任何状态。
+- 未开启 `ReadContent` 的 `Inspector` 只能看到 `Leaf.Len`，`Leaf.Content` 为 `nil`。
+- `Transformer` 只能声明 `ResponseContent` 或 `Metadata`；声明 `RequestContent` 或 `Header`，注册时即被拒绝。
+- 明文生成和所有出站写入只在核心。`ResponseContent` 重写先于回填运行，所以输出不可能再包含原始机密。
+- 即使授予 `ReadContent`，`Header` phase 仍会清空 `Content`。只保留 header 名称和长度，`Authorization` 及其他任何凭据值都到不了插件。
+- 插件访问不到占位符到明文的映射（`pkg/extension` 不暴露任何映射 API）。
+- 策略引擎在核心：优先级顺序为 `Allow < Warn < Redact < Block`（`Block` 最严重）。单插件的失败策略是 `FailOpenWarn`（提示性，默认）或 `FailClosed`（关键性）。panic 或超时绝不静默。
 
-`Gate` 还会拒绝 nil 文档（`ErrNilDocument`）以及插件未声明其 phase 的文档（`ErrPhaseNotDeclared`）。
+`Gate` 还会拒绝 nil 文档（`ErrNilDocument`），以及插件未声明其 phase 的文档（`ErrPhaseNotDeclared`）。
 
-辅助类型（示意）：`Request`（method/path/headers/解析后的 JSON）、`Response`、`Upstream`（base URL；不携带凭据，V1 透传凭据）。`Query` 和 `Record` 是 `pkg/audit` 类型的别名；审计的写入与读取由 `pkg/audit` 中的 `AuditSink` / `AuditQuerier` 接缝负责。核心默认是 no-op sink，私有 Pro 层注入具体存储。
+辅助类型（示意）：`Request`（method/path/headers/解析后的 JSON）、`Response`、`Upstream`（base URL；不携带凭据，V1 透传凭据）。`Query` 与 `Record` 是 `pkg/audit` 类型的别名；审计读写由该包的 `AuditSink` / `AuditQuerier` 接缝承担。核心默认是 no-op sink，私有 Pro 层注入具体存储。
 
 ## 实现如何挂载
 
 ### 公开核心（默认）
 
-作为默认路径，只注册内置的空操作实现：直连、无路由、无成本追踪。
+默认路径只注册内置的空操作实现：直连、不路由、不追踪成本。
 
 ### 私有构建（闭源）
 
-私有仓库是一个独立的 `main` 包，它 import 核心的公开包并注册自己的实现：
+私有仓库是一个独立的 `main` 包，import 核心的公开包，再注册自己的实现：
 
 ```go
 package main
@@ -159,9 +161,9 @@ func main() {
 ```
 
 > [!NOTE]
-> 这里只展示注册表注入的形态。真实接线使用 `pkg/proxy` 导出的原语；`internal/cli` 中的 `run` 实现是参考（`internal/` 无法被外部模块 import）。
+> 这里只展示注册表注入的形态。真实接线用 `pkg/proxy` 导出的原语；`internal/cli` 里的 `run` 实现是参考（`internal/` 不能被外部模块 import）。
 
-**要点**：Pro 能力来自私有源代码，而不是本仓库里的某个开关。破解公开核心无法解锁 Pro，因为公开二进制不包含任何 Pro 实现。
+**要点**：Pro 能力来自私有源代码，不是本仓库里的开关。破解公开核心解锁不了 Pro，因为公开二进制里没有任何 Pro 实现。
 
 ## 稳定性策略
 
@@ -180,4 +182,4 @@ func main() {
 
 ## 第三方扩展
 
-V1 只支持**编译期**插件（见 [plugins.zh-CN.md](plugins.zh-CN.md)）。不运行时加载 WASM、子进程或动态库。此类机制（例如用于生态而非 IP 保护的 WASM 沙箱）不在 V1 范围内。第三方扩展在 v1.0 之前不应依赖未冻结的字段。
+V1 只支持**编译期**插件（见 [plugins.zh-CN.md](plugins.zh-CN.md)）；不在运行时加载 WASM、子进程或动态库。面向生态（而非 IP 保护）的 WASM 沙箱不在 V1 范围内。

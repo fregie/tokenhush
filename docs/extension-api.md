@@ -2,15 +2,17 @@
 
 **English** | [中文](extension-api.zh-CN.md)
 
-> Status: V1 implemented (2026-09). The interfaces below match the real wiring in `pkg/extension` and `pkg/proxy`. For a hands-on guide aimed at plugin authors, see [plugins.md](plugins.md).
+> Status: V1 implemented (2026-09). These interfaces match the real wiring in `pkg/extension` and `pkg/proxy`. Plugin-author walkthrough: [plugins.md](plugins.md).
 
 ## Purpose
 
-The public core ships a single-account direct implementation only. Private builds (closed source) and third parties mount extra capabilities through extension point interfaces. A public interface does not mean a public implementation.
+The public core ships one implementation: single-account direct. Private builds (closed source) and third parties mount extra capabilities through extension-point interfaces. A public interface does not mean a public implementation.
 
 ## Interfaces (`pkg/extension`)
 
 ### Cross-layer extension points
+
+Three hooks: pick an upstream, record cost, read audit records.
 
 ```go
 package extension
@@ -38,7 +40,7 @@ type AuditExporter interface {
 
 ### Content plugins (compiled-in, least-privilege)
 
-The architecture decision is recorded in the private Pro repository. The built-in detectors are themselves `Inspector` implementations; private builds and third parties mount more plugins through the same interface. A public interface does not mean a public implementation: plaintext generation, outbound writes, and the placeholder mapping stay core-only.
+A plugin inspects or rewrites request and response content, but only through gates the core opens. The design decision lives in the private Pro repository. Built-in detectors are `Inspector` implementations; private builds and third parties mount more through the same interface. Same boundary as above: plaintext generation, outbound writes, and the placeholder mapping stay core-only.
 
 ```go
 type Phase string  // RequestContent | ResponseContent | Header | Metadata
@@ -110,27 +112,27 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 > [!IMPORTANT]
 > A plugin only proposes; the core decides and acts. The placeholder-to-plaintext mapping is unreachable from `pkg/extension`.
 
-- `Register` rejects with typed errors: non-plugin or typed-nil (`ErrNotAPlugin`), empty or duplicate id (`ErrMissingID` / `ErrDuplicateID`), `CanNetwork` (`ErrNetworkDenied`), negative priority (`ErrInvalidPriority`), empty or unknown phase (`ErrNoPhases` / `ErrInvalidPhase`), and a `Transformer` declaring `RequestContent` or `Header` (`ErrTransformerPhase`). Nothing is stored unless every check passes.
+- `Register` rejects with typed errors: non-plugin or typed-nil (`ErrNotAPlugin`); empty or duplicate id (`ErrMissingID` / `ErrDuplicateID`); `CanNetwork` (`ErrNetworkDenied`); negative priority (`ErrInvalidPriority`); empty or unknown phase (`ErrNoPhases` / `ErrInvalidPhase`); and a `Transformer` declaring `RequestContent` or `Header` (`ErrTransformerPhase`). It stores nothing unless every check passes.
 - An `Inspector` without `ReadContent` sees only `Leaf.Len`; `Leaf.Content` is `nil`.
-- A `Transformer` may only declare `ResponseContent` or `Metadata`. Declaring `RequestContent` or `Header` is rejected at registration time.
-- Plaintext generation and every outbound write are core-only. A `ResponseContent` rewrite runs before backfill, so its output cannot contain an original secret.
-- The `Header` phase always clears `Content`, even when `ReadContent` is granted. Only the header name and length survive, so `Authorization` and every other credential value never reach a plugin.
+- A `Transformer` may declare only `ResponseContent` or `Metadata`; `RequestContent` or `Header` is rejected at registration.
+- Plaintext generation and every outbound write are core-only. A `ResponseContent` rewrite runs before backfill, so its output cannot hold an original secret.
+- The `Header` phase always clears `Content`, even with `ReadContent` granted. Only the header name and length survive, so `Authorization` and all credential values stay out of plugins.
 - The placeholder-to-plaintext mapping is unreachable to plugins (`pkg/extension` exposes no mapping API).
-- The policy engine lives in the core: precedence is `Allow < Warn < Redact < Block` (`Block` is most severe). The per-plugin failure policy is `FailOpenWarn` (advisory, default) or `FailClosed` (critical). A panic or timeout is never silent.
+- Policy lives in the core: precedence is `Allow < Warn < Redact < Block` (`Block` most severe). The per-plugin failure policy is `FailOpenWarn` (advisory, default) or `FailClosed` (critical). Panics and timeouts are never silent.
 
 `Gate` also rejects a nil document (`ErrNilDocument`) and a document whose phase the plugin did not declare (`ErrPhaseNotDeclared`).
 
-Supporting types (illustrative): `Request` (method/path/headers/parsed JSON), `Response`, `Upstream` (base URL; carries no credentials, V1 passes them through). `Query` and `Record` are type aliases of `pkg/audit` types; audit writes and reads are owned by the `AuditSink` / `AuditQuerier` seams in `pkg/audit`. The core default is a no-op sink, and the private Pro layer injects the concrete store.
+Supporting types (illustrative): `Request` (method/path/headers/parsed JSON), `Response`, `Upstream` (base URL, no credentials; V1 passes them through). `Query`/`Record` alias `pkg/audit` types; its `AuditSink`/`AuditQuerier` seams own audit reads and writes. Core default is a no-op sink; Pro injects the store.
 
 ## How implementations are mounted
 
 ### Public core (default)
 
-Registers only the built-in no-op implementations for direct connection, no routing, and no cost tracking, as the default path.
+The default path registers only no-op implementations: direct connection, no routing, no cost tracking.
 
 ### Private build (closed source)
 
-The private repository is a separate `main` package that imports this core's public packages and registers its own implementations:
+A private repository is a separate `main` package: it imports this core's public packages and registers its own implementations:
 
 ```go
 package main
@@ -159,9 +161,9 @@ func main() {
 ```
 
 > [!NOTE]
-> This shows only the shape of registry injection. Real wiring uses the primitives exported by `pkg/proxy`; the `run` implementation in `internal/cli` is the reference (`internal/` is not importable by external modules).
+> This shows only the shape of injection. Real wiring uses `pkg/proxy` primitives; the `run` implementation in `internal/cli` is the reference (`internal/` is not importable by external modules).
 
-**Key point**: Pro capability comes from private source code, not from a switch in this repository. Cracking the public core cannot unlock Pro, because the public binary contains no Pro implementation.
+**Key point**: Pro capability comes from private source, not a switch here. Cracking the public core cannot unlock Pro: the public binary contains no Pro implementation.
 
 ## Stability policy
 
@@ -175,9 +177,9 @@ func main() {
 | `extension.Registry` | May change | Depends on the wiring; frozen once the wiring settles |
 | `Request` / `Response` structs | May change | Adjusts as protocols evolve, following semantic versioning |
 
-- Public interfaces are versioned with semantic versioning; breaking changes bump the major version.
+- Public interfaces follow semantic versioning; breaking changes bump the major version.
 - Third-party extensions should not depend on unfrozen fields before v1.0.
 
 ## Third-party extensions
 
-V1 supports **compile-time** plugins only (see [plugins.md](plugins.md)). There is no runtime loading of WASM, subprocesses, or dynamic libraries. Such mechanisms (for example a WASM sandbox for ecosystem use rather than IP protection) are out of scope for V1. Third-party extensions should not depend on unfrozen fields before v1.0.
+V1 supports **compile-time** plugins only (see [plugins.md](plugins.md)); no runtime loading of WASM, subprocesses, or dynamic libraries. A WASM sandbox (for ecosystem use, not IP protection) is out of scope for V1.

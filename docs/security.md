@@ -14,35 +14,29 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 | **Local malicious process/web page reaches the gateway** | Any local process or browser page can `fetch` `127.0.0.1:8787` | Dual-stack loopback (127.0.0.1 + `[::1]`); `Host` header validation; the control plane additionally requires a bearer token generated per `run`, stored `0600` on disk, and same-origin validation for requests carrying `Origin` |
 | **DNS rebinding** | A malicious domain resolves to 127.0.0.1 to bypass same-origin | `Host`/`Origin` header validation |
 | **Placeholder collision** | Two secrets map to the same placeholder, causing a wrong backfill | HMAC-deterministic mapping + high-entropy suffix |
-| **Audit log tampering** | After-the-fact edits hide a leak | The concrete store is delegated to the private Pro layer: append-only + HMAC hash chain (key stored in Keychain / OS secret store). The core defines only the metadata-only seam |
 | **Plaintext read from memory** | Debug or dump by another process under the same user | Sandbox/hardened runtime; no plaintext written to disk |
 | **Supply-chain attack** | A dependency is poisoned (see the LiteLLM incident) | Minimal dependencies + pinned versions + signed releases + SBOM |
+
+- **Prompt injection, concretely.** A poisoned file tells the model to print `__PII_email_3f9a2b__`. If the model echoes it and the gateway backfilled outbound, the real email would go upstream. Invariant 1 blocks that: backfill only runs toward the client.
+- **Local reachability, concretely.** A random npm `postinstall` script, or a web page you have open, can call `fetch("http://127.0.0.1:8787/...")`. It still fails: loopback-only bind, `Host` check, and a per-`run` bearer token.
 
 ## Hard invariants
 
 1. **Never backfill placeholders outbound.** Backfill happens only on responses returned to the client.
-2. **Do not store request/response plaintext by default.** The audit seam is metadata-only by default, and the core itself stores no audit data.
+2. **Do not store request/response plaintext by default.** The core stores no request or response content.
 3. **No root certificate is installed and no MITM is performed by default.** MITM is an explicit opt-in in later stages and is not implemented in the public core.
 4. **The local service binds dual-stack loopback only (127.0.0.1 + `[::1]`).**
-5. **Fail-safe on detection failure, not fail-open.** When the gateway cannot determine whether content is sensitive, it prefers over-redaction, or allows with a warning, and never silently emits plaintext. The policy is configurable (see below).
+5. **Fail-safe on detection failure, not fail-open.** When the gateway cannot tell whether content is sensitive, it prefers over-redaction, or allows with a warning, and never silently emits plaintext. The policy is configurable (see below).
 
 > [!IMPORTANT]
-> Invariant 1 is the reason prompt injection cannot turn the gateway into an exfiltration path: placeholders are only ever replaced on the way back to the client.
+> Invariant 1 is why prompt injection cannot turn the gateway into an exfiltration path: placeholders are only ever replaced on the way back to the client.
 
 ## Detector trade-offs
 
 - **False positives (over-redaction)** hurt the experience: the model receives a placeholder and code or answers degrade.
 - **False negatives (under-redaction)** hurt the promise: sensitive content leaves the machine.
 
-The V1 strategy is **deterministic, high-precision-first detectors** (known key prefixes, high entropy, JWT, private-key headers, Luhn card-number checksums, and email addresses), backed by an allowlist and one-click release. The project does **not** claim "never leaks". The honest claim is **"high-confidence secret interception + full auditability"**.
-
-## Audit seam and integrity
-
-- **Seam**: the core defines `Record` / `Query` and the `AuditSink` / `AuditQuerier` interfaces, and defaults to a no-op sink. The private Pro layer injects the concrete store.
-- **Storage and integrity** (Pro layer): append-only SQLite; each record's hash includes the previous record's hash (HMAC chain), with the key stored in the OS keyring.
-- **Content**: the seam is metadata-only by default (provider, endpoint, time, byte counts, redaction counts, sensitive types).
-- **Retention** (Pro layer): default 14 days; the suggested range is 7 to 30, configurable.
-- **Honest boundary**: a local HMAC chain cannot provide third-party-verifiable compliance proof. Do not over-promise to the compliance market.
+The V1 strategy is **deterministic, high-precision-first detectors** (known key prefixes, high entropy, JWT, private-key headers, Luhn card-number checksums, and email addresses), backed by an allowlist and one-click release. The project does **not** claim "never leaks". The honest claim is **"high-confidence secret interception"**.
 
 ## Key handling
 
