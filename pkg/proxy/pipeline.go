@@ -49,12 +49,12 @@ type PipelineConfig struct {
 
 // Pipeline composes the W4.1 registry, W4.2 policy, W4.3 detectors, W4.4
 // placeholder engine and W3.4 leaf walker into the request and response paths
-// (docs/13 §4/§5).
+// (docs/architecture.md and docs/plugins.md).
 //
 // Outbound (client to upstream): the fully-read request body is leaf-walked,
 // inspected and, on Redact, rewritten core-only to placeholders before it is
 // forwarded. The rewrite never consults the reverse mapping, so a placeholder
-// already present in the client body is forwarded verbatim (docs/13 §9.1).
+// already present in the client body is forwarded verbatim (docs/security.md).
 // Block aborts locally; upstream is never dialed.
 //
 // Inbound (upstream to client): a fully-buffered response is inspected,
@@ -112,7 +112,7 @@ func (e *BlockedError) Error() string {
 
 // RequestTransform returns the BodyTransform for the W3.3 Forwarder seam. The
 // forwarder reads the whole body, calls this once, and only then dispatches, so
-// a redaction can never miss a tail fragment (docs/13 §4.1).
+// a redaction can never miss a tail fragment (docs/architecture.md).
 func (p *Pipeline) RequestTransform() BodyTransform {
 	return p.transformRequest
 }

@@ -59,7 +59,7 @@ const PlaintextWarningMarker = "tokenhush: WARNING: plaintext secret store in us
 // encrypted file -> plaintext file) selected at OpenSecretStore time.
 //
 // The audit subsystem uses the namespace service "tokenhush/audit" with key
-// "hmac-key" (docs/13 §3.2); V1 stores no provider keys.
+// "hmac-key" (docs/security.md); V1 stores no provider keys.
 type SecretStore interface {
 	// Get returns the stored secret. A missing entry yields an error matching
 	// ErrNotFound.
@@ -144,7 +144,7 @@ type secretStoreConfig struct {
 }
 
 // OpenSecretStore resolves the platform data dir and selects the strongest
-// available backend per the docs/13 §3.2 fallback chain.
+// available backend per the docs/security.md fallback chain.
 func OpenSecretStore() (SecretStore, error) {
 	dataDir, err := DataDir()
 	if err != nil {

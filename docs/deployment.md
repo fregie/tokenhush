@@ -95,7 +95,7 @@ tokenhush version
 `version` prints the version and build information, and takes no flags.
 
 > [!NOTE]
-> The macOS Homebrew and Windows Scoop channels are still under manual verification for `v0.1.0`. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
+> The macOS Homebrew and Windows Scoop channels are still under manual verification for the `v0.3.0` line. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
 
 ## 3. First run
 
@@ -320,7 +320,7 @@ Full annotated defaults and every supported key live in [configuration.md](confi
 | install.sh | Re-run the install command; it resolves the latest release |
 | Source | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: delete the removed `audit:` block before restarting. See [migration-v0.2.0.md](migration-v0.2.0.md). Restart the gateway after upgrading so the new binary serves traffic.
+Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: delete the removed `audit:` block before restarting. See [migration-v0.2.0.md](migration-v0.2.0.md). The `v0.3.0` upgrade needs no config change; see [migration-v0.3.0.md](migration-v0.3.0.md). Restart the gateway after upgrading so the new binary serves traffic.
 
 ## 8. Uninstall
 

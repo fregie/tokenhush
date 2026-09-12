@@ -184,11 +184,12 @@ Tokenhush binds loopback only, enforces a Host allowlist, and stores no request 
 | [docs/plugins.md](docs/plugins.md) | Writing content plugins (`Inspector` / `Transformer`) |
 | [docs/extension-api.md](docs/extension-api.md) | Cross-layer extension interfaces |
 | [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |
+| [docs/migration-v0.3.0.md](docs/migration-v0.3.0.md) | Migrating to v0.3.0: `pkg/gateway`, the `/v1/models` named exception, and 9 more `env` tools |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute |
 
 ## Project status
 
-The V1 core shipped as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)). The `v0.2.0` line keeps `tokenhush run` (foreground gateway with dual-stack loopback), `status`, `env <tool>`, `doctor`, and `version`. If you are upgrading from v0.1.x, see [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md). The code is pure Go with `CGO_ENABLED=0`, and CI runs unit tests and an end-to-end smoke test on Linux, macOS, and Windows.
+The V1 core first shipped as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)); the current line is **`v0.3.0`**. It keeps `tokenhush run` (foreground gateway with dual-stack loopback), `status`, `env <tool>` (14 tools), `doctor`, and `version`, and moves the shared assembly layer into the exported `pkg/gateway` package. If you are upgrading from `v0.2.0`, see [docs/migration-v0.3.0.md](docs/migration-v0.3.0.md); from v0.1.x, see [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md). The code is pure Go with `CGO_ENABLED=0`, and CI runs unit tests and an end-to-end smoke test on Linux, macOS, and Windows.
 
 ## Open-core boundary
 

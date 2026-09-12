@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh - install the Tokenhush CLI from a GitHub release.
 #
-# Linux is served by this script plus the raw release binaries (docs/13 §10.2);
+# Linux is served by this script plus the raw release binaries (docs/deployment.md §2);
 # macOS users should prefer `brew install --cask fregie/tap/tokenhush` and
 # Windows users `scoop install tokenhush`. The script downloads the release
 # archive for the detected OS/arch, verifies it against the release

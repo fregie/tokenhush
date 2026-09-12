@@ -147,7 +147,7 @@ func TestForwardRoundTrip(t *testing.T) {
 	}
 }
 
-// TestForwardTransformReadsFullBodyBeforeDispatch locks the docs/13 §4.1
+// TestForwardTransformReadsFullBodyBeforeDispatch locks the docs/architecture.md
 // ordering invariant: the *entire* outbound body is read and transformed
 // before any byte is dispatched upstream. The planted secret sits at the very
 // end of a 1 MiB body, so a forward that starts streaming before the tail has

@@ -114,7 +114,7 @@ func rawHTTPStatus(t *testing.T, srv *httptest.Server, raw string) int {
 	return resp.StatusCode
 }
 
-// TestHostAllowlist is the docs/13 §3.4 DNS-rebinding acceptance test: only
+// TestHostAllowlist is the docs/security.md DNS-rebinding acceptance test: only
 // the three loopback spellings bound by Listeners.Port() may pass; anything
 // else is rejected with 403 before the wrapped handler runs.
 func TestHostAllowlist(t *testing.T) {

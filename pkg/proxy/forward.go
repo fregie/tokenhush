@@ -27,7 +27,7 @@ const MaxHeaderBytes = http.DefaultMaxHeaderBytes
 var ErrInvalidUpstream = errors.New("proxy: invalid upstream base URL")
 
 // BodyTransform rewrites the fully-read outbound request body before it is
-// forwarded. It is the redaction seam (docs/13 §4.1): the handler reads the
+// forwarded. It is the redaction seam (docs/architecture.md): the handler reads the
 // entire body, calls the transform exactly once, and only then dispatches
 // upstream, so a transform can never miss a tail fragment. Returning an error
 // aborts the request locally (fail closed); the un-transformed body is never
@@ -77,7 +77,7 @@ func WithTransformErrorHandler(h TransformErrorFunc) ForwardOption {
 //
 // Auth headers (Authorization, x-api-key, anthropic-beta, cookies, ...) are
 // ordinary end-to-end headers here: they are copied byte-for-byte and never
-// parsed, stored or rewritten (docs/13 §4.1).
+// parsed, stored or rewritten (docs/architecture.md).
 type Forwarder struct {
 	base             *url.URL
 	client           *http.Client
@@ -137,7 +137,7 @@ func parseUpstream(raw string) (*url.URL, error) {
 // ServeHTTP reads the client request body in full, runs the BodyTransform over
 // it, forwards method/path/query/headers to the upstream and streams the
 // upstream response back. No body byte is dispatched upstream before the
-// transform has seen all of it (docs/13 §4.1); a transform error answers 500
+// transform has seen all of it (docs/architecture.md); a transform error answers 500
 // locally instead of forwarding un-transformed content. Hop-by-hop headers are
 // stripped in both directions, upstream status and end-to-end headers are
 // preserved, and transport failures map to 502/504 rather than hanging.

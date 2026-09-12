@@ -22,7 +22,7 @@ type Middleware func(http.Handler) http.Handler
 // header is not exactly one of the loopback spellings bound by
 // Listeners.Port(): "127.0.0.1:PORT", "localhost:PORT" (case-insensitive) or
 // "[::1]:PORT". Foreign hosts, DNS-rebinding style names, malformed
-// authorities and Host-less requests get 403 before next runs (docs/13 §3.4).
+// authorities and Host-less requests get 403 before next runs (docs/security.md).
 //
 // port must be the port the listeners actually bound (Listeners.Port()), not
 // the configured port, which may have been 0. A non-positive port makes the
@@ -71,7 +71,7 @@ type TokenSource func() string
 // token (RFC 6750) on the wrapped handler. The credential is compared in
 // constant time; a missing, malformed, duplicated or wrong credential gets
 // 401 with a WWW-Authenticate challenge. The token is never logged, echoed or
-// included in any response (docs/13 §3.4 / docs/security.md §1–2).
+// included in any response (docs/security.md §1–2).
 func ControlAuth(token TokenSource) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +115,7 @@ func bearerCredential(values []string) (string, bool) {
 // request's own http origin; a request carrying Sec-Fetch-Site must be
 // "same-origin" or a direct user navigation ("none"). Requests carrying
 // neither header (CLI, curl, other local tools) pass through so the next
-// guard can enforce the bearer token (docs/13 §3.4).
+// guard can enforce the bearer token (docs/security.md).
 //
 // Only plain http is accepted as same-origin: the V1 control plane has no TLS
 // listener. A different loopback alias (localhost vs 127.0.0.1) is a

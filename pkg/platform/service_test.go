@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestServiceStub pins the W2.3 contract (docs/13 §3.3): the service-lifecycle
+// TestServiceStub pins the W2.3 contract (docs/deployment.md §4): the service-lifecycle
 // entry points exist but perform no host mutation in V1. Every call must fail
 // with a typed error wrapping ErrNotImplemented so callers can classify it via
 // errors.Is and print roadmap guidance instead of a raw failure.

@@ -3,7 +3,7 @@ name: release
 # Tag-triggered release: builds the six cross-platform archives, checksums and
 # per-archive SBOMs, publishes the GitHub release, and pushes the Homebrew cask
 # (macOS) and Scoop manifest (Windows). Linux ships via install.sh + the raw
-# release binaries (docs/13 §10.2).
+# release binaries (docs/deployment.md §2).
 on:
   push:
     tags:

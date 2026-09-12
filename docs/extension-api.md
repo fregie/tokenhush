@@ -2,7 +2,7 @@
 
 **English** | [中文](extension-api.zh-CN.md)
 
-> Status: V1 implemented (2026-09). These interfaces match the real wiring in `pkg/extension` and `pkg/proxy`. Plugin-author walkthrough: [plugins.md](plugins.md).
+> Status: V1 implemented (2026-09). These interfaces match the real wiring in `pkg/extension`, `pkg/proxy`, and `pkg/gateway`. Plugin-author walkthrough: [plugins.md](plugins.md).
 
 ## Purpose
 
@@ -124,6 +124,121 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 
 Supporting types (illustrative): `Request` (method/path/headers/parsed JSON), `Response`, `Upstream` (base URL, no credentials; V1 passes them through). `Query`/`Record` alias `pkg/audit` types; its `AuditSink`/`AuditQuerier` seams own audit reads and writes. Core default is a no-op sink; Pro injects the store.
 
+## Assembly layer (`pkg/gateway`)
+
+The core CLI (`internal/cli`) and the private Pro daemon assemble through one shared layer. `pkg/gateway` owns the dual-stack loopback listener lifecycle, the per-session control token and `run.json`, the Host-allowlist and per-request stats middleware chain, the data plane, and the bounded graceful shutdown. Callers keep their build-specific concepts (audit store, control session, entitlement, web UI) behind the lifecycle hooks in `Options`.
+
+The exported contract is frozen by ADR-0012 in the private Pro repository; `pkg/gateway/testdata/options_contract.txt` plus `TestOptionsContractDoc` pin the exported struct fields against accidental drift. The package is experimental until v1.0.
+
+```go
+package gateway
+
+// Deps is the mutable per-session state shared with the lifecycle hooks. The
+// gateway allocates the two atomic counters; Setup may pin DataDir first.
+type Deps struct {
+    DataDir    string         // session-files root; Setup sets it before any platform.* call
+    Token      string         // per-session control-API token, written after the listener is bound
+    Requests   *atomic.Uint64 // data-plane requests served this session
+    Redactions *atomic.Uint64 // placeholder substitutions applied this session
+}
+
+// RunInfo is the post-startup snapshot handed to Options.Ready once the
+// listeners are bound and the session files exist.
+type RunInfo struct {
+    Addrs []string
+    Port  int
+}
+
+// Options is the frozen assembly contract. The zero value is not usable:
+// Core and Pipeline must be provided; every hook is optional.
+type Options struct {
+    Core          config.Config                          // loaded core configuration
+    Router        extension.Router                       // nil falls back to proxy.NewResolver(Core.Upstreams, Sink)
+    CostSink      extension.CostSink                     // nil is a no-op
+    Sink          audit.AuditSink                        // feeds the default resolver only
+    Pipeline      *proxy.Pipeline                        // required; caller-built, never rebuilt
+    PolicyTimeout time.Duration                          // <= 0 uses the default
+    Setup         func(*Deps) error                      // runs first, before any platform.* call
+    Mount         func(*http.ServeMux, *Deps)            // caller-owned control/UI subtrees
+    WrapDataPlane func(http.Handler, *Deps) http.Handler // audit / credential-injection layers
+    Teardown      func(*Deps)                            // finalises the session; idempotent
+    Stdout        io.Writer                              // human-facing startup lines; nil discards
+    Stderr        io.Writer                              // diagnostics stream kept for callers
+    Ready         func(RunInfo)                          // listeners bound, session files on disk
+}
+
+// Run assembles and runs one gateway session until ctx is cancelled. The
+// returned error wraps pkg/proxy's typed listener errors (errors.Is).
+func Run(ctx context.Context, opts Options) error
+```
+
+**Lifecycle.** `Run` follows one fixed call order:
+
+```text
+Setup -> resolve DataDir -> bind listener -> generate token + session files
+  -> mux(Mount, WrapDataPlane) -> Ready -> serve -> drain -> Teardown -> cleanup
+```
+
+- `Setup` runs first and before any `platform.*` call, so a caller can pin its data root (`TOKENHUSH_HOME`).
+- The listener binds **before** the token and `run.json` are written: a busy port fails fast and leaves no stale session state.
+- `Teardown` is called exactly once on every path, including a `Setup` failure; the session files are removed after it.
+
+**Middleware chain.** One mux serves both planes. On the data plane, outermost first:
+
+```text
+HostAllowlist -> StatsMW -> WrapDataPlane -> data plane
+```
+
+The control path (`GET /status`; the method-less pattern keeps other methods inside the control API as a JSON 405) is wrapped `HostAllowlist -> OriginPolicy -> ControlAuth`. `StatsMW` allocates one `RequestStats` per request and installs it in the request context **before** `WrapDataPlane`, so a wrapper (the Pro audit layer) reads it through `StatsFrom`:
+
+```go
+// RequestStats is the per-request observation snapshot. Metadata only:
+// detector ids and byte counts, never the matched content.
+type RequestStats struct {
+    Provider   string
+    Path       string
+    Method     string
+    ReqBytes   int
+    Redactions int
+    Detectors  []string
+    Proxied    bool
+}
+
+// StatsFrom returns the current request's RequestStats, or nil outside the
+// gateway's stats middleware.
+func StatsFrom(ctx context.Context) *RequestStats
+```
+
+**Pipeline construction.** The core builds its pipeline with `BuildPipeline` (the enabled built-in detectors in a registry, a fail-closed policy, and a fresh placeholder engine). Pro has its own builder that can register extra plugin families; the gateway never builds a pipeline itself.
+
+```go
+type BuildOptions struct {
+    Detectors []string        // ordered enabled detector ids
+    Allowlist []string        // forwarded to every detector
+    Sink      audit.AuditSink // metadata-only audit rows
+    Timeout   time.Duration   // <= 0 uses the default
+    Tool      string          // labels the Document (for example "claude-code")
+}
+
+func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error)
+```
+
+**Session files and helpers.** `RunState` is the metadata-only pid/port snapshot persisted for discovery; it never contains the control token or request content. `WriteRunState` persists it atomically (same-directory temp file + rename, `0600`). `RunStateFileName` is `run.json` below the data directory, removed on graceful shutdown. `ResolveConfig` returns the passed config when set, otherwise loads it from a path or the platform default.
+
+```go
+const RunStateFileName = "run.json"
+
+type RunState struct {
+    PID       int      `json:"pid"`
+    Port      int      `json:"port"`
+    Addrs     []string `json:"addrs"`
+    StartedAt int64    `json:"started_at"` // unix milliseconds
+}
+
+func WriteRunState(dataDir string, st RunState) error
+func ResolveConfig(cfg *config.Config, path string) (*config.Config, error)
+```
+
 ## How implementations are mounted
 
 ### Public core (default)
@@ -161,7 +276,7 @@ func main() {
 ```
 
 > [!NOTE]
-> This shows only the shape of injection. Real wiring uses `pkg/proxy` primitives; the `run` implementation in `internal/cli` is the reference (`internal/` is not importable by external modules).
+> This shows only the shape of injection. Real wiring uses `pkg/proxy` primitives and the `pkg/gateway` assembly layer above; the `run` implementation in `internal/cli` is the reference (`internal/` is not importable by external modules).
 
 **Key point**: Pro capability comes from private source, not a switch here. Cracking the public core cannot unlock Pro: the public binary contains no Pro implementation.
 
@@ -175,6 +290,8 @@ func main() {
 | `extension.CostSink` | Stable since V1 | |
 | `extension.AuditExporter` | Stable since V1 | |
 | `extension.Registry` | May change | Depends on the wiring; frozen once the wiring settles |
+| `gateway.Options` / `Deps` / `BuildOptions` / `RequestStats` | Frozen by ADR-0012 (private Pro repo) | Assembly contract; pinned by `TestOptionsContractDoc` |
+| `gateway.Run` / `BuildPipeline` / `ResolveConfig` / `WriteRunState` / `StatsFrom` | May change | Experimental until v1.0 |
 | `Request` / `Response` structs | May change | Adjusts as protocols evolve, following semantic versioning |
 
 - Public interfaces follow semantic versioning; breaking changes bump the major version.

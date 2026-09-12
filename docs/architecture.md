@@ -2,7 +2,7 @@
 
 **English** | [中文](architecture.zh-CN.md)
 
-> Status: V1 is implemented and released as `v0.1.0` (2026-09). This document describes the shipped core architecture and the open-core boundary.
+> Status: V1 is implemented; the current release line is `v0.3.0` (2026-09). This document describes the shipped core architecture and the open-core boundary.
 
 Tokenhush is a local base-URL gateway between your AI coding tool and the model provider. Before a request leaves the machine, it finds sensitive content and replaces it.
 
@@ -56,6 +56,7 @@ flowchart LR
 | Package | Responsibility |
 |---|---|
 | `pkg/proxy` | Local HTTP reverse proxy: listener, upstream routing, SSE passthrough, lifecycle |
+| `pkg/gateway` | Shared request-path assembly (listener lifecycle, control token/`run.json`, middleware chain, data plane); see `extension-api.md` |
 | `pkg/redact` | Detectors (deterministic rules) + placeholder generation/mapping + backfill |
 | `pkg/protocol` | Protocol-agnostic JSON leaf walk; incremental SSE parsing; recursive handling of double-encoded JSON in tool calls |
 | `pkg/config` | Configuration loading and defaults (`tokenhush.yaml`) |

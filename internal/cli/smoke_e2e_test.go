@@ -119,15 +119,15 @@ func assertDaemonCleanup(t *testing.T, dataDir, base string, stop func() error) 
 	}
 }
 
-// TestSmokeE2E is the W6.4 cross-platform integration smoke test (docs/13
-// §10.3): it starts the real daemon through RunServer against a fake upstream
-// and pins the redaction contract in exact bytes.
+// TestSmokeE2E is the W6.4 cross-platform integration smoke test
+// (docs/deployment.md): it starts the real daemon through RunServer against a
+// fake upstream and pins the redaction contract in exact bytes.
 //
 // Outbound, the upstream receives this session's placeholder and never the
 // secret. Inbound, the client receives the original secret and never the
 // placeholder. And the reverse mapping is never consulted outbound: a request
 // body that already carries a placeholder literal is forwarded upstream
-// verbatim (docs/13 §9.1).
+// verbatim (docs/security.md).
 //
 // The test is hermetic — temp data dir, in-memory SecretStore, ephemeral
 // loopback port, httptest upstream — and every network step is bounded. Each

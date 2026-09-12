@@ -184,11 +184,12 @@ Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响�
 | [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`） |
 | [docs/extension-api.zh-CN.md](docs/extension-api.zh-CN.md) | 跨层扩展接口 |
 | [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
+| [docs/migration-v0.3.0.zh-CN.md](docs/migration-v0.3.0.zh-CN.md) | 迁移到 v0.3.0：`pkg/gateway`、`/v1/models` 具名例外，以及新增 9 个 `env` 工具 |
 | [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) | 如何构建、测试和贡献 |
 
 ## 项目状态
 
-V1 核心已作为 **`v0.1.0`** 发布（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）。`v0.2.0` 线保留 `tokenhush run`（带双栈环回的前台网关）、`status`、`env <tool>`、`doctor` 和 `version`。从 v0.1.x 升级请见 [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md)。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS 和 Windows 上运行单元测试和端到端冒烟测试。
+V1 核心首发为 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）；当前线为 **`v0.3.0`**，保留 `tokenhush run`（带双栈环回的前台网关）、`status`、`env <tool>`（14 个工具）、`doctor` 和 `version`，并把共享装配层移入导出的 `pkg/gateway` 包。从 `v0.2.0` 升级请见 [docs/migration-v0.3.0.zh-CN.md](docs/migration-v0.3.0.zh-CN.md)；从 v0.1.x 升级请见 [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md)。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS 和 Windows 上运行单元测试和端到端冒烟测试。
 
 ## 开源核心边界
 

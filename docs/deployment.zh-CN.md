@@ -95,7 +95,7 @@ tokenhush version
 `version` 打印版本和构建信息，不接受任何标志。
 
 > [!NOTE]
-> macOS Homebrew 和 Windows Scoop 渠道在 `v0.1.0` 下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
+> macOS Homebrew 和 Windows Scoop 渠道在 `v0.3.0` 线下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
 
 ## 3. 首次运行
 
@@ -320,7 +320,7 @@ Tokenhush 从配置目录读 `tokenhush.yaml`，或从 `--config` 指定的路�
 | install.sh | 重新运行安装命令；它会解析最新发行版 |
 | 源码 | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：重启前先删掉被移除的 `audit:` 块。见 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。升级后重启网关，让新二进制接管流量。
+配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：重启前先删掉被移除的 `audit:` 块。见 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。`v0.3.0` 升级无需修改配置；见 [migration-v0.3.0.zh-CN.md](migration-v0.3.0.zh-CN.md)。升级后重启网关，让新二进制接管流量。
 
 ## 8. 卸载
 

@@ -18,8 +18,8 @@ const (
 	detectorIDEmail       = "email"
 )
 
-// Finding types reported by the built-in detectors. docs/13 §5.1 freezes the
-// detector set and docs/13 §14 freezes the threshold/confidence values, so
+// Finding types reported by the built-in detectors. docs/security.md freezes
+// the detector set and the threshold/confidence values, so
 // changes here are deliberate and version-reviewed rather than silent drift.
 const (
 	typeAPIKey      = "api_key"

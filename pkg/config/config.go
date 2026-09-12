@@ -16,7 +16,7 @@ import (
 // fails fast with ErrTooLarge.
 const maxConfigBytes = 1 << 20 // 1 MiB
 
-// Canonical detector ids, matching docs/13 §5.1. Note the deliberate mismatch
+// Canonical detector ids, matching docs/configuration.md. Note the deliberate mismatch
 // with the YAML keys: `prefixes`/`private_keys` in the file map to the ids
 // `prefix`/`private_key`.
 const (
@@ -54,8 +54,8 @@ type Detectors struct {
 	Email       bool `yaml:"email"`
 }
 
-// EnabledIDs returns the canonical ids of all enabled detectors in docs/13
-// §5.1 order, so the redaction engine never has to know YAML key names.
+// EnabledIDs returns the canonical ids of all enabled detectors in
+// docs/configuration.md order, so the redaction engine never has to know YAML key names.
 func (d Detectors) EnabledIDs() []string {
 	ids := make([]string, 0, 6)
 	for _, det := range [...]struct {
@@ -81,7 +81,7 @@ type Log struct {
 	Level string `yaml:"level"`
 }
 
-// Default returns the opinionated V1 defaults from docs/13 §7.
+// Default returns the opinionated V1 defaults from docs/configuration.md.
 func Default() Config {
 	return Config{
 		Listen: Listen{Host: "127.0.0.1", Port: 8787},

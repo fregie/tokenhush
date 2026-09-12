@@ -12,7 +12,7 @@ import (
 // silently defaulting to the most sensitive phase.
 type Phase string
 
-// The four lifecycle phases (docs/13 §5). RequestContent covers outbound
+// The four lifecycle phases (docs/plugins.md). RequestContent covers outbound
 // request body leaves; ResponseContent covers inbound response body leaves;
 // Header covers request/response headers as metadata only; Metadata covers
 // non-content metadata (tool, model, byte counts).

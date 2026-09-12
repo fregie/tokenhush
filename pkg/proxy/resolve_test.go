@@ -58,7 +58,7 @@ func TestUpstreamResolve(t *testing.T) {
 		wantBase  string
 		wantErr   error
 	}{
-		// Built-in provider table (docs/13 §4.1 + docs/12 §6.1 shapes).
+		// Built-in provider table (docs/architecture.md + docs/configuration.md shapes).
 		{name: "anthropic messages", method: "POST", host: resolveLoopbackHost, path: "/v1/messages", wantName: ProviderAnthropic, wantBase: AnthropicBaseURL},
 		{name: "anthropic messages oauth query", method: "POST", host: resolveLoopbackHost, path: "/v1/messages?beta=true", wantName: ProviderAnthropic, wantBase: AnthropicBaseURL},
 		{name: "anthropic messages fragment", method: "POST", host: resolveLoopbackHost, path: "/v1/messages#beta", wantName: ProviderAnthropic, wantBase: AnthropicBaseURL},
@@ -100,7 +100,7 @@ func TestUpstreamResolve(t *testing.T) {
 		{name: "unknown cyrillic homoglyph path", method: "POST", host: resolveLoopbackHost, path: "/v1/мessages", wantErr: ErrUnknownUpstream},
 		{name: "unknown near version path", method: "POST", host: resolveLoopbackHost, path: "/v1.1/responses", wantErr: ErrUnknownUpstream},
 
-		// Config upstreams: overrides (docs/13 §7, W2.5 shape).
+		// Config upstreams: overrides (docs/configuration.md, W2.5 shape).
 		{name: "exact path override of built-in route", method: "POST", host: resolveLoopbackHost, path: "/v1/messages",
 			overrides: map[string]string{"/v1/messages": "https://gw.example/anthropic"}, wantName: ProviderAnthropic, wantBase: "https://gw.example/anthropic"},
 		{name: "exact path override of unknown route", method: "POST", host: resolveLoopbackHost, path: "/v1/unknown",

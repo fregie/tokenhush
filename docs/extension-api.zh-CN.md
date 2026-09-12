@@ -2,7 +2,7 @@
 
 [English](extension-api.md) | **中文**
 
-> 状态：V1 已实现（2026-09）。下列接口与 `pkg/extension`、`pkg/proxy` 的真实接线一致。插件作者上手指南见 [plugins.zh-CN.md](plugins.zh-CN.md)。
+> 状态：V1 已实现（2026-09）。下列接口与 `pkg/extension`、`pkg/proxy` 以及 `pkg/gateway` 的真实接线一致。插件作者上手指南见 [plugins.zh-CN.md](plugins.zh-CN.md)。
 
 ## 目的
 
@@ -124,6 +124,119 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 
 辅助类型（示意）：`Request`（method/path/headers/解析后的 JSON）、`Response`、`Upstream`（base URL；不携带凭据，V1 透传凭据）。`Query` 与 `Record` 是 `pkg/audit` 类型的别名；审计读写由该包的 `AuditSink` / `AuditQuerier` 接缝承担。核心默认是 no-op sink，私有 Pro 层注入具体存储。
 
+## 装配层（`pkg/gateway`）
+
+核心 CLI（`internal/cli`）与私有 Pro daemon 通过同一装配层落地。`pkg/gateway` 负责：双栈环回监听器的生命周期、每会话控制 token 与 `run.json`、Host 允许列表与按请求统计的中间件链、数据面，以及有界的优雅关闭。各构建的特有概念（审计存储、控制会话、entitlement、Web UI）留在 `Options` 的生命周期钩子之后。
+
+导出的契约由私有 Pro 仓库的 ADR-0012 冻结；`pkg/gateway/testdata/options_contract.txt` 与 `TestOptionsContractDoc` 一起钉住导出结构体字段，防止意外漂移。该包在 v1.0 前属实验性。
+
+```go
+package gateway
+
+// Deps 是与生命周期钩子共享的每会话可变状态。两个原子计数器由 gateway
+// 分配；Setup 可先固定 DataDir。
+type Deps struct {
+    DataDir    string         // 会话文件根目录；Setup 在任何 platform.* 调用前设置
+    Token      string         // 每会话控制 API token，在监听器绑定后写入
+    Requests   *atomic.Uint64 // 本会话处理的数据面请求数
+    Redactions *atomic.Uint64 // 本会话应用的占位符替换数
+}
+
+// RunInfo 是监听器绑定、会话文件就绪后交给 Options.Ready 的启动快照。
+type RunInfo struct {
+    Addrs []string
+    Port  int
+}
+
+// Options 是冻结的装配契约。零值不可用：必须提供 Core 与 Pipeline；
+// 其余钩子均可选。
+type Options struct {
+    Core          config.Config                          // 已加载的核心配置
+    Router        extension.Router                       // 为 nil 时回退到 proxy.NewResolver(Core.Upstreams, Sink)
+    CostSink      extension.CostSink                     // 为 nil 时是 no-op
+    Sink          audit.AuditSink                        // 只喂默认解析器
+    Pipeline      *proxy.Pipeline                        // 必需；由调用方构建，gateway 绝不重建
+    PolicyTimeout time.Duration                          // <= 0 时用默认值
+    Setup         func(*Deps) error                      // 最先运行，早于任何 platform.* 调用
+    Mount         func(*http.ServeMux, *Deps)            // 挂载调用方自有的控制/UI 子树
+    WrapDataPlane func(http.Handler, *Deps) http.Handler // 审计 / 凭据注入层
+    Teardown      func(*Deps)                            // 结束会话；幂等
+    Stdout        io.Writer                              // 面向人的启动信息；nil 即丢弃
+    Stderr        io.Writer                              // 保留给调用方的诊断流
+    Ready         func(RunInfo)                          // 监听器已绑定、会话文件已落盘
+}
+
+// Run 装配并运行一个 gateway 会话，直到 ctx 被取消。返回的 error 包装
+// pkg/proxy 的类型化监听错误（可用 errors.Is 判断）。
+func Run(ctx context.Context, opts Options) error
+```
+
+**生命周期。** `Run` 的调用顺序固定：
+
+```text
+Setup -> 解析 DataDir -> 绑定监听器 -> 生成 token + 会话文件
+  -> mux(Mount, WrapDataPlane) -> Ready -> serve -> drain -> Teardown -> cleanup
+```
+
+- `Setup` 最先运行，且早于任何 `platform.*` 调用，便于调用方固定数据根（`TOKENHUSH_HOME`）。
+- 监听器在写入 token 与 `run.json` **之前**绑定：端口被占用会快速失败，不留下陈旧会话状态。
+- `Teardown` 在所有路径（包括 `Setup` 失败）恰好调用一次；会话文件在其后移除。
+
+**中间件链。** 同一个 mux 服务两个平面。数据面从最外层起：
+
+```text
+HostAllowlist -> StatsMW -> WrapDataPlane -> data plane
+```
+
+控制路径（`GET /status`；无方法模式让其他方法留在控制 API 内返回 JSON 405）包裹为 `HostAllowlist -> OriginPolicy -> ControlAuth`。`StatsMW` 为每个请求分配一个 `RequestStats`，并在 `WrapDataPlane` **之前**放入请求 context，因此外层包裹器（Pro 审计层）可用 `StatsFrom` 读取：
+
+```go
+// RequestStats 是按请求的观测快照。只含元数据：检测器 id 与字节数，
+// 绝不含命中的内容。
+type RequestStats struct {
+    Provider   string
+    Path       string
+    Method     string
+    ReqBytes   int
+    Redactions int
+    Detectors  []string
+    Proxied    bool
+}
+
+// StatsFrom 返回当前请求的 RequestStats；在 gateway 统计中间件之外返回 nil。
+func StatsFrom(ctx context.Context) *RequestStats
+```
+
+**管线构建。** 核心用 `BuildPipeline` 构建自己的管线（启用内置检测器的注册表、fail-closed 策略、全新的占位符引擎）。Pro 有自带构建器，可注册额外插件族；gateway 本身绝不构建管线。
+
+```go
+type BuildOptions struct {
+    Detectors []string        // 有序的启用检测器 id
+    Allowlist []string        // 转发给每个检测器
+    Sink      audit.AuditSink // 仅元数据审计行
+    Timeout   time.Duration   // <= 0 时用默认值
+    Tool      string          // 标注 Document（例如 "claude-code"）
+}
+
+func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error)
+```
+
+**会话文件与辅助导出。** `RunState` 是为进程发现而持久化的仅元数据 pid/port 快照，绝不含控制 token 或请求内容。`WriteRunState` 原子写入（同目录临时文件 + rename，`0600`）。`RunStateFileName` 是数据目录下的 `run.json`，优雅关闭时移除。`ResolveConfig` 在传入配置非空时原样返回，否则从路径或平台默认位置加载。
+
+```go
+const RunStateFileName = "run.json"
+
+type RunState struct {
+    PID       int      `json:"pid"`
+    Port      int      `json:"port"`
+    Addrs     []string `json:"addrs"`
+    StartedAt int64    `json:"started_at"` // unix 毫秒
+}
+
+func WriteRunState(dataDir string, st RunState) error
+func ResolveConfig(cfg *config.Config, path string) (*config.Config, error)
+```
+
 ## 实现如何挂载
 
 ### 公开核心（默认）
@@ -161,7 +274,7 @@ func main() {
 ```
 
 > [!NOTE]
-> 这里只展示注册表注入的形态。真实接线用 `pkg/proxy` 导出的原语；`internal/cli` 里的 `run` 实现是参考（`internal/` 不能被外部模块 import）。
+> 这里只展示注册表注入的形态。真实接线用 `pkg/proxy` 导出的原语与上文的 `pkg/gateway` 装配层；`internal/cli` 里的 `run` 实现是参考（`internal/` 不能被外部模块 import）。
 
 **要点**：Pro 能力来自私有源代码，不是本仓库里的开关。破解公开核心解锁不了 Pro，因为公开二进制里没有任何 Pro 实现。
 
@@ -175,6 +288,8 @@ func main() {
 | `extension.CostSink` | 自 V1 起稳定 | |
 | `extension.AuditExporter` | 自 V1 起稳定 | |
 | `extension.Registry` | 可能变化 | 取决于接线；接线稳定后冻结 |
+| `gateway.Options` / `Deps` / `BuildOptions` / `RequestStats` | 由 ADR-0012 冻结（私有 Pro 仓库） | 装配契约；由 `TestOptionsContractDoc` 钉住 |
+| `gateway.Run` / `BuildPipeline` / `ResolveConfig` / `WriteRunState` / `StatsFrom` | 可能变化 | v1.0 前属实验性 |
 | `Request` / `Response` 结构体 | 可能变化 | 随协议演进而调整，遵循语义化版本 |
 
 - 公开接口按语义化版本管理；破坏性变更提升主版本号。

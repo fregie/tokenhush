@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 
-# CGO-free builds are a project goal (docs/13 §10.1); keep it disabled on every
+# CGO-free builds are a project goal (docs/deployment.md §1); keep it disabled on every
 # runner. A workflow-level env is used instead of inline `CGO_ENABLED=0 <cmd>`
 # because the Windows runner defaults to PowerShell, where `VAR=value cmd` is
 # not valid syntax.
@@ -48,7 +48,7 @@ jobs:
       - name: Build (CGO_ENABLED=0)
         run: go build ./...
 
-  # Supply-chain gates (security.md §6, docs/13 §12): permissive-license
+  # Supply-chain gates (security.md §6): permissive-license
   # allowlist (no GPL/AGPL), secret scan, SPDX SBOM artifact, and a tidy-module
   # check. Runs once on ubuntu-latest; the three-OS matrix above is unaffected.
   # All tool versions are pinned for reproducibility.
@@ -97,7 +97,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Only MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause pass (docs/13 §12).
+          # Only MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause pass (docs/security.md).
           # The 0.8 confidence threshold exists for modernc.org/mathutil: it is
           # legitimately BSD-3-Clause but spells the text non-canonically, so
           # google/licenseclassifier scores it ~0.864, below go-licenses' default

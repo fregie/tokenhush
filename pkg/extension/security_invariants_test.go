@@ -9,7 +9,7 @@ import (
 )
 
 // TestFailSafeOnDetectorError is the W5.4 named invariant (docs/security.md §2,
-// docs/13 §4.3): when a critical detector fails — returns an error, panics, or
+// docs/plugins.md): when a critical detector fails — returns an error, panics, or
 // times out — the core degrades fail-safe. The request is blocked, never
 // silently forwarded, and the failure is audited. A detector failure is folded
 // into the Decision; it is never surfaced as an Evaluate error that a caller

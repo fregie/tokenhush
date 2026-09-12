@@ -75,7 +75,7 @@ func recordingSeam(t *testing.T, calls *[]bindCall) listenerFunc {
 	}
 }
 
-// TestListenDualStack is the docs/13 §10.3 case-1 acceptance test. The
+// TestListenDualStack is the dual-stack acceptance test (docs/security.md). The
 // injected-seam subtest proves both families are attempted with the same port
 // on any runner; the real-loopback subtest dials both families for real and
 // skips only when the runner genuinely lacks a usable ::1.
@@ -216,7 +216,7 @@ func TestListenDualStack(t *testing.T) {
 }
 
 // TestListenAcceptsLoopbackSpellings locks the host allowlist to the same
-// three spellings pkg/config validates (docs/13 §3.4).
+// three spellings pkg/config validates (docs/security.md).
 func TestListenAcceptsLoopbackSpellings(t *testing.T) {
 	for _, host := range []string{"127.0.0.1", "::1", "localhost", "LocalHost", "LOCALHOST"} {
 		t.Run(host, func(t *testing.T) {

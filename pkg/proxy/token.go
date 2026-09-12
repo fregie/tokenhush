@@ -14,7 +14,7 @@ import (
 )
 
 // ControlTokenFileName is the per-session control-API token file below the
-// platform data directory: <DataDir>/control.token (docs/13 §3.4). DataDir is
+// platform data directory: <DataDir>/control.token (docs/security.md). DataDir is
 // resolved by the caller via pkg/platform.DataDir().
 const ControlTokenFileName = "control.token"
 
@@ -124,7 +124,7 @@ func ReadControlToken(dataDir string) (string, error) {
 }
 
 // ControlHandshakeURL builds the minimal one-time browser handshake URL for
-// the control UI (docs/13 §3.4):
+// the control UI (docs/security.md):
 //
 //	http://127.0.0.1:<port>/#token=<token>
 //

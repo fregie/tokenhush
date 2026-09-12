@@ -19,7 +19,7 @@ const ControlStateRunning = "running"
 
 // ControlStatus is the metadata-only snapshot GET /status returns. It carries
 // no request or response content: only liveness, bound addresses and the
-// session's cumulative counters (docs/12 §5, docs/13 §3.4).
+// session's cumulative counters (docs/deployment.md §5, docs/security.md).
 type ControlStatus struct {
 	State      string   `json:"state"`      // ControlStateRunning while serving
 	Addrs      []string `json:"addrs"`      // bound listener addresses

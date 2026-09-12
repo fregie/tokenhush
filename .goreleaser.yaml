@@ -1,6 +1,6 @@
 # GoReleaser v2 configuration for the public Tokenhush core.
 #
-# Distribution matrix (docs/13 §10.2): macOS via Homebrew cask, Windows via
+# Distribution matrix (docs/deployment.md §2): macOS via Homebrew cask, Windows via
 # Scoop, Linux via the curl|sh installer (install.sh) plus the raw binaries
 # attached to the GitHub release. Casks are macOS-only; Linux is never served
 # by a package manager in V1.
@@ -61,7 +61,7 @@ sboms:
     documents:
       - "{{ .ArtifactName }}.sbom.json"
 
-# macOS channel (docs/13 §10.2). The cask installs the darwin binaries from
+# macOS channel (docs/deployment.md §2). The cask installs the darwin binaries from
 # the GitHub release. `skip_upload: auto` keeps snapshot/prerelease runs from
 # touching the tap; the real release is pushed by release.yml using
 # HOMEBREW_TAP_GITHUB_TOKEN.
@@ -82,7 +82,7 @@ homebrew_casks:
         xattr -dr com.apple.quarantine "$(which tokenhush)"
     skip_upload: auto
 
-# Windows channel (docs/13 §10.2). Manifest lands in the root of the bucket
+# Windows channel (docs/deployment.md §2). Manifest lands in the root of the bucket
 # repo so `scoop bucket list` sees it.
 scoops:
   - name: tokenhush

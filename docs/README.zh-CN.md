@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> 状态：V1（2026-09）。先看这里；下方每个链接对应一份专题文档。路径与说明与 `v0.1.0` 发行版和 `main` 保持一致。
+> 状态：V1（2026-09）。先看这里；下方每个链接对应一份专题文档。路径与说明与 `v0.3.0` 发行线和 `main` 保持一致。
 
 Tokenhush 是一个本地基础 URL 网关。把 AI 编程工具指向 `http://127.0.0.1:8787`，它先给密钥和敏感数据脱敏，再转发到上游。一切都在你自己的机器上运行。公开核心从不安装根证书，也不做 MITM。
 
@@ -17,6 +17,7 @@ Tokenhush 是一个本地基础 URL 网关。把 AI 编程工具指向 `http://1
 | [plugins.zh-CN.md](plugins.zh-CN.md) | 编写内容插件（Inspector / Transformer） |
 | [extension-api.zh-CN.md](extension-api.zh-CN.md) | 跨层扩展点与注册契约 |
 | [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
+| [migration-v0.3.0.zh-CN.md](migration-v0.3.0.zh-CN.md) | 迁移到 v0.3.0：`pkg/gateway` 装配层、`/v1/models` 具名例外，以及新增 9 个 `env` 工具 |
 | [../CONTRIBUTING.zh-CN.md](../CONTRIBUTING.zh-CN.md) | 构建、测试与贡献流程，包括私有漏洞披露流程 |
 
 ## 建议阅读路径

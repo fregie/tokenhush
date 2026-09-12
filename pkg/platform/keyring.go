@@ -3,7 +3,7 @@ package platform
 import "errors"
 
 // ErrSecretNotFound is the W2.0 low-level name, kept as an alias of ErrNotFound
-// (docs/13 §3.2) so existing keyring code and errors.Is(err, ErrNotFound)
+// (docs/security.md) so existing keyring code and errors.Is(err, ErrNotFound)
 // callers share a single sentinel.
 var ErrSecretNotFound = ErrNotFound
 

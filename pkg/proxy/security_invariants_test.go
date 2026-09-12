@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// TestBindLoopbackOnly is the W5.4 named invariant (docs/13 §3.4,
-// docs/security.md §2.4): the listener layer binds exactly the two loopback
+// TestBindLoopbackOnly is the W5.4 named invariant
+// (docs/security.md §2.4): the listener layer binds exactly the two loopback
 // families (127.0.0.1 + ::1) and rejects every wildcard, off-host or malformed
 // spelling before any socket exists. It uses the same injected bind seam as
 // TestListenDualStack, so it proves the invariant on runners without a usable
@@ -141,7 +141,7 @@ func guardedHTTPClient(guard *telemetryGuardDialer) *http.Client {
 }
 
 // TestNoTelemetry is the W5.4 named invariant (docs/security.md §1,
-// docs/13 §9.2): a proxied request egresses only to the configured upstream.
+// docs/security.md): a proxied request egresses only to the configured upstream.
 // The forwarder is given a dialer that records and refuses non-loopback
 // destinations, so any hidden telemetry call would show up as an extra or
 // non-loopback dial.

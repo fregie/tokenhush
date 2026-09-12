@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-> Status: V1 (2026-09). Start here; each link goes to one focused document. Paths and claims match the `v0.1.0` release and `main`.
+> Status: V1 (2026-09). Start here; each link goes to one focused document. Paths and claims match the `v0.3.0` release line and `main`.
 
 Tokenhush is a local base-URL gateway. Point your AI coding tools at `http://127.0.0.1:8787`; it redacts secrets and sensitive data before forwarding requests upstream. It all runs on your machine. The public core never installs a root certificate or performs MITM.
 
@@ -17,6 +17,7 @@ Tokenhush is a local base-URL gateway. Point your AI coding tools at `http://127
 | [plugins.md](plugins.md) | Writing content plugins (Inspector / Transformer) |
 | [extension-api.md](extension-api.md) | Cross-layer extension points and the registration contract |
 | [migration-v0.2.0.md](migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |
+| [migration-v0.3.0.md](migration-v0.3.0.md) | Migrating to v0.3.0: the `pkg/gateway` assembly layer, the `/v1/models` named exception, and 9 more `env` tools |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Build, test, and contribution workflow, including the private vulnerability disclosure process |
 
 ## Suggested reading paths

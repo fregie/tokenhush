@@ -21,7 +21,7 @@ const (
 	ProviderCustom    = "custom"
 )
 
-// Built-in provider base URLs (docs/13 §4.1). The forwarder joins the request
+// Built-in provider base URLs (docs/architecture.md). The forwarder joins the request
 // path onto the base URL, so these carry no trailing slash and no path part.
 const (
 	AnthropicBaseURL = "https://api.anthropic.com"
@@ -32,7 +32,7 @@ const (
 // upstreams: override, nor the built-in provider table, nor the named
 // exception list recognised the path. It is returned instead of guessing a
 // provider, so an unrecognised request is rejected rather than silently sent
-// to the wrong one (docs/13 §4.1).
+// to the wrong one (docs/architecture.md).
 var ErrUnknownUpstream = errors.New("proxy: no upstream for request path")
 
 // builtinUpstreams is the path → provider table for the V1 tools that speak
@@ -296,7 +296,7 @@ func (r *Resolver) hostOverride(reqHost string) (string, bool) {
 // string (which can carry sensitive parameters) is never persisted. Audit
 // failures are ignored: the typed rejection error is the resolver's contract,
 // and a best-effort metadata sink must not replace it (the real store is
-// wired in W5.3; docs/13 §6).
+// wired in W5.3; docs/extension-api.md).
 func (r *Resolver) recordUnknownPath(req *extension.Request, path string) {
 	if r.sink == nil {
 		return

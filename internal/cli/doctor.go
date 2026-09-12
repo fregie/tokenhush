@@ -317,7 +317,7 @@ func doctorDirs(deps doctorDeps) []DoctorCheck {
 
 // doctorSecretStore reports the backend the fallback chain actually selected.
 // The plaintext layer is the one honest-degradation signal that must never be
-// silent (docs/13 §3.2): it fails the check and embeds the stable warning
+// silent (docs/security.md): it fails the check and embeds the stable warning
 // marker verbatim.
 func doctorSecretStore(deps doctorDeps) DoctorCheck {
 	store, err := deps.openStore()

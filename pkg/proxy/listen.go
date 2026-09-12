@@ -10,7 +10,7 @@ import (
 )
 
 // Loopback addresses. The listener layer binds exactly these two families;
-// wildcard addresses are rejected before any bind is attempted (docs/13 §3.4).
+// wildcard addresses are rejected before any bind is attempted (docs/security.md).
 const (
 	loopbackV4 = "127.0.0.1"
 	loopbackV6 = "::1"

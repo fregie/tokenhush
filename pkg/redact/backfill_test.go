@@ -72,7 +72,7 @@ func TestBackfill(t *testing.T) {
 	})
 }
 
-// TestNeverBackfillOutbound is the security invariant (docs/13 §9.1): the
+// TestNeverBackfillOutbound is the security invariant (docs/security.md): the
 // forward path must leave an echoed placeholder verbatim and must never consult
 // the reverse mapping, so a prompt injection that makes the model echo a token
 // cannot exfiltrate the secret upstream. Inbound restore is asserted separately.

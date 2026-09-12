@@ -11,7 +11,7 @@ import (
 
 // Space and non-ASCII fixtures for the cross-OS path table. Every value is a
 // pure string, so the windows/darwin shapes are pinned identically from any
-// host (docs/13 §10.3 case 2).
+// host (docs/deployment.md §5).
 const (
 	testLinuxConfigSpaced = "/home/пользователь/My Config"
 	testLinuxHomeSpaced   = "/home/пользователь"

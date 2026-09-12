@@ -14,7 +14,7 @@ const (
 	// directory.
 	appDirName = "tokenhush"
 
-	// configFileName is the V1 configuration file (docs/13 §7).
+	// configFileName is the V1 configuration file (docs/configuration.md).
 	configFileName = "tokenhush.yaml"
 
 	// homeEnvVar overrides both the config and the data directory. It exists
@@ -82,7 +82,7 @@ func DataDir() (string, error) {
 }
 
 // ConfigFile returns the absolute path of the V1 configuration file,
-// `<ConfigDir>/tokenhush.yaml` (docs/13 §7).
+// `<ConfigDir>/tokenhush.yaml` (docs/configuration.md).
 func ConfigFile() (string, error) {
 	dir, err := ConfigDir()
 	if err != nil {
@@ -114,7 +114,7 @@ func executableDir() (string, error) {
 // is testable from any host and runtime.GOOS stays confined to pkg/platform.
 //
 // Precedence: TOKENHUSH_HOME (trimmed, non-blank) wins for both directories;
-// otherwise the OS defaults from docs/13 §3.1 apply. On success both returned
+// otherwise the OS defaults from docs/deployment.md §5 apply. On success both returned
 // directories are absolute and never point at the executable's directory. On
 // error both are empty.
 func pathsFor(
@@ -155,7 +155,7 @@ func pathsFor(
 
 // dataBaseFor resolves the OS base directory below which the per-app data
 // directory lives. The standard library has no UserDataDir, so each OS is
-// spelled out per docs/13 §3.1.
+// spelled out per docs/deployment.md §5.
 func dataBaseFor(goos string, getenv func(string) string, userHomeDir func() (string, error)) (string, error) {
 	if goos == "windows" {
 		local := strings.TrimSpace(getenv(localAppDataEnvVar))

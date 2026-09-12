@@ -112,7 +112,8 @@ func TestSecretStoreKeyringAbsentEdges(t *testing.T) {
 	}
 }
 
-// TestSecretStoreFallbackInSpacedUnicodeDataDir exercises docs/13 §10.3 case 2
+// TestSecretStoreFallbackInSpacedUnicodeDataDir exercises the spaced/Unicode
+// data-dir case (docs/deployment.md §5)
 // on the keyring-absent path: with no native keyring the encrypted-file layer
 // must be selected, write its entry below a data dir containing spaces and
 // non-ASCII characters, and round-trip through it.

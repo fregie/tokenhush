@@ -115,8 +115,8 @@ func captureProcessOutput(t *testing.T) (logs func() string) {
 	}
 }
 
-// TestNoPlaintextInLogs is the W5.4 named invariant (docs/security.md §2.2/§5,
-// docs/13 §9): request content never reaches the daemon's stdout/stderr, its
+// TestNoPlaintextInLogs is the W5.4 named invariant (docs/security.md §2.2/§5):
+// request content never reaches the daemon's stdout/stderr, its
 // metadata-only audit store, or any client-visible error string. It drives a
 // synthetic secret through the real daemon on both the success path and the
 // fail-closed detector-timeout path, capturing real process output.

@@ -13,7 +13,7 @@ import (
 	"github.com/fregie/tokenhush/pkg/protocol"
 )
 
-// Placeholder grammar and digest policy (docs/13 §5.2). A token is
+// Placeholder grammar and digest policy (docs/architecture.md). A token is
 //
 //	__PII_<type>_<digest>__
 //
@@ -28,7 +28,7 @@ const (
 	placeholderClose = "__"
 	placeholderSep   = "_"
 
-	// placeholderMinDigestHex is 48 bits: the floor docs/13 §5.2 sets against
+	// placeholderMinDigestHex is 48 bits: the floor docs/architecture.md sets against
 	// collisions. placeholderDigestStep is how much the digest grows
 	// (12 -> 16 -> 20 ...) when two secrets would otherwise share a token.
 	placeholderMinDigestHex = 12
@@ -127,7 +127,7 @@ func (e *PlaceholderEngine) Placeholder(secret, findingType string) string {
 // ("", false) so the caller can leave them verbatim.
 //
 // Secret is the inbound-only direction: callers must never use it while writing
-// toward the upstream (docs/13 §9.1).
+// toward the upstream (docs/security.md).
 func (e *PlaceholderEngine) Secret(placeholder string) (string, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -198,7 +198,7 @@ type Redaction struct {
 // so every redaction span becomes the deterministic placeholder for that span's
 // bytes and type, copying every other byte unchanged. This is the only outbound
 // writer and it never consults the reverse mapping, so a placeholder already
-// present in content is forwarded verbatim rather than restored (docs/13 §9.1).
+// present in content is forwarded verbatim rather than restored (docs/security.md).
 //
 // Spans may overlap across detectors; overlapping or nested ranges are merged
 // into their union (the type of the first range in start/end order is kept).

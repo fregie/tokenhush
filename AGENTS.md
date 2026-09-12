@@ -1,6 +1,6 @@
 # AGENTS.md: tokenhush (public core)
 
-> Status: V1 implemented and released as `v0.1.0` (`run` / `status` / `env` / `doctor` / `version`); the `v0.2.0` line keeps only the audit seam, because the concrete audit store moved to the private Pro layer. Cross-platform (macOS / Linux / Windows).
+> Status: V1 implemented; the current release line is `v0.3.0` (`run` / `status` / `env` / `doctor` / `version`). Since `v0.2.0` the core keeps only the audit seam, because the concrete audit store moved to the private Pro layer; `v0.3.0` moves the shared assembly layer into the exported `pkg/gateway` package. Cross-platform (macOS / Linux / Windows).
 > Last updated: 2026-09-12
 
 ## What this is
@@ -25,6 +25,7 @@ tokenhush/
 │   ├── configuration.md    # tool setup + tokenhush.yaml reference
 │   ├── deployment.md       # deployment + OS-native auto-start
 │   ├── migration-v0.2.0.md # v0.2.0: audit moved to the private Pro layer
+│   ├── migration-v0.3.0.md # v0.3.0: pkg/gateway layer, /v1/models exception, 14 env tools
 │   └── security.md         # security/threat model + hard invariants
 ├── scripts/
 │   └── check-docs.sh       # verify docs match the CLI and config
@@ -37,6 +38,7 @@ tokenhush/
     ├── config/             # configuration loading
     ├── platform/           # cross-platform abstraction: paths / keyring / service (exported for Pro reuse)
     ├── extension/          # extension point interfaces (Router / CostSink / AuditExporter + content plugins Inspector/Transformer/Registry)
+    ├── gateway/            # shared request-path assembly (Options/Deps hooks, middleware chain, data plane, run.json)
     └── license/            # read-only Pro license display (isolated, fuzz tested)
 ```
 
@@ -55,6 +57,7 @@ tokenhush/
 | Documentation index | `docs/README.md` |
 | Security invariants / threat model | `docs/security.md` |
 | Migrating the v0.1.x `audit:` config | `docs/migration-v0.2.0.md` |
+| Migrating to the current release line | `docs/migration-v0.3.0.md` |
 | Docs vs CLI / config consistency | `scripts/check-docs.sh` |
 | Product, market, roadmap, pricing | the private Pro repository (maintainer-only) |
 

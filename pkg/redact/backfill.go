@@ -13,7 +13,7 @@ import (
 //
 // Pass it to protocol.NewBackfillWriter; never use it on the outbound path.
 // BackfillFunc and Secret are the only readers of the reverse mapping, and
-// ApplyPlaceholders — the outbound writer — never consults it (docs/13 §9.1).
+// ApplyPlaceholders — the outbound writer — never consults it (docs/security.md).
 func (e *PlaceholderEngine) BackfillFunc() protocol.ReplaceFunc {
 	return func(token string) string {
 		if secret, ok := e.Secret(token); ok {

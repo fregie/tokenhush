@@ -18,7 +18,7 @@ regexes = [
 ]
 
 [[allowlists]]
-description = "Tokenhush PII placeholders are non-secret by construction (docs/13 §5.2)"
+description = "Tokenhush PII placeholders are non-secret by construction (docs/architecture.md)"
 regexTarget = "secret"
 regexes = [
   '''^__PII_[a-z][a-z0-9_]*_[0-9a-f]{8,}__$''',

@@ -8,7 +8,7 @@ import (
 
 // prefixConfidence is the fixed confidence for the prefix detector. Known
 // provider key prefixes are the highest-signal shape rule, so this detector
-// favours precision over recall (docs/13 §5.1, §14).
+// favours precision over recall (docs/security.md).
 const prefixConfidence = 0.95
 
 // prefixPattern matches known credential shapes for widely used AI, cloud and

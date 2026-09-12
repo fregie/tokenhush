@@ -2,7 +2,7 @@
 
 [English](architecture.md) | **中文**
 
-> 状态：V1 已实现，并作为 `v0.1.0` 发布（2026-09）。本文档描述已发布核心的架构，以及开源核心边界。
+> 状态：V1 已实现；当前发行线为 `v0.3.0`（2026-09）。本文档描述已发布核心的架构，以及开源核心边界。
 
 Tokenhush 是本地 base-URL 网关，夹在你的 AI 编码工具和模型提供商中间。请求出本机前，它先找出敏感内容换掉。
 
@@ -56,6 +56,7 @@ flowchart LR
 | 包 | 职责 |
 |---|---|
 | `pkg/proxy` | 本地 HTTP 反向代理：监听器、上游路由、SSE 透传、生命周期 |
+| `pkg/gateway` | 共享请求路径装配（监听器生命周期、控制 token/`run.json`、中间件链、数据面）；见 `extension-api.zh-CN.md` |
 | `pkg/redact` | 检测器（确定性规则）+ 占位符生成/映射 + 回填 |
 | `pkg/protocol` | 协议无关的 JSON 叶子遍历；增量 SSE 解析；递归处理工具调用中的双重编码 JSON |
 | `pkg/config` | 配置加载与默认值（`tokenhush.yaml`） |
