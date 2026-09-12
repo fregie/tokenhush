@@ -1,0 +1,28 @@
+# tokenhush core pre-extraction golden baseline (WA.1a)
+# Compared by TestGoldenBaseline. All lines are byte-exact after
+# normalizing only these runtime-volatile values:
+#   <PORT>     ephemeral loopback port
+#   <UPTIME>   GET /status uptime_ms
+#   <DATADIR>  per-test temp data directory
+#   <DIGEST>   per-session random HMAC digest inside a placeholder
+#   <SECRET>   synthetic credential the request carried
+# Regenerate after an intentional change:
+#   go test ./internal/cli -run TestGoldenBaseline -update-golden
+
+[status] HTTP 200
+{"state":"running","addrs":["127.0.0.1:<PORT>","[::1]:<PORT>"],"uptime_ms":<UPTIME>,"requests":1,"redactions":1}
+
+[startup]
+tokenhush: gateway listening on http://127.0.0.1:<PORT>
+tokenhush: control token file: <DATADIR>/control.token
+
+[audit-fallback] HTTP 502 Content-Type: text/plain; charset=utf-8
+Bad Gateway
+
+[redacted-request]
+request={"model":"golden-baseline","messages":[{"role":"user","content":"<SECRET>"}]}
+upstream={"model":"golden-baseline","messages":[{"role":"user","content":"__PII_api_key_<DIGEST>__"}]}
+client={"echo":"{\"model\":\"golden-baseline\",\"messages\":[{\"role\":\"user\",\"content\":\"<SECRET>\"}]}"}
+
+[shutdown]
+exit_code=0
