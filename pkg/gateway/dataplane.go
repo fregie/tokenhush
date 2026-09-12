@@ -26,6 +26,7 @@ import (
 // config overrides).
 type dataPlane struct {
 	router   extension.Router
+	fallback extension.Router
 	pipeline *proxy.Pipeline
 	costSink extension.CostSink
 	deps     *Deps
@@ -37,18 +38,28 @@ type dataPlane struct {
 // newDataPlane builds the handler over the injected router and pipeline. A nil
 // Router falls back to the default path resolver built from Core.Upstreams and
 // the caller's Sink, preserving the "unknown path is a typed rejection" rule.
+// The default resolver is also kept as the fallback for an injected Router that
+// returns the zero Upstream with a nil error ("no opinion").
 func newDataPlane(opts Options, deps *Deps) *dataPlane {
+	defaults := proxy.NewResolver(opts.Core.Upstreams, opts.Sink)
 	router := opts.Router
 	if router == nil {
-		router = proxy.NewResolver(opts.Core.Upstreams, opts.Sink)
+		router = defaults
 	}
 	return &dataPlane{
 		router:     router,
+		fallback:   defaults,
 		pipeline:   opts.Pipeline,
 		costSink:   opts.CostSink,
 		deps:       deps,
 		forwarders: map[string]*proxy.Forwarder{},
 	}
+}
+
+// pickRequest 构造交给 Router 的协议无关请求视图；它只含 method/host/path，
+// 绝不携带 header 或正文，避免凭据或内容经路由接缝外泄。
+func pickRequest(r *http.Request) *extension.Request {
+	return &extension.Request{Method: r.Method, Host: r.Host, Path: r.URL.Path}
 }
 
 // ServeHTTP resolves the request path to an upstream, transforms the outbound
@@ -60,12 +71,21 @@ func (d *dataPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.deps.Requests.Add(1)
 	stats := StatsFrom(r.Context())
 
-	upstream, err := d.router.Pick(&extension.Request{
-		Method: r.Method,
-		Host:   r.Host,
-		Path:   r.URL.Path,
-	})
+	upstream, err := d.router.Pick(pickRequest(r))
 	if err != nil {
+		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		return
+	}
+	// 注入的 Router 以“零值 Upstream + nil error”表示无意见：按扩展契约回退到
+	// 默认路由。默认 resolver 对未知路径仍返回 typed error，绝不猜测。
+	if upstream == (extension.Upstream{}) && d.fallback != nil {
+		upstream, err = d.fallback.Pick(pickRequest(r))
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+			return
+		}
+	}
+	if upstream == (extension.Upstream{}) {
 		http.Error(w, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 		return
 	}
