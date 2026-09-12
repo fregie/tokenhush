@@ -1,4 +1,4 @@
-package cli
+package gateway
 
 import (
 	"time"
@@ -10,9 +10,9 @@ import (
 	"github.com/fregie/tokenhush/pkg/redact"
 )
 
-// builtinDetectors maps a canonical detector id (docs/13 §5.1) to its
-// constructor. The ids match config.Detector* exactly; the constructors share
-// the pkg/redact Option signature so the config allowlist reaches every one.
+// builtinDetectors maps a canonical detector id to its constructor. The ids
+// match config.Detector* exactly; the constructors share the pkg/redact Option
+// signature so the config allowlist reaches every one.
 var builtinDetectors = map[string]func(...redact.Option) extension.Inspector{
 	config.DetectorPrefix:      redact.NewPrefixDetector,
 	config.DetectorHighEntropy: redact.NewHighEntropyDetector,
@@ -22,21 +22,38 @@ var builtinDetectors = map[string]func(...redact.Option) extension.Inspector{
 	config.DetectorEmail:       redact.NewEmailDetector,
 }
 
-// buildPipeline assembles the W4.5 content pipeline for one daemon session:
-// the enabled built-in detectors registered in a W4.1 Registry, a W4.2 Policy
-// with the fail-closed detector settings, and a fresh W4.4 placeholder engine.
-func buildPipeline(cfg *config.Config, sink audit.AuditSink, timeout time.Duration) (*proxy.Pipeline, error) {
-	registry, err := buildRegistry(cfg)
+// BuildOptions is the input to BuildPipeline.
+type BuildOptions struct {
+	// Detectors is the ordered list of enabled detector ids.
+	Detectors []string
+	// Allowlist forwards the config allowlist to every detector.
+	Allowlist []string
+	// Sink receives metadata-only audit rows from the policy and pipeline.
+	Sink audit.AuditSink
+	// Timeout bounds one detector invocation; <= 0 uses the default.
+	Timeout time.Duration
+	// Tool labels the content Document (for example "claude-code").
+	Tool string
+}
+
+// BuildPipeline assembles the content pipeline for one session: the enabled
+// built-in detectors in a registry, a policy with fail-closed detector
+// settings, and a fresh placeholder engine. The core CLI calls it; the Pro
+// daemon has its own builder that can register extra plugin families. The
+// gateway itself never builds a pipeline.
+func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
+	registry, err := buildRegistry(opts.Detectors, opts.Allowlist)
 	if err != nil {
 		return nil, err
 	}
+	timeout := opts.Timeout
 	if timeout <= 0 {
 		timeout = defaultDetectorTimeout
 	}
 	policy := extension.NewPolicy(registry, extension.PolicyConfig{
-		Sink:     sink,
+		Sink:     opts.Sink,
 		Timeout:  timeout,
-		Failures: failClosedDetectors(cfg),
+		Failures: failClosedDetectors(opts.Detectors),
 	})
 	engine, err := redact.NewPlaceholderEngine()
 	if err != nil {
@@ -46,17 +63,18 @@ func buildPipeline(cfg *config.Config, sink audit.AuditSink, timeout time.Durati
 		Registry: registry,
 		Policy:   policy,
 		Engine:   engine,
-		Sink:     sink,
+		Sink:     opts.Sink,
+		Tool:     opts.Tool,
 	})
 }
 
 // buildRegistry registers the enabled built-in detectors in config order. A
 // registration failure is a construction error: the registry is the security
 // gate, so a rejected plugin must abort startup rather than be skipped.
-func buildRegistry(cfg *config.Config) (*extension.Registry, error) {
+func buildRegistry(detectors, allowlist []string) (*extension.Registry, error) {
 	registry := extension.NewRegistry()
-	options := detectorOptions(cfg.Allowlist)
-	for _, id := range cfg.Detectors.EnabledIDs() {
+	options := detectorOptions(allowlist)
+	for _, id := range detectors {
 		constructor, ok := builtinDetectors[id]
 		if !ok {
 			continue
@@ -80,11 +98,11 @@ func detectorOptions(allowlist []string) []redact.Option {
 // failClosedDetectors marks every enabled built-in detector FailClosed. The
 // detectors scan attacker-influenced bodies; under the advisory FailOpenWarn
 // default a timeout on a large body would silently drop the finding and leak
-// the secret upstream (W4.5 finding). FailClosed turns a detector timeout or
-// error into a Block instead.
-func failClosedDetectors(cfg *config.Config) map[string]extension.FailurePolicy {
+// the secret upstream. FailClosed turns a detector timeout or error into a
+// Block instead.
+func failClosedDetectors(detectors []string) map[string]extension.FailurePolicy {
 	failures := make(map[string]extension.FailurePolicy, len(builtinDetectors))
-	for _, id := range cfg.Detectors.EnabledIDs() {
+	for _, id := range detectors {
 		failures[id] = extension.FailClosed
 	}
 	return failures

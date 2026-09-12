@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/gateway"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
@@ -30,9 +31,9 @@ func cliRun(t *testing.T, args ...string) (stdout, stderr string, code int) {
 
 // seedControlSession writes the two discovery files a running daemon leaves in
 // its data directory: run.json and control.token.
-func seedControlSession(t *testing.T, dir string, st RunState, token string) {
+func seedControlSession(t *testing.T, dir string, st gateway.RunState, token string) {
 	t.Helper()
-	if err := writeRunState(dir, st); err != nil {
+	if err := gateway.WriteRunState(dir, st); err != nil {
 		t.Fatalf("seed run state: %v", err)
 	}
 	if _, err := proxy.WriteControlToken(dir, token); err != nil {
@@ -216,7 +217,7 @@ func TestStatusAudit(t *testing.T) {
 		port := newControlStub(t, stub)
 		home := t.TempDir()
 		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 4242, Port: port, Addrs: []string{fmt.Sprintf("127.0.0.1:%d", port)}}, statusToken)
+		seedControlSession(t, home, gateway.RunState{PID: 4242, Port: port, Addrs: []string{fmt.Sprintf("127.0.0.1:%d", port)}}, statusToken)
 
 		stdout, stderr, code := cliRun(t, "status")
 		if code != ExitOK {
@@ -295,7 +296,7 @@ func TestStatusAudit(t *testing.T) {
 	t.Run("status_not_running_when_session_is_stale", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 999999, Port: freeLoopbackPort(t)}, statusToken)
+		seedControlSession(t, home, gateway.RunState{PID: 999999, Port: freeLoopbackPort(t)}, statusToken)
 
 		stdout, stderr, code := cliRun(t, "status")
 		if code != ExitFailure {
@@ -315,7 +316,7 @@ func TestStatusAudit(t *testing.T) {
 	t.Run("status_fails_when_control_token_is_missing", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("TOKENHUSH_HOME", home)
-		if err := writeRunState(home, RunState{PID: 1, Port: freeLoopbackPort(t)}); err != nil {
+		if err := gateway.WriteRunState(home, gateway.RunState{PID: 1, Port: freeLoopbackPort(t)}); err != nil {
 			t.Fatalf("seed run state: %v", err)
 		}
 
@@ -331,7 +332,7 @@ func TestStatusAudit(t *testing.T) {
 	t.Run("status_fails_on_malformed_run_state", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("TOKENHUSH_HOME", home)
-		if err := os.WriteFile(filepath.Join(home, RunStateFileName), []byte("{not-json\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(home, gateway.RunStateFileName), []byte("{not-json\n"), 0o600); err != nil {
 			t.Fatalf("write malformed run state: %v", err)
 		}
 		if _, err := proxy.WriteControlToken(home, statusToken); err != nil {
@@ -352,7 +353,7 @@ func TestStatusAudit(t *testing.T) {
 		port := newControlStub(t, stub)
 		home := t.TempDir()
 		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 1, Port: port}, statusToken)
+		seedControlSession(t, home, gateway.RunState{PID: 1, Port: port}, statusToken)
 
 		_, stderr, code := cliRun(t, "status")
 		if code != ExitFailure {
@@ -368,7 +369,7 @@ func TestStatusAudit(t *testing.T) {
 		port := newControlStub(t, stub)
 		home := t.TempDir()
 		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 1, Port: port}, statusToken)
+		seedControlSession(t, home, gateway.RunState{PID: 1, Port: port}, statusToken)
 
 		_, stderr, code := cliRun(t, "status")
 		if code != ExitFailure {
@@ -384,7 +385,7 @@ func TestStatusAudit(t *testing.T) {
 		port := newControlStub(t, stub)
 		home := t.TempDir()
 		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 1, Port: port}, "the-wrong-token")
+		seedControlSession(t, home, gateway.RunState{PID: 1, Port: port}, "the-wrong-token")
 
 		_, stderr, code := cliRun(t, "status")
 		if code != ExitFailure {

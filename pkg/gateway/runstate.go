@@ -1,4 +1,4 @@
-package cli
+package gateway
 
 import (
 	"encoding/json"
@@ -9,10 +9,10 @@ import (
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
-// RunStateFileName is the per-session pid/port file below the platform data
-// directory: <DataDir>/run.json (docs/13 §3.4). It carries no secrets and lets
-// a later `tokenhush status` (W6.3) find the running process and its bound
-// port. It is removed on graceful shutdown.
+// RunStateFileName is the per-session pid/port file below the data directory:
+// <DataDir>/run.json. It carries no secrets and lets a later `tokenhush status`
+// find the running process and its bound port. It is removed on graceful
+// shutdown.
 const RunStateFileName = "run.json"
 
 // RunState is the metadata-only session snapshot persisted for discovery. It
@@ -24,11 +24,11 @@ type RunState struct {
 	StartedAt int64    `json:"started_at"` // unix milliseconds
 }
 
-// writeRunState atomically persists st to <dataDir>/run.json, creating the
-// data directory if needed. The write is same-directory temp file + rename, so
-// a concurrent reader never sees a half-written file and a previous session's
+// WriteRunState atomically persists st to <dataDir>/run.json, creating the data
+// directory if needed. The write is same-directory temp file + rename, so a
+// concurrent reader never sees a half-written file and a previous session's
 // file is replaced rather than truncated in place. CreateTemp yields 0600.
-func writeRunState(dataDir string, st RunState) error {
+func WriteRunState(dataDir string, st RunState) error {
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("run: create data dir: %w", err)
 	}

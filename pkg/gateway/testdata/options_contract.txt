@@ -1,0 +1,41 @@
+# pkg/gateway assembly contract (ADR-0012, frozen).
+#
+# One "Struct Field Type" line per exported field of Deps, Options,
+# BuildOptions and RequestStats, sorted. Compared by TestOptionsContractDoc,
+# which reflects over the live structs. Add, remove, rename or retype a field
+# here or in code and the test fails; change the ADR first, then this golden.
+#
+# Format: <StructName> <FieldName> <reflect.Type.String()>
+
+BuildOptions Allowlist []string
+BuildOptions Detectors []string
+BuildOptions Sink audit.AuditSink
+BuildOptions Timeout time.Duration
+BuildOptions Tool string
+
+Deps DataDir string
+Deps Redactions *atomic.Uint64
+Deps Requests *atomic.Uint64
+Deps Token string
+
+Options Core config.Config
+Options CostSink extension.CostSink
+Options Mount func(*http.ServeMux, *gateway.Deps)
+Options Pipeline *proxy.Pipeline
+Options PolicyTimeout time.Duration
+Options Ready func(gateway.RunInfo)
+Options Router extension.Router
+Options Setup func(*gateway.Deps) error
+Options Sink audit.AuditSink
+Options Stderr io.Writer
+Options Stdout io.Writer
+Options Teardown func(*gateway.Deps)
+Options WrapDataPlane func(http.Handler, *gateway.Deps) http.Handler
+
+RequestStats Detectors []string
+RequestStats Method string
+RequestStats Path string
+RequestStats Provider string
+RequestStats Proxied bool
+RequestStats Redactions int
+RequestStats ReqBytes int

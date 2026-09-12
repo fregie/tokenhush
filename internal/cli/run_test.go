@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/gateway"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
@@ -209,7 +210,7 @@ func TestRunServerEndToEnd(t *testing.T) {
 	if err := stop(); err != nil {
 		t.Fatalf("RunServer returned %v after cancel, want nil", err)
 	}
-	for _, name := range []string{RunStateFileName, proxy.ControlTokenFileName} {
+	for _, name := range []string{gateway.RunStateFileName, proxy.ControlTokenFileName} {
 		if _, err := os.Stat(filepath.Join(dataDir, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Errorf("session file %s still present after shutdown (err=%v)", name, err)
 		}

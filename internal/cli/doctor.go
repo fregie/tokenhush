@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/gateway"
 	"github.com/fregie/tokenhush/pkg/platform"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
@@ -376,7 +377,7 @@ func doctorListeners(deps doctorDeps, host string, port int) []DoctorCheck {
 		checks = append(checks, DoctorCheck{
 			Name:    doctorCheckPort,
 			Status:  doctorOK,
-			Message: fmt.Sprintf("port %d is held by the tokenhush session in %s", port, RunStateFileName),
+			Message: fmt.Sprintf("port %d is held by the tokenhush session in %s", port, gateway.RunStateFileName),
 		})
 	case errors.Is(err, proxy.ErrAddrInUse):
 		checks = append(checks, DoctorCheck{
@@ -416,11 +417,11 @@ func doctorSessionOnPort(deps doctorDeps, port int) bool {
 	if err != nil {
 		return false
 	}
-	data, err := deps.readFile(filepath.Join(dir, RunStateFileName))
+	data, err := deps.readFile(filepath.Join(dir, gateway.RunStateFileName))
 	if err != nil {
 		return false
 	}
-	var state RunState
+	var state gateway.RunState
 	if json.Unmarshal(data, &state) != nil {
 		return false
 	}

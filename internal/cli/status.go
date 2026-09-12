@@ -21,9 +21,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fregie/tokenhush/pkg/gateway"
 	"github.com/fregie/tokenhush/pkg/platform"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
+
+// controlStatusPath is the control-plane liveness route the CLI reads. It
+// mirrors the gateway's unexported registration constant.
+const controlStatusPath = "/status"
 
 // Control-client tuning.
 const (
@@ -58,7 +63,7 @@ var (
 // the pid/port file plus the per-session bearer token. The token never leaves
 // this process except in the Authorization header.
 type controlSession struct {
-	state RunState
+	state gateway.RunState
 	token string
 }
 
@@ -66,7 +71,7 @@ type controlSession struct {
 // token beside it. A missing run.json is errNoControlSession; an unreadable,
 // malformed or inconsistent state is a hard error (never a silent "running").
 func loadControlSession(dataDir string) (controlSession, error) {
-	statePath := filepath.Join(dataDir, RunStateFileName)
+	statePath := filepath.Join(dataDir, gateway.RunStateFileName)
 	raw, err := os.ReadFile(statePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -74,7 +79,7 @@ func loadControlSession(dataDir string) (controlSession, error) {
 		}
 		return controlSession{}, fmt.Errorf("read session state: %w", err)
 	}
-	var state RunState
+	var state gateway.RunState
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return controlSession{}, fmt.Errorf("session state is malformed: %w", err)
 	}

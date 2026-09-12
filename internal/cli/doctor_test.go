@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/gateway"
 	"github.com/fregie/tokenhush/pkg/platform"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
@@ -320,7 +321,7 @@ func TestDoctorBusyPort(t *testing.T) {
 	}
 
 	// A malformed run.json must not turn the failure into a false "session".
-	if err := os.WriteFile(filepath.Join(dataDir, RunStateFileName), []byte("{not json"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, gateway.RunStateFileName), []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if code, _, _ := runDoctorCommand(t, args, func(d *doctorDeps) {
@@ -331,7 +332,7 @@ func TestDoctorBusyPort(t *testing.T) {
 	}
 
 	// A matching run.json marks the busy port as the running session.
-	if err := os.WriteFile(filepath.Join(dataDir, RunStateFileName), []byte(`{"pid":1234,"port":`+strconv.Itoa(port)+`}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dataDir, gateway.RunStateFileName), []byte(`{"pid":1234,"port":`+strconv.Itoa(port)+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, _ = runDoctorCommand(t, args, func(d *doctorDeps) {

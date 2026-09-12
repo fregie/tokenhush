@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
 // goldenBaselinePath is the committed pre-extraction baseline of the core
@@ -144,7 +145,7 @@ func TestGoldenBaseline(t *testing.T) {
 		t.Fatalf("graceful shutdown exit code = %d, want %d (err %v)", exitCode, ExitOK, shutdownErr)
 	}
 
-	tokenPath := controlTokenPath(dataDir)
+	tokenPath := filepath.Join(dataDir, proxy.ControlTokenFileName)
 	norm := func(s string) string { return normalizeGolden(s, dataDir, tokenPath, secret) }
 
 	var b strings.Builder
