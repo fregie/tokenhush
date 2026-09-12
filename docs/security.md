@@ -31,6 +31,16 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 > [!IMPORTANT]
 > Invariant 1 is why prompt injection cannot turn the gateway into an exfiltration path: placeholders are only ever replaced on the way back to the client.
 
+## Named routing exceptions
+
+The gateway **refuses to guess** an upstream for an unrecognised request: an unknown route is an explicit typed error (`ErrUnknownUpstream`), never a silent misroute. There is exactly one **named exception list**, and a path gets on it only because the call carries no user data and every provider serves it identically:
+
+| Path | Default upstream | Why it is safe |
+|---|---|---|
+| `GET /v1/models` | OpenAI | Model discovery. The request carries no prompt or payload, and both providers expose the same shape; assigning one cannot leak or misroute user content. |
+
+A configured `upstreams:` override still wins over the exception (and over the built-in table). Every other path — including near-misses such as `/v1/model`, `/v1/models/foo` or `/v1/modelsX` — stays a typed error, so the never-misroute rule is unchanged. The list is closed and test-locked by `TestResolveModels` in `pkg/proxy`; adding an entry is a deliberate, documented decision, not a default.
+
 ## Detector trade-offs
 
 - **False positives (over-redaction)** hurt the experience: the model receives a placeholder and code or answers degrade.

@@ -159,7 +159,7 @@ Data lives separately: macOS uses `~/Library/Application Support/tokenhush/`, Li
 | `log` | `level`: `debug`, `info`, `warn`, or `error` |
 | `upstreams` | Map a host or path prefix to your own OpenAI-compatible upstream |
 
-Unmatched routes fall back to built-ins: `/v1/messages` goes to Anthropic, and `/v1/chat/completions` and `/v1/responses` go to OpenAI. See [docs/configuration.md](docs/configuration.md) for the full reference.
+Unmatched routes fall back to built-ins: `/v1/messages` goes to Anthropic, and `/v1/chat/completions` and `/v1/responses` go to OpenAI. `GET /v1/models` is the one **named exception** and defaults to OpenAI (an `upstreams:` override can move it); every other unknown path is an explicit error, never a silent misroute. See [docs/configuration.md](docs/configuration.md) for the full reference.
 
 ## Security model
 

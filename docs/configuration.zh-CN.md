@@ -112,7 +112,7 @@ upstreams:             # 主机或路径前缀 -> 上游基础 URL
 - `prefixes` 对应检测器 id `prefix`，`private_keys` 对应 `private_key`（见 `pkg/config` 注释）。
 - `allowlist` 放永不脱敏的字面量。
 - 核心配置里没有 `audit` 键。仍带该键的配置会加载失败，并提示查看 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。
-- `upstreams:` 把主机或路径前缀映射到你的 OpenAI 兼容上游。没配到的请求走内置路由：`/v1/messages` 去 Anthropic；`/v1/chat/completions` 和 `/v1/responses` 去 OpenAI。未知路径明确报错，不会静默错路由。
+- `upstreams:` 把主机或路径前缀映射到你的 OpenAI 兼容上游。没配到的请求走内置路由：`/v1/messages` 去 Anthropic；`/v1/chat/completions` 和 `/v1/responses` 去 OpenAI。`GET /v1/models` 是唯一的**具名例外**：模型发现调用不携带用户数据，默认去 OpenAI，`upstreams:` 覆盖仍可改走别处。其他任何未知路径都明确报错（`ErrUnknownUpstream`），不会静默错路由；见 [security.zh-CN.md](security.zh-CN.md#具名路由例外清单)。
 
 ## 已知限制
 

@@ -29,21 +29,37 @@ const (
 )
 
 // ErrUnknownUpstream means no route matched the request: neither a config
-// upstreams: override nor the built-in provider table recognises the path.
-// It is returned instead of guessing a provider, so an unrecognised request
-// is rejected rather than silently sent to the wrong one (docs/13 §4.1).
+// upstreams: override, nor the built-in provider table, nor the named
+// exception list recognised the path. It is returned instead of guessing a
+// provider, so an unrecognised request is rejected rather than silently sent
+// to the wrong one (docs/13 §4.1).
 var ErrUnknownUpstream = errors.New("proxy: no upstream for request path")
 
 // builtinUpstreams is the path → provider table for the V1 tools that speak
 // the Anthropic Messages API or the OpenAI Chat Completions / Responses API
-// (docs/12 §6.1). Only unambiguous, real request paths are listed:
-// /v1/models is deliberately absent because both providers serve it, and
-// guessing there would break the never-misroute rule.
+// (docs/12 §6.1). Only unambiguous, data-bearing request paths are listed:
+// /v1/models is deliberately absent here because both providers serve it. It
+// is routed through namedExceptionUpstreams instead — the explicit, closed
+// exception list, not a guess.
 var builtinUpstreams = map[string]extension.Upstream{
 	"/v1/messages":              {Name: ProviderAnthropic, BaseURL: AnthropicBaseURL},
 	"/v1/messages/count_tokens": {Name: ProviderAnthropic, BaseURL: AnthropicBaseURL},
 	"/v1/chat/completions":      {Name: ProviderOpenAI, BaseURL: OpenAIBaseURL},
 	"/v1/responses":             {Name: ProviderOpenAI, BaseURL: OpenAIBaseURL},
+}
+
+// namedExceptionUpstreams is the explicit, closed list of non-data-bearing
+// request paths that still get a default provider. A path belongs here only
+// when every provider serves it with the same meaning, so assigning one
+// cannot misroute user content; /v1/models (model discovery) is such a call.
+// This is the ONLY route the resolver assigns without a data-bearing signal
+// or a config override. An explicit upstreams: override still wins over this
+// list, exactly as it does over builtinUpstreams, and every other unknown
+// path remains a typed ErrUnknownUpstream. The list is documented as the
+// "named exception list" in docs/security.md and docs/configuration.md, and
+// locked by TestResolveModels.
+var namedExceptionUpstreams = map[string]extension.Upstream{
+	"/v1/models": {Name: ProviderOpenAI, BaseURL: OpenAIBaseURL},
 }
 
 // DefaultRouterName is the extension.Router name of the built-in router.
@@ -59,11 +75,14 @@ const DefaultRouterName = "default"
 //  3. longest path-prefix override (matched on path-segment boundaries, so
 //     "/v1/chat" matches "/v1/chat/completions" but not "/v1/chatter");
 //  4. the built-in provider table;
-//  5. ErrUnknownUpstream.
+//  5. the named exception list, the only non-data-bearing path
+//     (/v1/models -> OpenAI) assigned without a config override;
+//  6. ErrUnknownUpstream.
 //
-// It never guesses: an unrecognised path yields a typed error with the zero
-// Upstream, so the caller can answer 502 and record the rejection instead of
-// silently misrouting the request to a provider that cannot serve it.
+// It never guesses beyond that closed list: an unrecognised path yields a
+// typed error with the zero Upstream, so the caller can answer 502 and record
+// the rejection instead of silently misrouting the request to a provider that
+// cannot serve it.
 type Resolver struct {
 	sink        audit.AuditSink
 	exactPaths  map[string]string
@@ -178,15 +197,23 @@ func (r *Resolver) Resolve(req *extension.Request) (extension.Upstream, error) {
 	if up, ok := builtinUpstreams[path]; ok {
 		return up, nil
 	}
+	if up, ok := namedExceptionUpstreams[path]; ok {
+		return up, nil
+	}
 	r.recordUnknownPath(req, path)
 	return extension.Upstream{}, upstreamUnknownError(req.Method, path)
 }
 
 // upstreamNameForPath reports the provider name an override route should
 // carry: the built-in provider name when the path is a known provider route
-// (so audit still says anthropic/openai), ProviderCustom otherwise.
+// (so audit still says anthropic/openai), ProviderCustom otherwise. The named
+// exception list counts as a known provider route, so an override of
+// /v1/models is still reported as openai.
 func upstreamNameForPath(path string) string {
 	if up, ok := builtinUpstreams[path]; ok {
+		return up.Name
+	}
+	if up, ok := namedExceptionUpstreams[path]; ok {
 		return up.Name
 	}
 	return ProviderCustom

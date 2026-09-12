@@ -159,7 +159,7 @@ Tokenhush 读取 `tokenhush.yaml`。文件缺失就用默认值，未知键会�
 | `log` | `level`：`debug`、`info`、`warn` 或 `error` |
 | `upstreams` | 将主机或路径前缀映射到你自己的 OpenAI 兼容上游 |
 
-未匹配的路由回退到内置规则：`/v1/messages` 走 Anthropic，`/v1/chat/completions` 和 `/v1/responses` 走 OpenAI。完整参考见 [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)。
+未匹配的路由回退到内置规则：`/v1/messages` 走 Anthropic，`/v1/chat/completions` 和 `/v1/responses` 走 OpenAI。`GET /v1/models` 是唯一的**具名例外**，默认去 OpenAI（`upstreams:` 覆盖可改走别处）；其他任何未知路径都明确报错，不会静默错路由。完整参考见 [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)。
 
 ## 安全模型
 

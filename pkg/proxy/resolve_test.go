@@ -44,8 +44,9 @@ func resolveReq(method, host, path string) *extension.Request {
 
 // TestUpstreamResolve is the W3.8 acceptance table: real-shaped tool routes
 // must resolve to the exact provider (never merely "some upstream"), config
-// upstreams: overrides must win with a documented precedence, and every
-// unrecognised path must yield ErrUnknownUpstream with a zero Upstream.
+// upstreams: overrides must win with a documented precedence, the single named
+// exception (/v1/models -> OpenAI) must route, and every unrecognised path
+// must yield ErrUnknownUpstream with a zero Upstream.
 func TestUpstreamResolve(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -71,8 +72,16 @@ func TestUpstreamResolve(t *testing.T) {
 		{name: "openai responses trailing slash", method: "POST", host: resolveLoopbackHost, path: "/v1/responses/", wantName: ProviderOpenAI, wantBase: OpenAIBaseURL},
 		{name: "built-in route ignores request host", method: "POST", host: "api.anthropic.com", path: "/v1/messages", wantName: ProviderAnthropic, wantBase: AnthropicBaseURL},
 
+		// Named exception list (the ONLY non-data-bearing default route):
+		// /v1/models defaults to OpenAI, and a config override still wins.
+		{name: "named exception models route", method: "GET", host: resolveLoopbackHost, path: "/v1/models", wantName: ProviderOpenAI, wantBase: OpenAIBaseURL},
+		{name: "named exception ignores request host", method: "GET", host: "api.anthropic.com", path: "/v1/models", wantName: ProviderOpenAI, wantBase: OpenAIBaseURL},
+		{name: "named exception query is canonicalised", method: "GET", host: resolveLoopbackHost, path: "/v1/models?limit=3", wantName: ProviderOpenAI, wantBase: OpenAIBaseURL},
+		{name: "named exception trailing slash is canonicalised", method: "GET", host: resolveLoopbackHost, path: "/v1/models/", wantName: ProviderOpenAI, wantBase: OpenAIBaseURL},
+		{name: "exact override beats named exception", method: "GET", host: resolveLoopbackHost, path: "/v1/models",
+			overrides: map[string]string{"/v1/models": "https://gw.example/models"}, wantName: ProviderOpenAI, wantBase: "https://gw.example/models"},
+
 		// Unknown paths: typed error, zero Upstream, never a guessed provider.
-		{name: "unknown ambiguous models path", method: "GET", host: resolveLoopbackHost, path: "/v1/models", wantErr: ErrUnknownUpstream},
 		{name: "unknown root path", method: "GET", host: resolveLoopbackHost, path: "/", wantErr: ErrUnknownUpstream},
 		{name: "unknown empty path", method: "GET", host: resolveLoopbackHost, path: "", wantErr: ErrUnknownUpstream},
 		{name: "unknown query-only path", method: "GET", host: resolveLoopbackHost, path: "?beta=true", wantErr: ErrUnknownUpstream},
@@ -161,6 +170,62 @@ func TestUpstreamResolve(t *testing.T) {
 			t.Logf("path %q -> upstream %s %s", tc.path, got.Name, got.BaseURL)
 		})
 	}
+}
+
+// TestResolveModels locks the one named routing exception: /v1/models is a
+// non-data-bearing model-discovery call, so it defaults to OpenAI instead of a
+// typed error. An explicit upstreams: override still wins, and the exception
+// never widens — every non-exception neighbour stays a typed ErrUnknownUpstream
+// with the zero Upstream. Rationale in docs/security.md ("named exception
+// list") and docs/configuration.md.
+func TestResolveModels(t *testing.T) {
+	t.Run("default routes to openai", func(t *testing.T) {
+		got, err := NewResolver(nil, nil).Resolve(resolveReq("GET", resolveLoopbackHost, "/v1/models"))
+		if err != nil {
+			t.Fatalf("Resolve(/v1/models) error = %v, want nil", err)
+		}
+		if got.Name != ProviderOpenAI || got.BaseURL != OpenAIBaseURL {
+			t.Fatalf("Resolve(/v1/models) = %+v, want {Name:%q BaseURL:%q}", got, ProviderOpenAI, OpenAIBaseURL)
+		}
+		t.Logf("named exception: /v1/models -> %s %s", got.Name, got.BaseURL)
+	})
+
+	t.Run("canonical forms hit the exception", func(t *testing.T) {
+		for _, path := range []string{"/v1/models?limit=1", "/v1/models/"} {
+			got, err := NewResolver(nil, nil).Resolve(resolveReq("GET", resolveLoopbackHost, path))
+			if err != nil {
+				t.Fatalf("Resolve(%q) error = %v, want nil", path, err)
+			}
+			if got.Name != ProviderOpenAI || got.BaseURL != OpenAIBaseURL {
+				t.Fatalf("Resolve(%q) = %+v, want openai %s", path, got, OpenAIBaseURL)
+			}
+		}
+	})
+
+	t.Run("override beats the exception", func(t *testing.T) {
+		overrides := map[string]string{"/v1/models": "https://gw.example/models"}
+		got, err := NewResolver(overrides, nil).Resolve(resolveReq("GET", resolveLoopbackHost, "/v1/models"))
+		if err != nil {
+			t.Fatalf("override Resolve(/v1/models) error = %v", err)
+		}
+		if got.Name != ProviderOpenAI || got.BaseURL != "https://gw.example/models" {
+			t.Fatalf("override Resolve(/v1/models) = %+v, want {Name:%q BaseURL:%q}", got, ProviderOpenAI, "https://gw.example/models")
+		}
+		t.Logf("override: /v1/models -> %s %s", got.Name, got.BaseURL)
+	})
+
+	t.Run("non-exception paths stay typed errors", func(t *testing.T) {
+		for _, path := range []string{"/v1/foo", "/v1/model", "/v1/models/foo", "/v1/modelsX"} {
+			got, err := NewResolver(nil, nil).Resolve(resolveReq("GET", resolveLoopbackHost, path))
+			if !errors.Is(err, ErrUnknownUpstream) {
+				t.Fatalf("Resolve(%q) error = %v, want ErrUnknownUpstream", path, err)
+			}
+			if got != (extension.Upstream{}) {
+				t.Fatalf("Resolve(%q) = %+v on error, want the zero Upstream", path, got)
+			}
+			t.Logf("non-exception %q -> typed error: %v", path, err)
+		}
+	})
 }
 
 // TestUpstreamResolveUnknownPathAuditRow locks the audit seam for unknown-path

@@ -112,7 +112,7 @@ Key points:
 - `prefixes` → detector id `prefix`; `private_keys` → `private_key` (see `pkg/config` comments).
 - `allowlist` holds literals never redacted.
 - The core config has no `audit` key. A config that still contains one fails to load with a message pointing to [migration-v0.2.0.md](migration-v0.2.0.md).
-- `upstreams:` maps a host or path prefix to your OpenAI-compatible upstream. Unmatched requests use built-ins: `/v1/messages` routes to Anthropic; `/v1/chat/completions` and `/v1/responses` route to OpenAI. Unknown paths return an explicit error, never a silent misroute.
+- `upstreams:` maps a host or path prefix to your OpenAI-compatible upstream. Unmatched requests use built-ins: `/v1/messages` routes to Anthropic; `/v1/chat/completions` and `/v1/responses` route to OpenAI. `GET /v1/models` is the single **named exception**: a non-data-bearing model-discovery call that defaults to OpenAI, which an `upstreams:` override can still move. Every other unknown path returns an explicit error (`ErrUnknownUpstream`), never a silent misroute; see [security.md](security.md#named-routing-exceptions).
 
 ## Known limitations
 
