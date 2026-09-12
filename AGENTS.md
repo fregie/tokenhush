@@ -1,11 +1,11 @@
 # AGENTS.md: tokenhush (public core)
 
-> Status: V1 implemented and released as `v0.1.0` (`run` / `status` / `audit` / `env` / `doctor` / `version`); cross-platform (macOS / Linux / Windows).
+> Status: V1 implemented and released as `v0.1.0` (`run` / `status` / `env` / `doctor` / `version`); the `v0.2.0` line keeps only the audit seam, because the concrete audit store moved to the private Pro layer. Cross-platform (macOS / Linux / Windows).
 > Last updated: 2026-09-12
 
 ## What this is
 
-A local base-URL gateway. AI coding tools point their API requests at the local machine (for example `ANTHROPIC_BASE_URL=http://127.0.0.1:PORT`). Tokenhush performs outbound redaction (keys / PII / sensitive text) and local audit, then backfills the response before returning it to the client. Processing is local only; data does not leave the device.
+A local base-URL gateway. AI coding tools point their API requests at the local machine (for example `ANTHROPIC_BASE_URL=http://127.0.0.1:PORT`). Tokenhush performs outbound redaction (keys / PII / sensitive text), exposes a metadata-only audit seam for the private Pro layer, then backfills the response before returning it to the client. The core itself stores no audit data. Processing is local only; data does not leave the device.
 
 This repository is the Apache-2.0 open-source core. The private Pro layer lives in the private Pro repository and builds by importing this repository's Go module. Never put Pro code in this repository.
 
@@ -24,6 +24,7 @@ tokenhush/
 │   ├── plugins.md          # writing content plugins (Inspector / Transformer)
 │   ├── configuration.md    # tool setup + tokenhush.yaml reference
 │   ├── deployment.md       # deployment + OS-native auto-start
+│   ├── migration-v0.2.0.md # v0.2.0: audit moved to the private Pro layer
 │   └── security.md         # security/threat model + hard invariants
 ├── scripts/
 │   └── check-docs.sh       # verify docs match the CLI and config
@@ -32,7 +33,7 @@ tokenhush/
     ├── proxy/              # local reverse proxy
     ├── redact/             # detection / placeholder / backfill engine
     ├── protocol/           # protocol-agnostic JSON leaf traversal + SSE incremental parsing
-    ├── audit/              # SQLite audit (metadata + HMAC hash chain)
+    ├── audit/              # audit seam (Record/Query, AuditSink/AuditQuerier, no-op); store in Pro
     ├── config/             # configuration loading
     ├── platform/           # cross-platform abstraction: paths / keyring / service (exported for Pro reuse)
     ├── extension/          # extension point interfaces (Router / CostSink / AuditExporter + content plugins Inspector/Transformer/Registry)
@@ -53,6 +54,7 @@ tokenhush/
 | Deployment and OS-native auto-start | `docs/deployment.md` |
 | Documentation index | `docs/README.md` |
 | Security invariants / threat model | `docs/security.md` |
+| Migrating the v0.1.x `audit:` config | `docs/migration-v0.2.0.md` |
 | Docs vs CLI / config consistency | `scripts/check-docs.sh` |
 | Product, market, roadmap, pricing | the private Pro repository (maintainer-only) |
 
@@ -62,7 +64,7 @@ tokenhush/
 2. No normalization at the protocol layer: use protocol-agnostic JSON leaf traversal (recursive string-leaf detection and replacement). Do not build an IR per API.
 3. V1 detectors use deterministic rules only (prefix / high-entropy / JWT / private-key header / Luhn / email). Do not introduce NER or local small models.
 4. Local services bind dual-stack loopback only (127.0.0.1 + [::1]) and validate the `Host` header (anti DNS rebinding). The control plane additionally requires a bearer token and an Origin check.
-5. Audit is metadata-only by default (provider / endpoint / time / byte counts / redaction counts / types); no values are stored. Content logging must be explicitly enabled and encrypted.
+5. The core exposes only a metadata-only audit seam (provider / endpoint / time / byte counts / redaction counts / types); it stores no audit data. The concrete store and any content-logging option live in the private Pro layer.
 6. Pro capability never enters this repository. Do not write complete `if license { ... }` implementations or Pro algorithms here, and never merge Pro implementation branches into this repository.
 7. Dependency licenses: core dependencies must be permissive only (MIT / Apache-2.0 / BSD). GPL and AGPL are forbidden, because they would contaminate the closed Pro layer.
 8. Cross-platform: converge OS differences in `pkg/platform`, not scattered `runtime.GOOS` branches. Never write to the CWD or the binary directory (the install prefix is read-only). Use pure-Go SQLite (`modernc.org/sqlite`) to keep `CGO_ENABLED=0` cross-compilation working.

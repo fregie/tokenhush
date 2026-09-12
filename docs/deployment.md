@@ -14,7 +14,7 @@ Tokenhush ships as a single static binary. It has no runtime dependencies, no ba
 | Architecture | amd64 or arm64 |
 | Go (source builds only) | Go 1.25 or newer |
 | Network | Loopback only. The gateway binds `127.0.0.1` and `[::1]`. |
-| Disk | Room for the audit database (metadata only by default) |
+| Disk | Room for runtime session files (the core keeps no audit database) |
 
 Release binaries are pure Go (`CGO_ENABLED=0`), so they run without a C toolchain. The gateway refuses to bind `0.0.0.0` or an empty host: only `127.0.0.1`, `::1`, and `localhost` are accepted. This is deliberate. The gateway is a local component, not a network service.
 
@@ -300,15 +300,14 @@ The data directory holds:
 |---|---|
 | `control.token` | Per-session bearer token for the control API, written `0600`, regenerated on every `run` |
 | `run.json` | Session metadata (pid, port, start time). Carries no secrets and no request content. |
-| `audit.db` | SQLite audit timeline, append-only with an HMAC hash chain |
 
-`run.json` and `control.token` are session files. `run` removes them on clean shutdown, and a stale `run.json` only affects diagnostics, not data safety. `audit.db` persists across runs; its retention is controlled by `audit.retention_days`.
+`run.json` and `control.token` are session files. `run` removes them on clean shutdown, and a stale `run.json` only affects diagnostics, not data safety. The core writes no audit database; the concrete audit store lives in the private Pro layer.
 
 ## 6. Configuration
 
 Tokenhush reads `tokenhush.yaml` from the config directory, or from the path passed to `--config`. A missing file means defaults. Unknown keys are rejected, so a typo fails loudly instead of being ignored.
 
-The settings you are most likely to touch are the listen port, the six detectors, the allowlist, audit retention, the log level, and the `upstreams` map that routes a host or path prefix to your own OpenAI-compatible endpoint.
+The settings you are most likely to touch are the listen port, the six detectors, the allowlist, the log level, and the `upstreams` map that routes a host or path prefix to your own OpenAI-compatible endpoint.
 
 The full annotated defaults and every supported key live in [configuration.md](configuration.md). That file is the reference; this guide does not repeat the YAML sample.
 
@@ -321,7 +320,7 @@ The full annotated defaults and every supported key live in [configuration.md](c
 | install.sh | Re-run the install command; it resolves the latest release |
 | Source | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-Config keys are validated on load, so an upgrade that adds a key does not break an older file, and an upgrade that removes one fails fast with an "unknown field" error. Restart the gateway after upgrading so the new binary is the one serving traffic.
+Config keys are validated on load, so an upgrade that adds a key does not break an older file, and an upgrade that removes one fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: the `audit:` block was removed and the audit capability moved to the private Pro layer, so delete that block before restarting. See [migration-v0.2.0.md](migration-v0.2.0.md). Restart the gateway after upgrading so the new binary is the one serving traffic.
 
 ## 8. Uninstall
 
@@ -341,7 +340,7 @@ For an `install.sh` or source install, delete the binary directly:
 rm "$(command -v tokenhush)"
 ```
 
-If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories if you want a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the audit database and the control token.
+If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories if you want a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the session files (the control token and `run.json`).
 
 ## 9. Troubleshooting
 
@@ -352,10 +351,9 @@ Start with `tokenhush doctor`. It reports the config path, directory permissions
 | `run` reports the port is already in use | Another process (possibly a previous `tokenhush run`) holds the port. Check `tokenhush status`, stop the other process, or start with `--port` |
 | `tokenhush` not found after install | `~/.local/bin` or `$(go env GOPATH)/bin` is not on `PATH`. Add it to your shell profile, then open a new shell |
 | Requests fail only inside a corporate network | An HTTP proxy is intercepting loopback traffic. Add `127.0.0.1,localhost,::1` to `NO_PROXY` (and `no_proxy`), or exclude it in your proxy settings |
-| Audit chain cannot read its key | No OS secret store is available, so Tokenhush fell back to a restricted file. `doctor` reports the active backend; this is an explicit downgrade, never silent |
 | macOS blocks the binary on first run | The release binaries are not notarized. Right-click the binary and choose Open, then confirm. Or run `xattr -dr com.apple.quarantine "$(command -v tokenhush)"` |
 | Windows SmartScreen blocks `tokenhush.exe` | Click More info, then Run anyway. Scoop installs do not trigger this prompt |
-| `status` or `audit` fails with a control token error | No live session, or the token is stale. Start `tokenhush run` again; the token is regenerated per session |
+| `status` fails with a control token error | No live session, or the token is stale. Start `tokenhush run` again; the token is regenerated per session |
 
 ## 10. Security notes
 
@@ -363,7 +361,7 @@ These properties are load-bearing. Do not work around them.
 
 - **Loopback only.** The gateway binds `127.0.0.1` and `[::1]` and validates the `Host` header. It never binds `0.0.0.0`.
 - **No root certificate, no MITM.** The public core does not install a CA or intercept TLS. Requests reach the gateway as plain HTTP on localhost, which is how it can see and redact content.
-- **Metadata-only audit by default.** The audit timeline records provider, endpoint, timing, byte counts, redaction counts, and detector types. Content logging requires explicit opt-in, and the chain is HMAC-keyed from the OS secret store.
+- **Metadata-only audit seam.** The core forwards provider, endpoint, timing, byte counts, redaction counts, and detector types to an injected audit sink, and defaults to a no-op sink. The concrete store, its tamper-evident HMAC chain, and content-logging options live in the private Pro layer.
 - **Never backfill outbound.** Placeholders are restored only on responses returning to the client. The gateway never rewrites a placeholder back to its secret in an outbound request, which blocks prompt-injection exfiltration.
 - **Fail-safe, not fail-open.** When a detector cannot decide, Tokenhush over-redacts or blocks and records an alert rather than silently emitting a secret.
 
@@ -375,7 +373,6 @@ The full threat model and invariants are in [security.md](security.md). The requ
 <!-- check-docs:commands:start -->
     tokenhush run          start the gateway in the foreground
     tokenhush status       show whether the gateway is running
-    tokenhush audit        show the local audit timeline
     tokenhush env <tool>   print tool setup snippets
     tokenhush doctor       diagnose common setup problems
     tokenhush version      print version and build information
@@ -388,7 +385,6 @@ Useful flags:
 |---|---|
 | `run` | `--config PATH`, `--port N`, `--log-level debug\|info\|warn\|error` |
 | `status` | `--json` |
-| `audit` | `--json`, `--limit N` (`1` to `1000`, default `20`) |
 | `env <tool>` | `--config PATH`, `--port N`; tools: `claude`, `codex`, `aider`, `cline`, `roo` |
 | `doctor` | `--config PATH`, `--port N`, `--json` |
 | `version` | none |

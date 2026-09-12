@@ -8,7 +8,7 @@ Thanks for helping make AI coding tools safer. This is the public Apache-2.0 cor
 
 ## Current priorities
 
-The V1 core is implemented (`run` / `status` / `audit` / `env` / `doctor` / `version`) across Windows, Linux, and macOS. The most valuable contributions right now:
+The V1 core is implemented (`run` / `status` / `env` / `doctor` / `version`) across Windows, Linux, and macOS. The most valuable contributions right now:
 
 - Feedback on how each AI tool is connected via base URL, and the pitfalls you hit (see `docs/configuration.md`).
 - Reports of missed redactions (false negatives) and over-redactions (false positives), plus security and privacy risks.

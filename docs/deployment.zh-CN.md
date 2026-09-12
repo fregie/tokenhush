@@ -14,7 +14,7 @@ Tokenhush 以单个静态二进制形式分发。它没有运行时依赖，自�
 | 架构 | amd64 或 arm64 |
 | Go（仅从源码构建） | Go 1.25 或更新版本 |
 | 网络 | 仅环回。网关绑定 `127.0.0.1` 和 `[::1]`。 |
-| 磁盘 | 存放审计数据库的空间（默认仅元数据） |
+| 磁盘 | 存放运行时会话文件的空间（核心不保留审计数据库） |
 
 发行版二进制是纯 Go（`CGO_ENABLED=0`），因此无需 C 工具链即可运行。网关拒绝绑定 `0.0.0.0` 或空主机：只接受 `127.0.0.1`、`::1` 和 `localhost`。这是有意为之。网关是本地组件，不是网络服务。
 
@@ -300,15 +300,14 @@ Tokenhush 使用两个目录：存放 `tokenhush.yaml` 的配置目录，以及�
 |---|---|
 | `control.token` | 控制面 API 的每会话 bearer 令牌，以 `0600` 写入，每次 `run` 重新生成 |
 | `run.json` | 会话元数据（pid、端口、启动时间）。不携带任何秘密和请求内容。 |
-| `audit.db` | SQLite 审计时间线，仅追加，带 HMAC 哈希链 |
 
-`run.json` 和 `control.token` 是会话文件。`run` 在干净关闭时删除它们，陈旧的 `run.json` 只影响诊断，不影响数据安全。`audit.db` 跨运行持久存在；其保留期由 `audit.retention_days` 控制。
+`run.json` 和 `control.token` 是会话文件。`run` 在干净关闭时删除它们，陈旧的 `run.json` 只影响诊断，不影响数据安全。核心不写入审计数据库；具体审计存储位于私有 Pro 层。
 
 ## 6. 配置
 
 Tokenhush 从配置目录读取 `tokenhush.yaml`，或从传给 `--config` 的路径读取。文件缺失表示使用默认值。未知键会被拒绝，因此拼写错误会大声失败，而不是被忽略。
 
-你最可能调整的设置是监听端口、六个检测器、白名单、审计保留期、日志级别，以及把主机或路径前缀路由到你自己的 OpenAI 兼容端点的 `upstreams` 映射。
+你最可能调整的设置是监听端口、六个检测器、白名单、日志级别，以及把主机或路径前缀路由到你自己的 OpenAI 兼容端点的 `upstreams` 映射。
 
 完整的带注释默认值和所有受支持的键见 [configuration.zh-CN.md](configuration.zh-CN.md)。该文件是参考；本指南不重复 YAML 示例。
 
@@ -321,7 +320,7 @@ Tokenhush 从配置目录读取 `tokenhush.yaml`，或从传给 `--config` 的�
 | install.sh | 重新运行安装命令；它会解析最新发行版 |
 | 源码 | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-配置键在加载时校验，因此添加键的升级不会破坏旧文件，删除键的升级会以 "unknown field" 错误快速失败。升级后重启网关，让新二进制接管流量。
+配置键在加载时校验，因此添加键的升级不会破坏旧文件，删除键的升级会以 "unknown field" 错误快速失败。`v0.2.0` 升级就是一个具体例子：`audit:` 块已被移除，审计能力移至私有 Pro 层，因此请在重启前删除该块。见 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。升级后重启网关，让新二进制接管流量。
 
 ## 8. 卸载
 
@@ -341,7 +340,7 @@ scoop uninstall tokenhush
 rm "$(command -v tokenhush)"
 ```
 
-如果你添加过 launchd agent、systemd unit 或计划任务，先移除该条目（见[让它在后台持续运行](#让它在后台持续运行)）。然后，如果你想彻底清理，删除配置和数据目录。在 macOS 上两者都位于 `~/Library/Application Support/tokenhush/`；在 Linux 上它们是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；在 Windows 上它们是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删除数据目录会丢弃审计数据库和控制令牌。
+如果你添加过 launchd agent、systemd unit 或计划任务，先移除该条目（见[让它在后台持续运行](#让它在后台持续运行)）。然后，如果你想彻底清理，删除配置和数据目录。在 macOS 上两者都位于 `~/Library/Application Support/tokenhush/`；在 Linux 上它们是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；在 Windows 上它们是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删除数据目录会丢弃会话文件（控制令牌和 `run.json`）。
 
 ## 9. 故障排查
 
@@ -352,10 +351,9 @@ rm "$(command -v tokenhush)"
 | `run` 报告端口已被占用 | 另一个进程（可能是先前的 `tokenhush run`）占用了端口。检查 `tokenhush status`，停止另一个进程，或用 `--port` 启动 |
 | 安装后找不到 `tokenhush` | `~/.local/bin` 或 `$(go env GOPATH)/bin` 不在 `PATH` 上。把它加入你的 shell 配置文件，然后打开新 shell |
 | 仅在公司网络内请求失败 | HTTP 代理拦截了环回流量。把 `127.0.0.1,localhost,::1` 加入 `NO_PROXY`（以及 `no_proxy`），或在代理设置中排除它 |
-| 审计链无法读取其密钥 | 没有可用的操作系统密钥存储，因此 Tokenhush 退回到受限文件。`doctor` 会报告当前后端；这是显式降级，绝不静默 |
 | macOS 首次运行阻止该二进制 | 发行版二进制未公证。右键点击二进制并选择"打开"，然后确认。或运行 `xattr -dr com.apple.quarantine "$(command -v tokenhush)"` |
 | Windows SmartScreen 阻止 `tokenhush.exe` | 点击"更多信息"，然后点击"仍要运行"。Scoop 安装不会触发该提示 |
-| `status` 或 `audit` 报控制令牌错误 | 没有活跃会话，或令牌已陈旧。再次启动 `tokenhush run`；令牌按会话重新生成 |
+| `status` 报控制令牌错误 | 没有活跃会话，或令牌已陈旧。再次启动 `tokenhush run`；令牌按会话重新生成 |
 
 ## 10. 安全说明
 
@@ -363,7 +361,7 @@ rm "$(command -v tokenhush)"
 
 - **仅环回。** 网关绑定 `127.0.0.1` 和 `[::1]`，并校验 `Host` 头。它绝不绑定 `0.0.0.0`。
 - **无根证书，无 MITM。** 公开核心不安装 CA，也不拦截 TLS。请求以纯 HTTP 到达 localhost 上的网关，这正是它能看到并脱敏内容的方式。
-- **默认仅元数据审计。** 审计时间线记录提供方、端点、时间、字节数、脱敏计数和检测器类型。内容日志需要显式选择加入，且哈希链由操作系统密钥存储进行 HMAC 加钥。
+- **仅元数据的审计接缝。** 核心把提供方、端点、时间、字节数、脱敏计数和检测器类型转发到注入的审计 sink，并默认使用 no-op sink。具体存储、其防篡改 HMAC 链和内容日志选项位于私有 Pro 层。
 - **绝不向出站方向回填。** 占位符只在返回客户端的响应中恢复。网关绝不把占位符在出站请求中改写回其秘密，这阻断了提示注入外泄。
 - **失败安全，而非失败开放（fail-open）。** 当检测器无法判断时，Tokenhush 会过度脱敏或阻断并记录告警，而不是静默放出一个秘密。
 
@@ -375,7 +373,6 @@ rm "$(command -v tokenhush)"
 <!-- check-docs:commands:start -->
     tokenhush run          start the gateway in the foreground
     tokenhush status       show whether the gateway is running
-    tokenhush audit        show the local audit timeline
     tokenhush env <tool>   print tool setup snippets
     tokenhush doctor       diagnose common setup problems
     tokenhush version      print version and build information
@@ -388,7 +385,6 @@ rm "$(command -v tokenhush)"
 |---|---|
 | `run` | `--config PATH`、`--port N`、`--log-level debug\|info\|warn\|error` |
 | `status` | `--json` |
-| `audit` | `--json`、`--limit N`（`1` 到 `1000`，默认 `20`） |
 | `env <tool>` | `--config PATH`、`--port N`；工具：`claude`、`codex`、`aider`、`cline`、`roo` |
 | `doctor` | `--config PATH`、`--port N`、`--json` |
 | `version` | 无 |

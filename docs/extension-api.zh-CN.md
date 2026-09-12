@@ -120,7 +120,7 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 
 `Gate` 还会拒绝 nil 文档（`ErrNilDocument`）以及插件未声明其 phase 的文档（`ErrPhaseNotDeclared`）。
 
-辅助类型（示意）：`Request`（method/path/headers/解析后的 JSON）、`Response`、`Upstream`（base URL；不携带凭据，V1 透传凭据）。`Query` 和 `Record` 是 `pkg/audit` 类型的别名；审计的写入与读取由 `pkg/audit` 中的 `AuditSink` / `AuditQuerier` 接缝负责（由守护进程注入实现）。
+辅助类型（示意）：`Request`（method/path/headers/解析后的 JSON）、`Response`、`Upstream`（base URL；不携带凭据，V1 透传凭据）。`Query` 和 `Record` 是 `pkg/audit` 类型的别名；审计的写入与读取由 `pkg/audit` 中的 `AuditSink` / `AuditQuerier` 接缝负责。核心默认是 no-op sink，私有 Pro 层注入具体存储。
 
 ## 实现如何挂载
 

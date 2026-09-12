@@ -1,5 +1,5 @@
 // Package config loads the user configuration (tokenhush.yaml) from the
 // platform config directory, applies the opinionated V1 defaults from
 // docs/13 §7, and validates the result: loopback-only listen address, detector
-// toggles, audit retention, log level, and the upstreams override map.
+// toggles, log level, and the upstreams override map.
 package config

@@ -120,7 +120,7 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 
 `Gate` also rejects a nil document (`ErrNilDocument`) and a document whose phase the plugin did not declare (`ErrPhaseNotDeclared`).
 
-Supporting types (illustrative): `Request` (method/path/headers/parsed JSON), `Response`, `Upstream` (base URL; carries no credentials, V1 passes them through). `Query` and `Record` are type aliases of `pkg/audit` types; audit writes and reads are owned by the `AuditSink` / `AuditQuerier` seams in `pkg/audit` (the daemon injects an implementation).
+Supporting types (illustrative): `Request` (method/path/headers/parsed JSON), `Response`, `Upstream` (base URL; carries no credentials, V1 passes them through). `Query` and `Record` are type aliases of `pkg/audit` types; audit writes and reads are owned by the `AuditSink` / `AuditQuerier` seams in `pkg/audit`. The core default is a no-op sink, and the private Pro layer injects the concrete store.
 
 ## How implementations are mounted
 

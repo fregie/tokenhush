@@ -1,7 +1,7 @@
 // Status view: `tokenhush status` reports whether the gateway is running plus
 // its session counters by reading the daemon's loopback control API with the
 // per-session bearer token from <DataDir>/control.token. It also owns the
-// shared control-session discovery and loopback client the audit view reuses.
+// shared control-session discovery and loopback client used by other CLI views.
 
 package cli
 

@@ -4,14 +4,14 @@
 
 > 状态：V1 已实现，并作为 `v0.1.0` 发布（2026-09）。本文档描述已发布核心的架构以及开源核心边界。
 
-Tokenhush 是一个本地 base-URL 网关。它位于你的 AI 编码工具与模型提供商之间，在请求离开本机前检测并脱敏敏感内容，并记录一条本地审计时间线。
+Tokenhush 是一个本地 base-URL 网关。它位于你的 AI 编码工具与模型提供商之间，在请求离开本机前检测并脱敏敏感内容，并暴露一个仅元数据的审计接缝。
 
 ## 目标与非目标
 
 **目标**
 
 - 在请求离开本机前检测并脱敏敏感内容（密钥、`.env` 值、PII）。
-- 提供**本地审计时间线**，默认只记录元数据。
+- 暴露一个**仅元数据的审计接缝**，私有构建可将其接入本地审计存储；核心本身不存储任何审计数据。
 - 以**零配置阻力**接入接受 `*_BASE_URL` 或自定义端点的工具。
 - 在 Windows、Linux 和 macOS 上**跨平台**运行。
 - 全部在本地处理：**数据永不离开设备**。
@@ -30,7 +30,7 @@ Tokenhush 是一个本地 base-URL 网关。它位于你的 AI 编码工具与�
 flowchart LR
   Tool["AI 编码工具<br/>Claude Code、Codex、Aider、Cline、..."]
   Up["模型提供商<br/>Anthropic、OpenAI、..."]
-  Store["本地审计<br/>SQLite，元数据 + HMAC 链"]
+  Store["审计接缝<br/>存储在 Pro"]
 
   subgraph GW["tokenhush 本地网关"]
     direction TB
@@ -61,12 +61,12 @@ flowchart LR
 | `pkg/proxy` | 本地 HTTP 反向代理：监听器、上游路由、SSE 透传、生命周期 |
 | `pkg/redact` | 检测器（确定性规则）+ 占位符生成/映射 + 回填 |
 | `pkg/protocol` | 协议无关的 JSON 叶子遍历；增量 SSE 解析；递归处理工具调用中的双重编码 JSON |
-| `pkg/audit` | 仅追加的 SQLite + HMAC 哈希链；仅元数据；保留策略 |
+| `pkg/audit` | 审计接缝：`Record` / `Query` 类型以及 `AuditSink` / `AuditQuerier` 接口和 no-op sink；具体存储位于私有 Pro 层 |
 | `pkg/config` | 配置加载与默认值（`tokenhush.yaml`） |
 | `pkg/platform` | 跨平台抽象：路径、密钥环、服务。导出以供私有 Pro 仓库复用 |
 | `pkg/extension` | 内容插件接口（Inspector / Transformer / Registry）以及跨层扩展点（见 `extension-api.zh-CN.md`、`plugins.zh-CN.md`） |
 | `pkg/license` | 只读的 Pro license 校验与展示（隔离，已做模糊测试） |
-| `cmd/tokenhush` | 免费 CLI：`run`（前台网关）、`status`、`audit`、`env`（打印设置片段）、`doctor`、`version`，以及控制面 API |
+| `cmd/tokenhush` | 免费 CLI：`run`（前台网关）、`status`、`env`（打印设置片段）、`doctor`、`version`，以及控制面 API |
 
 ## 关键设计决策
 
@@ -92,11 +92,12 @@ flowchart LR
 
 ## 开源核心边界
 
-公开核心（本仓库，Apache-2.0）提供**对单用户完全可用**的能力：代理、脱敏、审计、CLI 以及扩展点接口。
+公开核心（本仓库，Apache-2.0）提供**对单用户完全可用**的能力：代理、脱敏、仅元数据的审计接缝、CLI 以及扩展点接口。
 
 私有 Pro 仓库通过导入本仓库的 Go module 构建付费二进制。它提供：
 
 - 系统扩展 / MITM 强力模式（在闭源 macOS 应用侧）
+- 具体本地审计存储（持久化、防篡改 HMAC 链、保留策略）、`audit` 子命令和审计控制端点
 - 多提供商 / 多账号路由
 - 成本追踪
 - 团队审计导出 / SSO
@@ -109,7 +110,7 @@ flowchart LR
 
 | 阶段 | 能力 | 渠道 |
 |---|---|---|
-| V1 | base-URL 网关：内容级脱敏 + 审计（覆盖 CLI/IDE 工具） | 开源核心 + 免费 CLI |
+| V1 | base-URL 网关：内容级脱敏 + 仅元数据审计接缝（具体存储在 Pro） | 开源核心 + 免费 CLI |
 | V2 | 系统扩展元数据模式：域名/进程级拦截 + 审计（**无 CA**） | Pro（直接下载） |
 | V3 | 透明代理 + 本地 CA：内容级脱敏，覆盖 Cursor/浏览器/桌面应用 | Pro（显式选择加入） |
 

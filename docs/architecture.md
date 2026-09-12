@@ -4,14 +4,14 @@
 
 > Status: V1 is implemented and released as `v0.1.0` (2026-09). This document describes the shipped core architecture and the open-core boundary.
 
-Tokenhush is a local base-URL gateway. It sits between your AI coding tool and the model provider, detects and redacts sensitive content before a request leaves the machine, and records a local audit timeline.
+Tokenhush is a local base-URL gateway. It sits between your AI coding tool and the model provider, detects and redacts sensitive content before a request leaves the machine, and exposes a metadata-only audit seam.
 
 ## Goals and non-goals
 
 **Goals**
 
 - Detect and redact sensitive content (keys, `.env` values, PII) before a request leaves the machine.
-- Provide a **local audit timeline** that records metadata only by default.
+- Expose a **metadata-only audit seam** that private builds can wire to a local audit store; the core itself stores no audit data.
 - Onboard tools that accept a `*_BASE_URL` or custom endpoint with **zero configuration friction**.
 - Run **cross-platform** on Windows, Linux, and macOS.
 - Process everything locally: **data never leaves the device**.
@@ -30,7 +30,7 @@ Tokenhush is a local base-URL gateway. It sits between your AI coding tool and t
 flowchart LR
   Tool["AI coding tool<br/>Claude Code, Codex, Aider, Cline, ..."]
   Up["Model provider<br/>Anthropic, OpenAI, ..."]
-  Store["Local audit<br/>SQLite, metadata + HMAC chain"]
+  Store["Audit seam<br/>store in Pro"]
 
   subgraph GW["tokenhush local gateway"]
     direction TB
@@ -61,12 +61,12 @@ flowchart LR
 | `pkg/proxy` | Local HTTP reverse proxy: listener, upstream routing, SSE passthrough, lifecycle |
 | `pkg/redact` | Detectors (deterministic rules) + placeholder generation/mapping + backfill |
 | `pkg/protocol` | Protocol-agnostic JSON leaf walk; incremental SSE parsing; recursive handling of double-encoded JSON in tool calls |
-| `pkg/audit` | Append-only SQLite + HMAC hash chain; metadata only; retention policy |
+| `pkg/audit` | Audit seam: `Record` / `Query` types and the `AuditSink` / `AuditQuerier` interfaces plus a no-op sink; the concrete store is in the private Pro layer |
 | `pkg/config` | Configuration loading and defaults (`tokenhush.yaml`) |
 | `pkg/platform` | Cross-platform abstraction: paths, keyring, service. Exported for reuse by the private Pro repository |
 | `pkg/extension` | Content plugin interfaces (Inspector / Transformer / Registry) plus cross-layer extension points (see `extension-api.md`, `plugins.md`) |
 | `pkg/license` | Read-only Pro license validation and display (isolated, fuzz-tested) |
-| `cmd/tokenhush` | Free CLI: `run` (foreground gateway), `status`, `audit`, `env` (print setup snippets), `doctor`, `version`, plus the control-plane API |
+| `cmd/tokenhush` | Free CLI: `run` (foreground gateway), `status`, `env` (print setup snippets), `doctor`, `version`, plus the control-plane API |
 
 ## Key design decisions
 
@@ -92,11 +92,12 @@ Deterministic rules with **high precision first**: known key prefixes (`sk-`, `A
 
 ## Open-core boundary
 
-The public core (this repository, Apache-2.0) provides capabilities that are **fully usable for a single user**: proxy, redaction, audit, CLI, and the extension-point interfaces.
+The public core (this repository, Apache-2.0) provides capabilities that are **fully usable for a single user**: proxy, redaction, the metadata-only audit seam, CLI, and the extension-point interfaces.
 
 The private Pro repository builds paid binaries by importing this repository's Go module. It provides:
 
 - System extension / MITM power mode (on the closed-source macOS app side)
+- Concrete local audit store (persistence, tamper-evident HMAC chain, retention), the `audit` subcommand, and the audit control endpoint
 - Multi-provider / multi-account routing
 - Cost tracking
 - Team audit export / SSO
@@ -109,7 +110,7 @@ The private Pro repository builds paid binaries by importing this repository's G
 
 | Stage | Capability | Channel |
 |---|---|---|
-| V1 | base-URL gateway: content-level redaction + audit (covers CLI/IDE tools) | Open-source core + free CLI |
+| V1 | base-URL gateway: content-level redaction + metadata-only audit seam (concrete store in Pro) | Open-source core + free CLI |
 | V2 | System-extension metadata mode: domain/process-level interception + audit (**no CA**) | Pro (direct download) |
 | V3 | Transparent proxy + local CA: content-level redaction covering Cursor/browser/desktop apps | Pro (explicit opt-in) |
 

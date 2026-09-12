@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-> A local gateway that redacts secrets and sensitive data from your AI coding tools' requests before they reach the model. Audit everything. Leak nothing. 100% local.
+> A local gateway that redacts secrets and sensitive data from your AI coding tools' requests before they reach the model. Catch every secret. Leak nothing. 100% local.
 
 [![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
@@ -10,7 +10,7 @@
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#supported-tools)
 
-Tokenhush is a local base-URL gateway that sits between your AI coding tools and the cloud model. Point Claude Code, Codex CLI, Aider, Cline, Roo Code, Continue, or any OpenAI-compatible client at `127.0.0.1`, and it detects and redacts sensitive content before the request leaves your machine. Every request also lands in a local audit timeline that stays on your disk.
+Tokenhush is a local base-URL gateway that sits between your AI coding tools and the cloud model. Point Claude Code, Codex CLI, Aider, Cline, Roo Code, Continue, or any OpenAI-compatible client at `127.0.0.1`, and it detects and redacts sensitive content before the request leaves your machine. The core exposes a metadata-only audit seam; the concrete local audit store (persistence, tamper-evident chain, retention) lives in the private Pro layer.
 
 [Features](#features) · [Installation](#installation) · [Quick start](#quick-start) · [CLI](#cli) · [Documentation](#documentation) · [Contributing](#contributing)
 
@@ -25,7 +25,7 @@ Tokenhush adds one local gate in front of those tools. It sees the request, cont
 - **Full-body outbound redaction.** A fixed allowlist of fields is not enough, so every request body is walked leaf by leaf. A protocol-agnostic JSON traversal covers nested structures, and SSE incremental backfill keeps streaming responses covered as they arrive.
 - **Six deterministic detectors.** Known key prefixes (`sk-`, `AKIA`, `ghp_`, and more), high-entropy strings, JWTs, PEM private-key headers, Luhn card numbers, and email addresses.
 - **HMAC-deterministic placeholders.** A match becomes a stable token such as `__PII_email_9f2c8a4b6d1e__`. The mapping is HMAC-derived, held in memory, and scoped to the session. A restart loses the mapping, so you may occasionally see a placeholder in output. That is safe degradation, not a leak.
-- **Metadata-only local audit.** Each request appends a metadata record linked by an HMAC hash chain, so tampering is detectable. Content logging is off by default and requires explicit opt-in plus encryption.
+- **Metadata-only audit seam.** The core defines the audit interfaces (`AuditSink` / `AuditQuerier`) and a no-op default; a record carries metadata such as provider, path, byte counts, and detector hits. The concrete local store (persistence, tamper-evident HMAC chain, retention) is implemented in the private Pro layer, not in this repository.
 - **Dual-stack loopback with guards.** The gateway binds `127.0.0.1` and `[::1]` only. A Host allowlist is always enforced, an Origin check applies to browser-style requests, and the control API requires a bearer token stored with `0600` permissions.
 - **`tokenhush env` onboarding.** Prints copy-paste setup snippets for `claude`, `codex`, `aider`, `cline`, and `roo`.
 - **`tokenhush doctor` diagnostics.** Runs common setup checks with clear exit codes: `0` when nothing fails, `1` on a failed check, `2` on a usage error.
@@ -41,13 +41,13 @@ flowchart LR
     B -->|redacted request| C["Cloud model"]
     C -->|response with placeholders| B
     B -->|response with originals| A
-    B -->|metadata only| D["Local audit timeline"]
+    B -->|metadata only| D["Audit seam<br/>(store in Pro)"]
 ```
 
 - **Outbound request:** the gateway walks the full JSON body and runs all six detectors. Matches become session-scoped placeholders, and the redacted request is forwarded upstream.
 - **Streaming responses:** SSE chunks are refilled incrementally, so placeholders that arrive mid-stream map back to their originals.
 - **Inbound response:** placeholders are replaced with the original values, and only the client receives them.
-- **Local audit:** the gateway records metadata such as provider, path, byte counts, and detector hits. Content stays out unless you opt in.
+- **Audit seam:** the gateway sends metadata such as provider, path, byte counts, and detector hits to an injected audit sink. The default sink is a no-op, and the private Pro layer supplies the concrete store; the seam never records content.
 
 > [!IMPORTANT]
 > The hard invariant is that placeholders are **never** backfilled in the outbound direction. Only the client gets originals. This blocks prompt-injection attempts that try to trick the gateway into echoing a secret back to the model.
@@ -126,7 +126,6 @@ tokenhush status
 <!-- check-docs:commands:start -->
     tokenhush run          start the gateway in the foreground
     tokenhush status       show whether the gateway is running
-    tokenhush audit        show the local audit timeline
     tokenhush env <tool>   print tool setup snippets
     tokenhush doctor       diagnose common setup problems
     tokenhush version      print version and build information
@@ -137,7 +136,6 @@ tokenhush status
 |---|---|---|
 | `tokenhush run` | Start the gateway in the foreground. | `--config PATH`, `--port N` (1..65535), `--log-level debug\|info\|warn\|error` |
 | `tokenhush status` | Show whether the gateway is running. | `--json` |
-| `tokenhush audit` | Show the local audit timeline. | `--json`, `--limit N` (1..1000, default 20) |
 | `tokenhush env <tool>` | Print tool setup snippets. Tools: `claude`, `codex`, `aider`, `cline`, `roo`. | `--config PATH`, `--port N` |
 | `tokenhush doctor` | Diagnose common setup problems. Exits `0` when no check fails, `1` on any failure, `2` on a usage error. | `--config PATH`, `--port N`, `--json` |
 | `tokenhush version` | Print version and build information. | none |
@@ -147,7 +145,7 @@ tokenhush status
 
 ### Control API
 
-The control plane listens on loopback and requires a bearer token. `GET /status` returns JSON with `state`, `addrs`, `uptime_ms`, `requests`, and `redactions`. `GET /audit` returns a JSON array and accepts `since`, `until` (unix ms), `provider`, and `limit` (clamped to 1000) query parameters. Both require `Authorization: Bearer <token>`. The token is generated per `run` and stored with `0600` permissions in the data directory. Requests carrying an `Origin` get an origin check, and a Host allowlist is always enforced.
+The control plane listens on loopback and requires a bearer token. `GET /status` returns JSON with `state`, `addrs`, `uptime_ms`, `requests`, and `redactions`, and requires `Authorization: Bearer <token>`. The token is generated per `run` and stored with `0600` permissions in the data directory. Requests carrying an `Origin` get an origin check, and a Host allowlist is always enforced. The core control plane exposes only `GET /status`; the private Pro layer adds its own audit endpoint.
 
 ## Configuration
 
@@ -166,15 +164,16 @@ Data lives separately: macOS uses `~/Library/Application Support/tokenhush/`, Li
 | `listen` | `host` (only `127.0.0.1`, `::1`, or `localhost`; `0.0.0.0` is rejected) and `port` (1..65535, default 8787) |
 | `detectors` | Enable or disable the six detectors: `prefixes`, `high_entropy`, `jwt`, `private_keys`, `luhn`, `email` |
 | `allowlist` | Literals that are never redacted |
-| `audit` | `enabled` and `retention_days` (>= 1) |
 | `log` | `level`: `debug`, `info`, `warn`, or `error` |
 | `upstreams` | Map a host or path prefix to your own OpenAI-compatible upstream |
+
+> The `audit` key is no longer part of the core config. A config that still contains an `audit:` block fails to load with an actionable migration error; see [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md).
 
 Unmatched routes fall back to built-ins: `/v1/messages` goes to Anthropic, and `/v1/chat/completions` and `/v1/responses` go to OpenAI. See [docs/configuration.md](docs/configuration.md) for the full reference.
 
 ## Security model
 
-Tokenhush binds loopback only, enforces a Host allowlist, and keeps its audit store metadata-only by default. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. See [docs/security.md](docs/security.md) for the threat model and full invariants.
+Tokenhush binds loopback only, enforces a Host allowlist, and routes audit through a metadata-only seam that stores no content. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. See [docs/security.md](docs/security.md) for the threat model and full invariants.
 
 ## Documentation
 
@@ -187,11 +186,12 @@ Tokenhush binds loopback only, enforces a Host allowlist, and keeps its audit st
 | [docs/security.md](docs/security.md) | Security model, threat model, and hard invariants |
 | [docs/plugins.md](docs/plugins.md) | Writing content plugins (`Inspector` / `Transformer`) |
 | [docs/extension-api.md](docs/extension-api.md) | Extension interfaces (`Router`, `CostSink`, `AuditExporter`) |
+| [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute |
 
 ## Project status
 
-V1 is released as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)). It includes `tokenhush run` (foreground gateway with dual-stack loopback), `status`, `audit`, `env <tool>`, `doctor`, and `version`, plus a local audit store backed by SQLite with an HMAC chain. The code is pure Go with `CGO_ENABLED=0`, and CI runs unit tests and an end-to-end smoke test on Linux, macOS, and Windows.
+The V1 core shipped as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)). The `v0.2.0` line keeps `tokenhush run` (foreground gateway with dual-stack loopback), `status`, `env <tool>`, `doctor`, and `version`, plus the metadata-only audit seam. The concrete audit store, the `audit` subcommand, and the `/audit` control endpoint moved to the private Pro layer, so a config that still carries an `audit:` block must be migrated (see [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md)). The code is pure Go with `CGO_ENABLED=0`, and CI runs unit tests and an end-to-end smoke test on Linux, macOS, and Windows.
 
 ## Open-core boundary
 

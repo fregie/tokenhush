@@ -72,7 +72,8 @@ var ErrNilPolicy = errors.New("extension: nil policy")
 // default timeout, and every plugin FailOpenWarn.
 type PolicyConfig struct {
 	// Sink receives plugin-failure audit warnings. A nil Sink means
-	// audit.NoopSink{}, the seam default until W5.3 wires the real store.
+	// audit.NoopSink{}, the seam default; the private Pro layer injects the
+	// concrete store.
 	Sink audit.AuditSink
 	// Timeout bounds each plugin invocation. A value <= 0 means
 	// DefaultPluginTimeout.

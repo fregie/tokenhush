@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> 一个本地网关，在你的 AI 编码工具请求到达模型之前，对其中包含的密钥和敏感数据进行脱敏。全程审计。零泄露。100% 本地。
+> 一个本地网关，在你的 AI 编码工具请求到达模型之前，对其中包含的密钥和敏感数据进行脱敏。拦截每个密钥。零泄露。100% 本地。
 
 [![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
@@ -10,7 +10,7 @@
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#支持的工具)
 
-Tokenhush 是一个本地 base-URL 网关，位于你的 AI 编码工具与云端模型之间。把 Claude Code、Codex CLI、Aider、Cline、Roo Code、Continue 或任何 OpenAI 兼容客户端指向 `127.0.0.1`，它就会在请求离开你的机器之前检测并脱敏其中的敏感内容。每个请求还会写入一条留在你磁盘上的本地审计时间线。
+Tokenhush 是一个本地 base-URL 网关，位于你的 AI 编码工具与云端模型之间。把 Claude Code、Codex CLI、Aider、Cline、Roo Code、Continue 或任何 OpenAI 兼容客户端指向 `127.0.0.1`，它就会在请求离开你的机器之前检测并脱敏其中的敏感内容。核心提供仅元数据的审计接缝；具体的本地审计存储（持久化、防篡改链、保留策略）位于私有 Pro 层。
 
 [功能特性](#功能特性) · [安装](#安装) · [快速开始](#快速开始) · [CLI](#cli) · [文档](#文档) · [贡献](#贡献)
 
@@ -25,7 +25,7 @@ Tokenhush 在这些工具前加了一道本地关卡。它能看到请求、控�
 - **全量请求体外发脱敏。** 固定字段白名单还不够，因此每个请求体都会逐叶遍历。协议无关的 JSON 遍历可覆盖嵌套结构，SSE 增量回填让流式响应在到达过程中始终受到保护。
 - **六个确定性检测器。** 已知密钥前缀（`sk-`、`AKIA`、`ghp_` 等）、高熵字符串、JWT、PEM 私钥头、Luhn 卡号以及邮箱地址。
 - **HMAC 确定性占位符。** 命中项会变成稳定令牌，例如 `__PII_email_9f2c8a4b6d1e__`。映射由 HMAC 派生，保存在内存中，作用域为当前会话。重启会丢失映射，因此你可能偶尔在输出里看到占位符。这是安全降级，不是泄露。
-- **仅元数据的本地审计。** 每个请求追加一条元数据记录，并用 HMAC 哈希链串联，因此可检测篡改。内容日志默认关闭，需要显式启用并加密。
+- **仅元数据的审计接缝。** 核心定义审计接口（`AuditSink` / `AuditQuerier`）和默认的 no-op 实现；一条记录携带提供方、路径、字节数、检测器命中等元数据。具体的本地存储（持久化、防篡改 HMAC 链、保留策略）在私有 Pro 层实现，不在本仓库中。
 - **带防护的双栈环回。** 网关仅绑定 `127.0.0.1` 和 `[::1]`。始终强制执行 Host 白名单，浏览器风格的请求还会做 Origin 检查，控制面 API 需要以 `0600` 权限存储的 bearer token。
 - **`tokenhush env` 引导。** 为 `claude`、`codex`、`aider`、`cline` 和 `roo` 打印可复制粘贴的配置片段。
 - **`tokenhush doctor` 诊断。** 运行常见配置检查，并提供清晰的退出码：无检查失败时为 `0`，检查失败时为 `1`，用法错误时为 `2`。
@@ -41,13 +41,13 @@ flowchart LR
     B -->|脱敏后的请求| C["云端模型"]
     C -->|带占位符的响应| B
     B -->|还原原文的响应| A
-    B -->|仅元数据| D["本地审计时间线"]
+    B -->|仅元数据| D["审计接缝<br/>（存储在 Pro）"]
 ```
 
 - **外发请求：** 网关遍历完整 JSON 请求体并运行全部六个检测器。命中项变成会话级占位符，脱敏后的请求随后转发到上游。
 - **流式响应：** SSE 分块会增量回填，因此流中途到达的占位符能映射回其原文。
 - **入站响应：** 占位符被替换为原始值，且只有客户端会收到它们。
-- **本地审计：** 网关记录提供方、路径、字节数、检测器命中等元数据。除非你主动启用，否则内容不会留存。
+- **审计接缝：** 网关把提供方、路径、字节数、检测器命中等元数据发送到注入的审计 sink。默认 sink 是 no-op，私有 Pro 层提供具体存储；该接缝绝不记录内容。
 
 > [!IMPORTANT]
 > 硬性不变量是：占位符**绝不**在外发方向回填。只有客户端会拿到原文。这能阻止提示注入试图诱骗网关把密钥回显给模型。
@@ -126,7 +126,6 @@ tokenhush status
 <!-- check-docs:commands:start -->
     tokenhush run          在前台启动网关
     tokenhush status       显示网关是否正在运行
-    tokenhush audit        显示本地审计时间线
     tokenhush env <tool>   打印工具配置片段
     tokenhush doctor       诊断常见配置问题
     tokenhush version      打印版本与构建信息
@@ -137,7 +136,6 @@ tokenhush status
 |---|---|---|
 | `tokenhush run` | 在前台启动网关。 | `--config PATH`、`--port N`（1..65535）、`--log-level debug\|info\|warn\|error` |
 | `tokenhush status` | 显示网关是否正在运行。 | `--json` |
-| `tokenhush audit` | 显示本地审计时间线。 | `--json`、`--limit N`（1..1000，默认 20） |
 | `tokenhush env <tool>` | 打印工具配置片段。工具：`claude`、`codex`、`aider`、`cline`、`roo`。 | `--config PATH`、`--port N` |
 | `tokenhush doctor` | 诊断常见配置问题。无检查失败时退出码为 `0`，任一项失败为 `1`，用法错误为 `2`。 | `--config PATH`、`--port N`、`--json` |
 | `tokenhush version` | 打印版本与构建信息。 | 无 |
@@ -147,7 +145,7 @@ tokenhush status
 
 ### 控制面 API
 
-控制面在环回地址上监听，并需要 bearer token。`GET /status` 返回包含 `state`、`addrs`、`uptime_ms`、`requests` 和 `redactions` 的 JSON。`GET /audit` 返回 JSON 数组，并接受 `since`、`until`（毫秒 Unix 时间戳）、`provider` 和 `limit`（上限 1000）查询参数。两者都需要 `Authorization: Bearer <token>`。令牌按每次 `run` 生成，并以 `0600` 权限存储在数据目录中。携带 `Origin` 的请求会进行源检查，且始终强制执行 Host 白名单。
+控制面在环回地址上监听，并需要 bearer token。`GET /status` 返回包含 `state`、`addrs`、`uptime_ms`、`requests` 和 `redactions` 的 JSON，且需要 `Authorization: Bearer <token>`。令牌按每次 `run` 生成，并以 `0600` 权限存储在数据目录中。携带 `Origin` 的请求会进行源检查，且始终强制执行 Host 白名单。核心控制面只暴露 `GET /status`；私有 Pro 层会添加自己的审计端点。
 
 ## 配置
 
@@ -166,15 +164,16 @@ Tokenhush 读取 `tokenhush.yaml`。文件缺失时使用默认值，未知键�
 | `listen` | `host`（仅 `127.0.0.1`、`::1` 或 `localhost`；`0.0.0.0` 会被拒绝）和 `port`（1..65535，默认 8787） |
 | `detectors` | 启用或禁用六个检测器：`prefixes`、`high_entropy`、`jwt`、`private_keys`、`luhn`、`email` |
 | `allowlist` | 永不脱敏的字面量 |
-| `audit` | `enabled` 和 `retention_days`（>= 1） |
 | `log` | `level`：`debug`、`info`、`warn` 或 `error` |
 | `upstreams` | 将主机或路径前缀映射到你自己的 OpenAI 兼容上游 |
+
+> `audit` 键不再是核心配置的一部分。仍包含 `audit:` 块的配置会加载失败，并给出可操作的迁移错误；见 [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md)。
 
 未匹配的路由回退到内置规则：`/v1/messages` 走 Anthropic，`/v1/chat/completions` 和 `/v1/responses` 走 OpenAI。完整参考见 [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)。
 
 ## 安全模型
 
-Tokenhush 仅绑定环回地址，强制执行 Host 白名单，并默认将审计存储保持为仅元数据。它绝不在外发方向回填占位符，不附带根证书，也不做 MITM，并选择失败安全而非失败开放。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)。
+Tokenhush 仅绑定环回地址，强制执行 Host 白名单，并通过仅元数据的接缝路由审计、不存储任何内容。它绝不在外发方向回填占位符，不附带根证书，也不做 MITM，并选择失败安全而非失败开放。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)。
 
 ## 文档
 
@@ -187,11 +186,12 @@ Tokenhush 仅绑定环回地址，强制执行 Host 白名单，并默认将审�
 | [docs/security.zh-CN.md](docs/security.zh-CN.md) | 安全模型、威胁模型和硬性不变量 |
 | [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`） |
 | [docs/extension-api.zh-CN.md](docs/extension-api.zh-CN.md) | 扩展接口（`Router`、`CostSink`、`AuditExporter`） |
+| [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
 | [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) | 如何构建、测试和贡献 |
 
 ## 项目状态
 
-V1 已发布为 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）。它包含 `tokenhush run`（带双栈环回的前台网关）、`status`、`audit`、`env <tool>`、`doctor` 和 `version`，以及一个由 SQLite 支撑、带 HMAC 链的本地审计存储。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS 和 Windows 上运行单元测试和端到端冒烟测试。
+V1 核心已作为 **`v0.1.0`** 发布（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）。`v0.2.0` 线保留 `tokenhush run`（带双栈环回的前台网关）、`status`、`env <tool>`、`doctor` 和 `version`，以及仅元数据的审计接缝。具体审计存储、`audit` 子命令和 `/audit` 控制端点已移至私有 Pro 层，因此仍携带 `audit:` 块的配置必须迁移（见 [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md)）。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS 和 Windows 上运行单元测试和端到端冒烟测试。
 
 ## 开源核心边界
 

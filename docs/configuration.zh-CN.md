@@ -98,9 +98,6 @@ detectors:
   luhn: true           # 卡号（Luhn）
   email: true          # 电子邮件地址
 allowlist: []          # 永不脱敏的字面量
-audit:
-  enabled: true        # 本地审计（默认仅元数据）
-  retention_days: 14   # >= 1（建议范围 7-30）
 log:
   level: info          # debug | info | warn | error
 upstreams:             # 主机或路径前缀 -> 上游基础 URL
@@ -114,7 +111,7 @@ upstreams:             # 主机或路径前缀 -> 上游基础 URL
 - 六个检测器是确定性的，并为高精度而调优：已知密钥前缀、高熵字符串、JWT、PEM 私钥头、Luhn 卡号、电子邮件。
 - 有两个 YAML 键有意与其检测器 id 不同：`prefixes` 映射到 id `prefix`，`private_keys` 映射到 id `private_key`（见 `pkg/config` 注释）。
 - `allowlist` 保存永不脱敏的字面量。
-- `audit.enabled` 和 `audit.retention_days` 控制本地审计时间线，默认仅元数据。
+- 核心配置中没有 `audit:` 块。审计配置已移至私有 Pro 层；仍包含 `audit:` 的配置会加载失败，并给出可操作的迁移错误。见 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。
 - `upstreams:` 将主机或路径前缀转发到你自己的 OpenAI 兼容上游。未匹配的请求回退到内置路由：`/v1/messages` 路由到 Anthropic；`/v1/chat/completions` 和 `/v1/responses` 路由到 OpenAI。未知路径会返回明确错误，绝不会被静默地错误路由。
 
 ## 已知限制
@@ -138,4 +135,4 @@ tokenhush env claude    # 打印设置片段，包含当前端口
 <!-- check-docs:commands:end -->
 ```
 
-`run` 启动时会打印监听地址和控制 token 文件路径。`tokenhush status` 报告网关是否在运行，`tokenhush audit [--json]` 读取本地审计时间线。`env` 和 `doctor` 都接受 `--config PATH` 和 `--port N`，因此自检会匹配你实际启动的网关。控制面（`GET /status`、`GET /audit`）需要 bearer token，该 token 在每次 `run` 时重新生成。
+`run` 启动时会打印监听地址和控制 token 文件路径。`tokenhush status` 报告网关是否在运行。`env` 和 `doctor` 都接受 `--config PATH` 和 `--port N`，因此自检会匹配你实际启动的网关。控制面暴露 `GET /status`，并需要 bearer token，该 token 在每次 `run` 时重新生成。具体审计存储、`audit` 子命令和审计端点位于私有 Pro 层。

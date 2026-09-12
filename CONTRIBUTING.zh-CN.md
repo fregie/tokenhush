@@ -8,7 +8,7 @@
 
 ## 当前优先级
 
-V1 核心已在 Windows、Linux 和 macOS 上实现（`run` / `status` / `audit` / `env` / `doctor` / `version`）。目前最有价值的贡献：
+V1 核心已在 Windows、Linux 和 macOS 上实现（`run` / `status` / `env` / `doctor` / `version`）。目前最有价值的贡献：
 
 - 关于各 AI 工具如何通过 base URL 连接的反馈，以及你遇到的坑（见 `docs/configuration.zh-CN.md`）。
 - 漏报脱敏（假阴性）和过度脱敏（假阳性）的报告，以及安全和隐私风险。

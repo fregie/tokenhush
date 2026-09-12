@@ -258,9 +258,9 @@ A plugin that implements both Inspector and Transformer is validated under the *
 
 ## Failure strategy
 
-- The default is `FailOpenWarn`: on error, timeout, or panic the core drops the plugin's findings, records an audit warning, and lets the request continue.
+- The default is `FailOpenWarn`: on error, timeout, or panic the core drops the plugin's findings, emits an audit warning through the injected `AuditSink` seam, and lets the request continue.
 - `FailClosed`: for critical detectors, a failure rejects the request (returns `Block`). The built-in detectors use this stricter setting.
-- Under either policy, **a failure always leaves an audit warning**. Nothing is swallowed silently.
+- Under either policy, **a failure always emits an audit warning through the seam**. Nothing is swallowed silently. The core default sink is a no-op; the private Pro layer persists the warning.
 
 ## Testing your plugin
 

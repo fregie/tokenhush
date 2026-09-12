@@ -98,9 +98,6 @@ detectors:
   luhn: true           # card numbers (Luhn)
   email: true          # email addresses
 allowlist: []          # literals that are never redacted
-audit:
-  enabled: true        # local audit (metadata only by default)
-  retention_days: 14   # >= 1 (7-30 is the suggested range)
 log:
   level: info          # debug | info | warn | error
 upstreams:             # host or path prefix -> upstream base URL
@@ -114,7 +111,7 @@ Key points:
 - The six detectors are deterministic and tuned for high precision: known key prefixes, high-entropy strings, JWT, PEM private-key headers, Luhn card numbers, and email.
 - Two YAML keys deliberately differ from their detector id: `prefixes` maps to id `prefix`, and `private_keys` maps to id `private_key` (see the `pkg/config` comments).
 - `allowlist` holds literals that are never redacted.
-- `audit.enabled` and `audit.retention_days` control the local audit timeline, which is metadata-only by default.
+- There is no `audit:` block in the core config. Audit configuration moved to the private Pro layer; a config that still contains `audit:` fails to load with an actionable migration error. See [migration-v0.2.0.md](migration-v0.2.0.md).
 - `upstreams:` forwards a host or path prefix to your own OpenAI-compatible upstream. Unmatched requests fall back to the built-ins: `/v1/messages` routes to Anthropic; `/v1/chat/completions` and `/v1/responses` route to OpenAI. An unknown path returns an explicit error and is never silently misrouted.
 
 ## Known limitations
@@ -138,4 +135,4 @@ tokenhush env claude    # print the setup snippet, including the current port
 <!-- check-docs:commands:end -->
 ```
 
-`run` prints the listening address and the control-token file path when it starts. `tokenhush status` reports whether the gateway is running, and `tokenhush audit [--json]` reads the local audit timeline. Both `env` and `doctor` accept `--config PATH` and `--port N`, so a self-check matches the gateway you actually started. The control plane (`GET /status`, `GET /audit`) requires the bearer token, which is regenerated on every `run`.
+`run` prints the listening address and the control-token file path when it starts. `tokenhush status` reports whether the gateway is running. `env` and `doctor` accept `--config PATH` and `--port N`, so a self-check matches the gateway you actually started. The control plane exposes `GET /status` and requires the bearer token, which is regenerated on every `run`. The concrete audit store, the `audit` subcommand, and the audit endpoint live in the private Pro layer.
