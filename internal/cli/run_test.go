@@ -289,7 +289,7 @@ func TestRunServerControlGuards(t *testing.T) {
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), Secrets: newStubSecrets()})
-	defer stop()
+	defer func() { _ = stop() }()
 
 	if got := doGet(t, base+"/status", "", "").StatusCode; got != http.StatusUnauthorized {
 		t.Errorf("control without token = %d, want 401", got)
@@ -347,7 +347,7 @@ func TestRunServerFailClosedOnDetectorTimeout(t *testing.T) {
 			cfg.Listen.Port = 0
 			cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 			base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), Secrets: newStubSecrets(), PolicyTimeout: tt.timeout})
-			defer stop()
+			defer func() { _ = stop() }()
 
 			secret := runSecret()
 			body := fmt.Sprintf(`{"model":"test","messages":[{"role":"user","content":%q}]}`,

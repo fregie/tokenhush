@@ -166,7 +166,7 @@ func TestNoPlaintextInLogs(t *testing.T) {
 			}
 
 			base, _, stop := startTestDaemon(t, &cfg, deps)
-			defer stop()
+			defer func() { _ = stop() }()
 
 			// The body carries the secret so both paths process real content: the
 			// success path redacts it, the fail-closed path blocks before egress.
