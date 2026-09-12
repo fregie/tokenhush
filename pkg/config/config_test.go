@@ -27,12 +27,6 @@ func TestDefaultExactValues(t *testing.T) {
 	if cfg.Listen.Port != 8787 {
 		t.Errorf("listen.port = %d, want 8787", cfg.Listen.Port)
 	}
-	if !cfg.Audit.Enabled {
-		t.Error("audit.enabled = false, want true")
-	}
-	if cfg.Audit.RetentionDays != 14 {
-		t.Errorf("audit.retention_days = %d, want 14", cfg.Audit.RetentionDays)
-	}
 	if cfg.Log.Level != "info" {
 		t.Errorf("log.level = %q, want info", cfg.Log.Level)
 	}
@@ -100,9 +94,6 @@ func TestLoadFilePartialConfigKeepsDefaults(t *testing.T) {
 	d := cfg.Detectors
 	if !d.Prefix || !d.HighEntropy || !d.PrivateKey || !d.Luhn || !d.Email {
 		t.Errorf("detectors = %+v, want only jwt disabled", d)
-	}
-	if cfg.Audit.RetentionDays != 14 {
-		t.Errorf("audit.retention_days = %d, want default 14", cfg.Audit.RetentionDays)
 	}
 }
 

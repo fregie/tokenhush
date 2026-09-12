@@ -24,7 +24,6 @@ const usage = `tokenhush - local base-URL gateway that redacts secrets before th
 usage:
   tokenhush run      start the gateway in the foreground
   tokenhush status   show whether the gateway is running
-  tokenhush audit    show the local audit timeline
   tokenhush env <tool>  print tool setup snippets
   tokenhush doctor   diagnose common setup problems
   tokenhush version  print version and build information
@@ -53,8 +52,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		// W6.7 seam: statusCommand renders the read-only Pro badge when a
 		// valid license file is present by calling proLicenseBadge().
 		return statusCommand(args[1:], stdout, stderr)
-	case "audit":
-		return auditCommand(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "tokenhush: unknown command %q\n", args[0])
 		fmt.Fprint(stderr, usage)

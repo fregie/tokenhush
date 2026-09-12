@@ -2,24 +2,19 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/fregie/tokenhush/pkg/audit"
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
@@ -61,19 +56,17 @@ func freeLoopbackPort(t *testing.T) int {
 }
 
 // controlStub is a minimal control-plane double: it enforces the bearer token,
-// records what the CLI sent and serves the canned bodies for /status and
-// /audit. It deliberately skips the production guards so a unit test can pin
-// client behavior (headers, query, parsing) without the full daemon.
+// records what the CLI sent and serves the canned body for /status. It
+// deliberately skips the production guards so a unit test can pin client
+// behavior (headers, parsing) without the full daemon.
 type controlStub struct {
 	token  string
 	code   int
 	status string
-	audit  string
 
-	mu     sync.Mutex
-	paths  []string
-	auths  []string
-	limits []string
+	mu    sync.Mutex
+	paths []string
+	auths []string
 }
 
 // ServeHTTP implements the stub contract.
@@ -81,7 +74,6 @@ func (s *controlStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.paths = append(s.paths, r.URL.Path)
 	s.auths = append(s.auths, r.Header.Get("Authorization"))
-	s.limits = append(s.limits, r.URL.Query().Get("limit"))
 	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -94,9 +86,6 @@ func (s *controlStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case controlStatusPath:
 		w.WriteHeader(s.code)
 		_, _ = io.WriteString(w, s.status)
-	case controlAuditPath:
-		w.WriteHeader(s.code)
-		_, _ = io.WriteString(w, s.audit)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
@@ -112,16 +101,6 @@ func (s *controlStub) sawAuth(value string) bool {
 		}
 	}
 	return false
-}
-
-// lastLimit returns the limit query parameter of the most recent request.
-func (s *controlStub) lastLimit() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.limits) == 0 {
-		return ""
-	}
-	return s.limits[len(s.limits)-1]
 }
 
 // newControlStub serves the stub on an ephemeral loopback port and returns it.
@@ -140,28 +119,17 @@ func newControlStub(t *testing.T, s *controlStub) int {
 	return port
 }
 
-// findAuditPath returns the first record whose path equals path.
-func findAuditPath(records []audit.Record, path string) *audit.Record {
-	for i := range records {
-		if records[i].Path == path {
-			return &records[i]
-		}
-	}
-	return nil
-}
-
-// TestStatusAudit locks the W6.3 contract: `status` and `audit` read the
-// daemon's control API with the per-session bearer token, render metadata only,
-// offer parseable `--json`, and degrade safely for every adversarial class (no
+// TestStatusAudit locks the W6.3 contract: `status` reads the daemon's control
+// API with the per-session bearer token, renders metadata only, offers
+// parseable `--json`, and degrades safely for every adversarial class (no
 // session, stale session, missing token, malformed state/response, wrong
-// token, out-of-range limit).
+// token).
 func TestStatusAudit(t *testing.T) {
 	const (
 		statusToken = "tok-status-7d1f"
-		auditToken  = "tok-audit-3c9a"
 	)
 
-	t.Run("live_daemon_status_and_audit", func(t *testing.T) {
+	t.Run("live_daemon_status", func(t *testing.T) {
 		upstream := &echoUpstream{}
 		upstreamSrv := httptest.NewServer(upstream)
 		defer upstreamSrv.Close()
@@ -174,7 +142,7 @@ func TestStatusAudit(t *testing.T) {
 		cfg.Listen.Port = 0
 		cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 
-		base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir, Secrets: newStubSecrets()})
+		base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 		defer func() { _ = stop() }()
 
 		// One real request through the data plane, carrying a synthetic secret
@@ -192,10 +160,6 @@ func TestStatusAudit(t *testing.T) {
 		upstreamBody := upstream.received()
 		if bytes.Contains(upstreamBody, []byte(secret)) {
 			t.Fatalf("upstream received the raw secret: %q", upstreamBody)
-		}
-		placeholder := runPlaceholderRe.Find(upstreamBody)
-		if placeholder == nil {
-			t.Fatalf("upstream body has no placeholder: %q", upstreamBody)
 		}
 
 		// status (text): running, address and session counters.
@@ -240,53 +204,6 @@ func TestStatusAudit(t *testing.T) {
 		}
 		if view.Requests < 1 || view.Redactions < 1 {
 			t.Fatalf("status --json counters = requests %d redactions %d, want >= 1 each", view.Requests, view.Redactions)
-		}
-
-		// audit (text): the audited request is visible as metadata.
-		stdout, stderr, code = cliRun(t, "audit")
-		if code != ExitOK {
-			t.Fatalf("audit code = %d, want %d (stderr=%q)", code, ExitOK, stderr)
-		}
-		if !strings.Contains(stdout, "/v1/messages") {
-			t.Fatalf("audit stdout = %q, want the audited path", stdout)
-		}
-		if strings.Contains(stdout, secret) || strings.Contains(stdout, string(placeholder)) {
-			t.Fatalf("audit text leaked request content: %q", stdout)
-		}
-
-		// audit --json: non-vacuous (the request row exists) and metadata-only.
-		// The per-request row is committed after the response handler returns,
-		// so wait for that append boundary instead of racing it.
-		deadline := time.Now().Add(5 * time.Second)
-		var (
-			records []audit.Record
-			raw     string
-		)
-		for {
-			raw, stderr, code = cliRun(t, "audit", "--json")
-			if code != ExitOK {
-				t.Fatalf("audit --json code = %d, want %d (stderr=%q)", code, ExitOK, stderr)
-			}
-			if err := json.Unmarshal([]byte(raw), &records); err != nil {
-				t.Fatalf("audit --json did not parse: %v (stdout=%q)", err, raw)
-			}
-			if findAuditPath(records, "/v1/messages") != nil {
-				break
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("audited request row never appeared: %q", raw)
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-		row := findAuditPath(records, "/v1/messages")
-		if row.Redactions < 1 {
-			t.Fatalf("audited row = %+v, want at least one redaction (non-vacuous)", *row)
-		}
-		if bytes.Contains([]byte(raw), []byte(secret)) {
-			t.Fatalf("audit --json contains the raw secret bytes")
-		}
-		if bytes.Contains([]byte(raw), placeholder) {
-			t.Fatalf("audit --json contains the placeholder bytes")
 		}
 	})
 
@@ -346,143 +263,6 @@ func TestStatusAudit(t *testing.T) {
 		}
 	})
 
-	t.Run("audit_fake_rows_text_and_json", func(t *testing.T) {
-		stub := &controlStub{
-			token: auditToken,
-			code:  http.StatusOK,
-			audit: `[
-				{"id":1,"ts":1789000000000,"provider":"anthropic","path":"/v1/messages","method":"POST","status":200,"req_bytes":11,"resp_bytes":22,"redactions":1,"detectors":["sk-prefix","email"]},
-				{"id":2,"ts":1789000001000,"provider":"openai","path":"/v1/chat/completions","method":"POST","status":200,"req_bytes":33,"resp_bytes":44,"redactions":0}
-			]`,
-		}
-		port := newControlStub(t, stub)
-		home := t.TempDir()
-		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 7, Port: port}, auditToken)
-
-		stdout, stderr, code := cliRun(t, "audit")
-		if code != ExitOK {
-			t.Fatalf("audit code = %d, want %d (stderr=%q)", code, ExitOK, stderr)
-		}
-		lines := strings.Split(strings.TrimSpace(stdout), "\n")
-		if len(lines) != 3 {
-			t.Fatalf("audit stdout has %d lines, want a header plus 2 rows: %q", len(lines), stdout)
-		}
-		header := strings.Fields(lines[0])
-		if len(header) != 9 {
-			t.Fatalf("audit header = %v, want 9 columns", header)
-		}
-		row := strings.Fields(lines[1])
-		if len(row) != 9 {
-			t.Fatalf("audit row = %v, want 9 columns", row)
-		}
-		wantTime := time.UnixMilli(1789000000000).UTC().Format(time.RFC3339)
-		for i, want := range []string{wantTime, "anthropic", "POST", "/v1/messages", "200", "11", "22", "1", "sk-prefix,email"} {
-			if row[i] != want {
-				t.Fatalf("audit row column %d = %q, want %q (row=%v)", i, row[i], want, row)
-			}
-		}
-		if !stub.sawAuth("Bearer " + auditToken) {
-			t.Fatalf("audit did not send the bearer token")
-		}
-
-		stdout, _, code = cliRun(t, "audit", "--json")
-		if code != ExitOK {
-			t.Fatalf("audit --json code = %d, want %d", code, ExitOK)
-		}
-		var records []audit.Record
-		if err := json.Unmarshal([]byte(stdout), &records); err != nil {
-			t.Fatalf("audit --json did not parse: %v (stdout=%q)", err, stdout)
-		}
-		if len(records) != 2 || records[0].Path != "/v1/messages" || records[1].Path != "/v1/chat/completions" {
-			t.Fatalf("audit --json = %+v, want the two stubbed rows", records)
-		}
-		if len(records[0].Detectors) != 2 || records[0].Detectors[0] != "sk-prefix" {
-			t.Fatalf("audit --json detectors = %v, want [sk-prefix email]", records[0].Detectors)
-		}
-		if records[0].ReqBytes != 11 || records[0].RespBytes != 22 || records[0].Redactions != 1 {
-			t.Fatalf("audit --json row = %+v, want the stubbed metadata", records[0])
-		}
-	})
-
-	t.Run("audit_empty_and_limit_parameter", func(t *testing.T) {
-		stub := &controlStub{token: auditToken, code: http.StatusOK, audit: `[]`}
-		port := newControlStub(t, stub)
-		home := t.TempDir()
-		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 7, Port: port}, auditToken)
-
-		stdout, stderr, code := cliRun(t, "audit")
-		if code != ExitOK || strings.TrimSpace(stdout) != "tokenhush: no audit rows" {
-			t.Fatalf("empty audit = (%q, code %d, stderr %q), want the no-rows line", stdout, code, stderr)
-		}
-		if got := stub.lastLimit(); got != strconv.Itoa(proxy.MaxControlAuditLimit) {
-			t.Fatalf("audit page limit = %q, want the API cap %d", got, proxy.MaxControlAuditLimit)
-		}
-
-		stdout, _, code = cliRun(t, "audit", "--json")
-		if code != ExitOK {
-			t.Fatalf("empty audit --json code = %d, want %d", code, ExitOK)
-		}
-		var records []audit.Record
-		if err := json.Unmarshal([]byte(stdout), &records); err != nil {
-			t.Fatalf("empty audit --json did not parse: %v (stdout=%q)", err, stdout)
-		}
-		if len(records) != 0 {
-			t.Fatalf("empty audit --json = %+v, want an empty array", records)
-		}
-	})
-
-	t.Run("audit_limit_keeps_the_newest_rows", func(t *testing.T) {
-		const total = 30
-		rows := make([]audit.Record, total)
-		for i := range rows {
-			rows[i] = audit.Record{
-				ID:       int64(i + 1),
-				TS:       int64(i+1) * 1000,
-				Provider: "anthropic",
-				Method:   http.MethodPost,
-				Path:     fmt.Sprintf("/row/%02d", i+1),
-			}
-		}
-		body, err := json.Marshal(rows)
-		if err != nil {
-			t.Fatalf("marshal stub rows: %v", err)
-		}
-		stub := &controlStub{token: auditToken, code: http.StatusOK, audit: string(body)}
-		port := newControlStub(t, stub)
-		home := t.TempDir()
-		t.Setenv("TOKENHUSH_HOME", home)
-		seedControlSession(t, home, RunState{PID: 7, Port: port}, auditToken)
-
-		paths := func(stdout string) []string {
-			lines := strings.Split(strings.TrimSpace(stdout), "\n")
-			out := make([]string, 0, len(lines)-1)
-			for _, line := range lines[1:] {
-				out = append(out, strings.Fields(line)[3])
-			}
-			return out
-		}
-
-		stdout, stderr, code := cliRun(t, "audit")
-		if code != ExitOK {
-			t.Fatalf("audit code = %d, want %d (stderr=%q)", code, ExitOK, stderr)
-		}
-		got := paths(stdout)
-		if len(got) != defaultAuditLimit || got[0] != "/row/11" || got[len(got)-1] != "/row/30" {
-			t.Fatalf("default audit window = %v, want the newest %d rows /row/11../row/30", got, defaultAuditLimit)
-		}
-
-		stdout, _, code = cliRun(t, "audit", "--limit", "5")
-		if code != ExitOK {
-			t.Fatalf("audit --limit 5 code = %d, want %d", code, ExitOK)
-		}
-		got = paths(stdout)
-		if len(got) != 5 || got[0] != "/row/26" || got[4] != "/row/30" {
-			t.Fatalf("audit --limit 5 window = %v, want the newest 5 rows /row/26../row/30", got)
-		}
-	})
-
 	t.Run("status_not_running_without_session", func(t *testing.T) {
 		t.Setenv("TOKENHUSH_HOME", t.TempDir())
 
@@ -509,21 +289,6 @@ func TestStatusAudit(t *testing.T) {
 		}
 		if view.Running {
 			t.Fatalf("status --json = %q, want running=false", stdout)
-		}
-
-		stdout, _, code = cliRun(t, "audit")
-		if code != ExitFailure || !strings.Contains(stdout, "gateway not running") {
-			t.Fatalf("audit without a session = (%q, code %d), want the not-running line", stdout, code)
-		}
-		stdout, _, code = cliRun(t, "audit", "--json")
-		if code != ExitFailure {
-			t.Fatalf("audit --json code = %d, want %d", code, ExitFailure)
-		}
-		if err := json.Unmarshal([]byte(stdout), &view); err != nil {
-			t.Fatalf("audit --json did not parse: %v (stdout=%q)", err, stdout)
-		}
-		if view.Running {
-			t.Fatalf("audit --json = %q, want running=false", stdout)
 		}
 	})
 
@@ -652,68 +417,4 @@ func TestStatusAudit(t *testing.T) {
 		}
 	})
 
-	t.Run("audit_rejects_out_of_range_limit", func(t *testing.T) {
-		for _, value := range []string{"0", "-1", "1001", "abc"} {
-			_, stderr, code := cliRun(t, "audit", "--limit", value)
-			if code != ExitUsage {
-				t.Fatalf("audit --limit %s code = %d, want %d (stderr=%q)", value, code, ExitUsage, stderr)
-			}
-			if !strings.Contains(stderr, "limit") {
-				t.Fatalf("audit --limit %s stderr = %q, want a limit message", value, stderr)
-			}
-		}
-	})
-
-	t.Run("audit_window_pages_past_the_api_page_cap", func(t *testing.T) {
-		const total = 2500
-		rows := make([]audit.Record, total)
-		for i := range rows {
-			rows[i] = audit.Record{
-				ID:     int64(i + 1),
-				TS:     int64(i+1) * 1000,
-				Method: http.MethodGet,
-				Path:   "/v1/messages",
-			}
-		}
-		fetch := func(_ context.Context, q url.Values) ([]audit.Record, error) {
-			since, _ := strconv.ParseInt(q.Get("since"), 10, 64)
-			limit, _ := strconv.Atoi(q.Get("limit"))
-			out := make([]audit.Record, 0, limit)
-			for _, rec := range rows {
-				if rec.TS < since {
-					continue
-				}
-				out = append(out, rec)
-				if len(out) == limit {
-					break
-				}
-			}
-			return out, nil
-		}
-
-		got, err := recentAudit(context.Background(), fetch, 10)
-		if err != nil {
-			t.Fatalf("recentAudit: %v", err)
-		}
-		if len(got) != 10 {
-			t.Fatalf("recentAudit returned %d rows, want 10", len(got))
-		}
-		if got[0].ID != total-9 || got[len(got)-1].ID != total {
-			t.Fatalf("recentAudit window = %d..%d, want %d..%d", got[0].ID, got[len(got)-1].ID, total-9, total)
-		}
-		for i := 1; i < len(got); i++ {
-			if got[i].ID <= got[i-1].ID {
-				t.Fatalf("recentAudit window is not ascending: %d then %d", got[i-1].ID, got[i].ID)
-			}
-		}
-	})
-
-	t.Run("audit_fetcher_error_is_reported", func(t *testing.T) {
-		boom := errors.New("boom")
-		fetch := func(context.Context, url.Values) ([]audit.Record, error) { return nil, boom }
-		_, err := recentAudit(context.Background(), fetch, 10)
-		if !errors.Is(err, boom) {
-			t.Fatalf("recentAudit error = %v, want the fetcher error", err)
-		}
-	})
 }

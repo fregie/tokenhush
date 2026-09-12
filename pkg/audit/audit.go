@@ -1,6 +1,6 @@
 // Package audit defines the metadata-only audit record seam and the no-op
-// defaults that stand in until the SQLite + HMAC hash-chain store is wired
-// into the daemon.
+// defaults. The core only defines the seam: the concrete store (SQLite + HMAC
+// hash chain, retention, verification) lives in the private Pro layer.
 //
 // Records carry metadata only (provider, path, timestamps, byte counts,
 // redaction counts, detector ids), never request or response content.

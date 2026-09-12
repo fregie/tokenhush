@@ -45,12 +45,6 @@ func TestRun(t *testing.T) {
 			emptyStdout: true,
 		},
 		{
-			name:        "audit rejects an unknown flag",
-			args:        []string{"audit", "--bogus"},
-			wantCode:    ExitUsage,
-			emptyStdout: true,
-		},
-		{
 			name:        "env without a tool reports usage",
 			args:        []string{"env"},
 			wantCode:    ExitUsage,

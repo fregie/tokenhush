@@ -27,8 +27,6 @@ var (
 	ErrInvalidUpstream = errors.New("invalid upstreams entry")
 	// ErrInvalidLogLevel means log.level is not one of debug|info|warn|error.
 	ErrInvalidLogLevel = errors.New("invalid log.level")
-	// ErrInvalidRetention means audit.retention_days is not positive.
-	ErrInvalidRetention = errors.New("invalid audit.retention_days")
 )
 
 // Error is the single typed error returned by this package. It carries the

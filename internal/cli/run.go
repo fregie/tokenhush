@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -25,7 +24,6 @@ import (
 // applies the Go 1.22 method patterns (GET only) once a request reaches it.
 const (
 	controlStatusPath = "/status"
-	controlAuditPath  = "/audit"
 )
 
 // Daemon tuning. The detector timeout is deliberately generous: the built-in
@@ -37,61 +35,20 @@ const (
 	shutdownTimeout        = 5 * time.Second
 )
 
-// Audit metadata stamped on the daemon's own lifecycle rows. Value rows carry
-// no content; the store is the real pkg/audit SQLite + HMAC chain.
-const (
-	auditProviderDaemon = "daemon"
-	auditMethodRun      = "run"
-
-	// auditDBFileName is the audit database opened below the data directory.
-	auditDBFileName = "audit.db"
-
-	// auditTamperAlert and auditUnavailableAlert are the stable, greppable
-	// fail-safe markers printed before the daemon refuses to serve audit data.
-	// A healthy store never emits either marker.
-	auditTamperAlert      = "tokenhush: AUDIT TAMPER DETECTED"
-	auditUnavailableAlert = "tokenhush: AUDIT STORE UNAVAILABLE"
-)
-
-// AuditStore is the real audit backend the daemon needs: it appends metadata
-// rows (AuditSink), reads them back (AuditQuerier), authenticates its own hash
-// chain (Verify), and releases its resources (Close). *audit.Store implements
-// it. The daemon verifies it on startup and on every GET /audit, and closes it
-// on shutdown.
-type AuditStore interface {
-	audit.AuditSink
-	audit.AuditQuerier
-	Verify() error
-	Close() error
-}
-
 // RunDeps carries the injectable seams of RunServer. The zero value is the
-// production configuration: platform config/data directories, no-op audit
-// seams, and the default detector timeout.
+// production configuration: platform config/data directories and the default
+// detector timeout.
 type RunDeps struct {
 	// ConfigPath is loaded only when cfg is nil: an explicit tokenhush.yaml
 	// path, or the platform default when empty.
 	ConfigPath string
-	// DataDir overrides platform.DataDir(); it holds the control token, the
-	// pid/port file and the audit database. Empty means the platform data
-	// directory.
+	// DataDir overrides platform.DataDir(); it holds the control token and the
+	// pid/port file. Empty means the platform data directory.
 	DataDir string
-	// Secrets overrides platform.OpenSecretStore() when the daemon opens the
-	// default audit store. Nil selects the platform keyring/file chain; tests
-	// inject an in-memory store for deterministic audit keys.
-	Secrets platform.SecretStore
-	// Sink overrides the audit append target. Nil uses the real store (or
-	// audit.NoopSink{} when Querier is also set without a store). It exists for
-	// tests that observe lifecycle and request rows without a real store.
-	Sink audit.AuditSink
-	// Querier overrides the audit read target. Nil uses the real store (or
-	// audit.NoopQuerier{} when Sink is also set without a store). A real store
-	// is re-verified before every read.
-	Querier audit.AuditQuerier
 	// Stdout receives the human-facing startup lines. Nil discards them.
 	Stdout io.Writer
-	// Stderr receives fail-safe alerts and diagnostics. Nil uses os.Stderr so a
-	// tamper or store-unavailable alert is never silently dropped.
+	// Stderr is the diagnostics stream, kept in the seam for callers; the
+	// audit-free core writes only to Stdout.
 	Stderr io.Writer
 	// PolicyTimeout bounds one content-detector invocation. Zero uses
 	// defaultDetectorTimeout. It is the seam the fail-closed test drives to
@@ -123,12 +80,9 @@ type RunInfo struct {
 // control plane behind Host/Origin/bearer guards and the data plane behind the
 // Host allowlist alone -> block until ctx is done, then shut down gracefully.
 //
-// A nil cfg is loaded from deps.ConfigPath (or the platform default). Before
-// anything is served, the audit store is opened (unless a test injects a Sink
-// or Querier) and its HMAC chain verified: a tampered store aborts startup with
-// an error wrapping audit.ErrTampered and a loud alert. The returned error also
-// wraps pkg/proxy's typed listener errors (for example ErrAddrInUse), so
-// callers can classify with errors.Is.
+// A nil cfg is loaded from deps.ConfigPath (or the platform default). The
+// returned error also wraps pkg/proxy's typed listener errors (for example
+// ErrAddrInUse), so callers can classify with errors.Is.
 func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -136,10 +90,6 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	stdout := deps.Stdout
 	if stdout == nil {
 		stdout = io.Discard
-	}
-	stderr := deps.Stderr
-	if stderr == nil {
-		stderr = os.Stderr
 	}
 
 	loaded, err := resolveConfig(cfg, deps.ConfigPath)
@@ -154,46 +104,7 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		}
 	}
 
-	var store AuditStore
-	if deps.Sink == nil && deps.Querier == nil {
-		store, err = openAuditStore(dataDir, deps.Secrets)
-		if err != nil {
-			alertAudit(stderr, auditUnavailableAlert, err)
-			return err
-		}
-	}
-	if store != nil {
-		defer func() { _ = store.Close() }()
-		if err := store.Verify(); err != nil {
-			alertAudit(stderr, auditTamperAlert, err)
-			return fmt.Errorf("run: verify audit store: %w", err)
-		}
-	}
-
-	sink := deps.Sink
-	querier := deps.Querier
-	if store != nil {
-		if sink == nil {
-			sink = store
-		}
-		if querier == nil {
-			querier = store
-		}
-	}
-	if sink == nil {
-		sink = audit.NoopSink{}
-	}
-	if querier == nil {
-		querier = audit.NoopQuerier{}
-	}
-	if store != nil && deps.Querier == nil {
-		querier = verifyingQuerier{store: store, alert: func(err error) {
-			alertAudit(stderr, auditTamperAlert, err)
-		}}
-	}
-	sink = alertingSink{inner: sink, alert: func(err error) {
-		alertAudit(stderr, auditUnavailableAlert, err)
-	}}
+	sink := audit.NoopSink{}
 
 	pipeline := deps.Pipeline
 	if pipeline == nil {
@@ -235,7 +146,6 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		pipeline:  pipeline,
 		plane:     newDataPlane(resolver, pipeline),
 		sink:      sink,
-		querier:   querier,
 		token:     token,
 		startedAt: time.Now(),
 		addrs:     addrs,
@@ -245,7 +155,6 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		MaxHeaderBytes: proxy.MaxHeaderBytes,
 	}
 
-	daemon.recordStartup(sink)
 	fmt.Fprintf(stdout, "tokenhush: gateway listening on http://127.0.0.1:%d\n", port)
 	fmt.Fprintf(stdout, "tokenhush: control token file: %s\n", controlTokenPath(dataDir))
 	if deps.Ready != nil {
@@ -253,7 +162,6 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	}
 
 	runErr := serveUntilDone(ctx, srv, listeners)
-	daemon.recordShutdown(sink)
 	cleanupSessionFiles(dataDir)
 	return runErr
 }
@@ -311,7 +219,6 @@ type daemon struct {
 	pipeline  *proxy.Pipeline
 	plane     *dataPlane
 	sink      audit.AuditSink
-	querier   audit.AuditQuerier
 	token     string
 	startedAt time.Time
 	addrs     []string
@@ -319,23 +226,21 @@ type daemon struct {
 
 // handler composes the two planes on one mux:
 //
-//   - control paths are wrapped HostAllowlist -> OriginPolicy -> ControlAuth
+//   - the control path is wrapped HostAllowlist -> OriginPolicy -> ControlAuth
 //     and registered for GET explicitly; the method-less pattern keeps a
-//     non-GET method on a control path inside the control API (JSON 405)
+//     non-GET method on the control path inside the control API (JSON 405)
 //     instead of letting it fall through to the data plane;
 //   - everything else is the pipeline-wrapped data plane behind HostAllowlist
 //     alone, so proxied traffic never needs the control bearer token.
 func (d *daemon) handler(port int) http.Handler {
-	control := proxy.NewControlAPI(d.status, d.querier)
+	control := proxy.NewControlAPI(d.status)
 	guardedControl := proxy.HostAllowlist(port)(
 		proxy.OriginPolicy(proxy.ControlAuth(func() string { return d.token })(control)))
 	dataPlane := proxy.HostAllowlist(port)(d.auditRequests(d.pipeline.ResponseMiddleware(d.plane)))
 
 	mux := http.NewServeMux()
-	for _, path := range []string{controlStatusPath, controlAuditPath} {
-		mux.Handle("GET "+path, guardedControl)
-		mux.Handle(path, guardedControl)
-	}
+	mux.Handle("GET "+controlStatusPath, guardedControl)
+	mux.Handle(controlStatusPath, guardedControl)
 	mux.Handle("/", dataPlane)
 	return mux
 }
@@ -436,72 +341,6 @@ func (w *auditResponseWriter) Flush() {
 	}
 }
 
-// verifyingQuerier authenticates the audit chain before every read. A
-// verification failure alerts loudly and is returned to the control API, which
-// answers 500 rather than serving an unverified row.
-type verifyingQuerier struct {
-	store AuditStore
-	alert func(error)
-}
-
-// Query implements audit.AuditQuerier: Verify first, then read.
-func (q verifyingQuerier) Query(ctx context.Context, query audit.Query) ([]audit.Record, error) {
-	if err := q.store.Verify(); err != nil {
-		if q.alert != nil {
-			q.alert(err)
-		}
-		return nil, err
-	}
-	return q.store.Query(ctx, query)
-}
-
-// alertingSink reports any append failure through alert, so a dropped audit row
-// is never silent. The failure is also returned to the caller.
-type alertingSink struct {
-	inner audit.AuditSink
-	alert func(error)
-}
-
-// Record implements audit.AuditSink.
-func (s alertingSink) Record(rec audit.Record) error {
-	err := s.inner.Record(rec)
-	if err != nil && s.alert != nil {
-		s.alert(err)
-	}
-	return err
-}
-
-var (
-	_ audit.AuditQuerier = verifyingQuerier{}
-	_ audit.AuditSink    = alertingSink{}
-)
-
-// openAuditStore opens the real pkg/audit store at <dataDir>/audit.db, selecting
-// the platform secret store unless one was injected.
-func openAuditStore(dataDir string, secrets platform.SecretStore) (AuditStore, error) {
-	if secrets == nil {
-		selected, err := platform.OpenSecretStore()
-		if err != nil {
-			return nil, err
-		}
-		secrets = selected
-	}
-	return audit.OpenStore(audit.StoreConfig{
-		Path:    filepath.Join(dataDir, auditDBFileName),
-		Secrets: secrets,
-	})
-}
-
-// alertAudit prints the loud fail-safe alert. It never lets a caller continue
-// silently: every invocation aborts startup or answers the control request 500.
-func alertAudit(stderr io.Writer, marker string, err error) {
-	if stderr == nil {
-		stderr = os.Stderr
-	}
-	fmt.Fprintf(stderr, "%s: %v\n", marker, err)
-	fmt.Fprintln(stderr, "tokenhush: audit fail-safe engaged: refusing to serve audit data")
-}
-
 // status is the live snapshot GET /status serializes. Counters are session
 // scoped and metadata-only.
 func (d *daemon) status() proxy.ControlStatus {
@@ -512,27 +351,6 @@ func (d *daemon) status() proxy.ControlStatus {
 		Requests:   d.plane.requests.Load(),
 		Redactions: d.plane.redactions.Load(),
 	}
-}
-
-// recordStartup writes the daemon-start audit row. A sink failure is ignored:
-// the real store is W5.3 and a best-effort seam must not abort startup.
-func (d *daemon) recordStartup(sink audit.AuditSink) {
-	_ = sink.Record(audit.Record{
-		TS:       time.Now().UnixMilli(),
-		Provider: auditProviderDaemon,
-		Method:   auditMethodRun,
-		Path:     "start",
-	})
-}
-
-// recordShutdown writes the daemon-stop audit row, best effort.
-func (d *daemon) recordShutdown(sink audit.AuditSink) {
-	_ = sink.Record(audit.Record{
-		TS:       time.Now().UnixMilli(),
-		Provider: auditProviderDaemon,
-		Method:   auditMethodRun,
-		Path:     "stop",
-	})
 }
 
 // listenerAddrs renders the bound addresses in v4, v6 order.

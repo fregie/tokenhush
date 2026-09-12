@@ -138,15 +138,25 @@ func TestLoadFileRejectsInvalidLogLevel(t *testing.T) {
 	}
 }
 
-func TestLoadFileRejectsInvalidRetention(t *testing.T) {
-	for name, body := range map[string]string{
-		"zero":     "audit:\n  retention_days: 0\n",
-		"negative": "audit:\n  retention_days: -5\n",
-	} {
+func TestLoadFileAuditKeyIsMigrationError(t *testing.T) {
+	cases := map[string]string{
+		"block":          "audit:\n  retention_days: 0\n",
+		"inline_mapping": "audit: {enabled: false}\n",
+		"scalar":         "audit: false\n",
+	}
+	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := LoadFile(writeConfig(t, body)); !errors.Is(err, ErrInvalidRetention) {
-				t.Fatalf("want ErrInvalidRetention, got %v", err)
+			_, err := LoadFile(writeConfig(t, body))
+			if !errors.Is(err, ErrUnknownField) {
+				t.Fatalf("want ErrUnknownField, got %v", err)
 			}
+			if !strings.Contains(err.Error(), "tokenhush-pro") {
+				t.Fatalf("error %q does not point at tokenhush-pro", err)
+			}
+			if !strings.Contains(err.Error(), "delete") {
+				t.Fatalf("error %q does not tell the user to delete the block", err)
+			}
+			t.Logf("audit key rejected with migration guidance: %v", err)
 		})
 	}
 }

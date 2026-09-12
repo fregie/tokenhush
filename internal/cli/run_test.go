@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fregie/tokenhush/pkg/audit"
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
@@ -40,30 +39,6 @@ func runSecret() string {
 }
 
 var runPlaceholderRe = regexp.MustCompile(`__PII_[a-z][a-z0-9_]*_[0-9a-f]{8,}__`)
-
-// recordingSink captures audit rows so a test can assert the daemon emitted
-// its lifecycle events without a real store.
-type recordingSink struct {
-	mu   sync.Mutex
-	recs []audit.Record
-}
-
-func (s *recordingSink) Record(rec audit.Record) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.recs = append(s.recs, rec)
-	return nil
-}
-
-func (s *recordingSink) paths() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]string, 0, len(s.recs))
-	for _, rec := range s.recs {
-		out = append(out, rec.Path)
-	}
-	return out
-}
 
 // echoUpstream records the request body it received and echoes it back inside a
 // JSON string, so an inbound round-trip proves backfill.
@@ -187,9 +162,8 @@ func TestRunServerEndToEnd(t *testing.T) {
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 
-	secrets := newStubSecrets()
 	dataDir := t.TempDir()
-	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir, Secrets: secrets})
+	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 
 	secret := runSecret()
 	body := fmt.Sprintf(`{"model":"test","messages":[{"role":"user","content":%q}]}`, secret)
@@ -210,43 +184,6 @@ func TestRunServerEndToEnd(t *testing.T) {
 	}
 	if !runPlaceholderRe.Match(upstreamBody) {
 		t.Fatalf("upstream body %q has no placeholder", upstreamBody)
-	}
-
-	// GET /audit with the session token: the real store serves the daemon
-	// lifecycle rows plus one metadata-only row per proxied request.
-	auditResp := doGet(t, base+"/audit", token, "")
-	if auditResp.StatusCode != http.StatusOK {
-		t.Fatalf("audit code = %d, want 200", auditResp.StatusCode)
-	}
-	rawAudit, err := io.ReadAll(auditResp.Body)
-	if err != nil {
-		t.Fatalf("read audit body: %v", err)
-	}
-	if bytes.Contains(rawAudit, []byte(secret)) {
-		t.Fatalf("audit output leaked the request secret: %s", rawAudit)
-	}
-	var records []audit.Record
-	if err := json.Unmarshal(rawAudit, &records); err != nil {
-		t.Fatalf("decode audit rows: %v", err)
-	}
-	if findAuditRecord(records, "daemon", "start") == nil {
-		t.Errorf("startup audit row missing; got %+v", records)
-	}
-	requestRow := findAuditRecord(records, "anthropic", "/v1/messages")
-	if requestRow == nil {
-		t.Fatalf("per-request audit row missing; got %+v", records)
-	}
-	if requestRow.Method != http.MethodPost || requestRow.Status != http.StatusOK {
-		t.Errorf("request row = %s/%d, want POST/200", requestRow.Method, requestRow.Status)
-	}
-	if requestRow.ReqBytes <= 0 || requestRow.RespBytes <= 0 {
-		t.Errorf("request row bytes = %d/%d, want both positive", requestRow.ReqBytes, requestRow.RespBytes)
-	}
-	if requestRow.Redactions < 1 {
-		t.Errorf("request row redactions = %d, want >= 1", requestRow.Redactions)
-	}
-	if len(requestRow.Detectors) == 0 {
-		t.Errorf("request row detectors = %v, want at least one detector id", requestRow.Detectors)
 	}
 
 	// GET /status with the session token.
@@ -288,7 +225,7 @@ func TestRunServerControlGuards(t *testing.T) {
 	cfg.Listen.Host = "127.0.0.1"
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
-	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), Secrets: newStubSecrets()})
+	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir()})
 	defer func() { _ = stop() }()
 
 	if got := doGet(t, base+"/status", "", "").StatusCode; got != http.StatusUnauthorized {
@@ -317,7 +254,7 @@ func TestRunServerPortInUse(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	err = RunServer(ctx, &cfg, RunDeps{DataDir: dataDir, Secrets: newStubSecrets()})
+	err = RunServer(ctx, &cfg, RunDeps{DataDir: dataDir})
 	if !errors.Is(err, proxy.ErrAddrInUse) {
 		t.Fatalf("RunServer error = %v, want ErrAddrInUse", err)
 	}
@@ -346,7 +283,7 @@ func TestRunServerFailClosedOnDetectorTimeout(t *testing.T) {
 			cfg.Listen.Host = "127.0.0.1"
 			cfg.Listen.Port = 0
 			cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
-			base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), Secrets: newStubSecrets(), PolicyTimeout: tt.timeout})
+			base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), PolicyTimeout: tt.timeout})
 			defer func() { _ = stop() }()
 
 			secret := runSecret()
@@ -406,14 +343,4 @@ func TestRunCommandBadConfig(t *testing.T) {
 	if !strings.Contains(stderr.String(), "listen.host") {
 		t.Errorf("stderr = %q, want it to name listen.host", stderr.String())
 	}
-}
-
-// containsString reports whether want is in values.
-func containsString(values []string, want string) bool {
-	for _, v := range values {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }

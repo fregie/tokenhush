@@ -140,7 +140,7 @@ func TestSmokeE2E(t *testing.T) {
 
 		dataDir := t.TempDir()
 		cfg := smokeConfig(upstreamSrv.URL)
-		base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir, Secrets: newStubSecrets()})
+		base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 		t.Cleanup(func() { _ = stop() })
 
 		secret := runSecret()
@@ -195,7 +195,7 @@ func TestSmokeE2E(t *testing.T) {
 		// reverse mapping), mirroring the pkg/proxy unit test of the same
 		// invariant.
 		cfg.Detectors = config.Detectors{Prefix: true}
-		base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir, Secrets: newStubSecrets()})
+		base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 		t.Cleanup(func() { _ = stop() })
 
 		// Request 1: learn this session's placeholder for the secret.

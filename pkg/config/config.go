@@ -33,7 +33,6 @@ type Config struct {
 	Listen    Listen    `yaml:"listen"`
 	Detectors Detectors `yaml:"detectors"`
 	Allowlist []string  `yaml:"allowlist"`
-	Audit     Audit     `yaml:"audit"`
 	Log       Log       `yaml:"log"`
 	Upstreams Upstreams `yaml:"upstreams"`
 }
@@ -77,12 +76,6 @@ func (d Detectors) EnabledIDs() []string {
 	return ids
 }
 
-// Audit configures the local audit trail.
-type Audit struct {
-	Enabled       bool `yaml:"enabled"`
-	RetentionDays int  `yaml:"retention_days"`
-}
-
 // Log configures the daemon log level.
 type Log struct {
 	Level string `yaml:"level"`
@@ -101,7 +94,6 @@ func Default() Config {
 			Email:       true,
 		},
 		Allowlist: []string{},
-		Audit:     Audit{Enabled: true, RetentionDays: 14},
 		Log:       Log{Level: "info"},
 	}
 }
@@ -170,9 +162,22 @@ func classifyYAMLError(path string, err error) error {
 	}
 	var unknown *yaml.UnknownFieldError
 	if errors.As(err, &unknown) {
+		if reason, moved := auditMigrationReason(unknown.GetMessage()); moved {
+			return &Error{Path: path, Field: "audit", Reason: reason, Err: ErrUnknownField, Cause: err}
+		}
 		return &Error{Path: path, Reason: unknown.GetMessage(), Err: ErrUnknownField, Cause: err}
 	}
 	return &Error{Path: path, Reason: "invalid YAML: " + firstLine(err.Error()), Err: ErrParse, Cause: err}
+}
+
+// auditMigrationReason turns the removed top-level `audit` key (block or scalar
+// form) into an actionable migration error. goccy's UnknownFieldError exposes
+// only the bare key name, so the match is on the quoted key.
+func auditMigrationReason(message string) (string, bool) {
+	if !strings.Contains(message, `"audit"`) {
+		return "", false
+	}
+	return `the "audit" block moved to tokenhush-pro; delete the audit: block from your config and install tokenhush-pro for local audit`, true
 }
 
 func (c *Config) validate(path string) error {
@@ -182,14 +187,6 @@ func (c *Config) validate(path string) error {
 			Field:  "listen.host",
 			Reason: fmt.Sprintf("must be loopback (127.0.0.1, ::1 or localhost), got %q", c.Listen.Host),
 			Err:    ErrInvalidListenHost,
-		}
-	}
-	if c.Audit.RetentionDays < 1 {
-		return &Error{
-			Path:   path,
-			Field:  "audit.retention_days",
-			Reason: fmt.Sprintf("must be >= 1, got %d", c.Audit.RetentionDays),
-			Err:    ErrInvalidRetention,
 		}
 	}
 	switch c.Log.Level {

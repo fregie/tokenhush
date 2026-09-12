@@ -7,6 +7,6 @@
 // allowlist, control-API bearer auth and Origin policy live in guard.go; the
 // per-session control token and browser handshake URL live in token.go; the
 // upstream forwarder and its redaction seam live in forward.go; the
-// authenticated, metadata-only control API (GET /status, GET /audit) lives in
+// authenticated, metadata-only control API (GET /status) lives in
 // controlapi.go. The SSE sliding-window parser lands in a later work item.
 package proxy

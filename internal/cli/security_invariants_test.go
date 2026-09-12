@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -155,7 +154,6 @@ func TestNoPlaintextInLogs(t *testing.T) {
 
 			deps := RunDeps{
 				DataDir: dataDir,
-				Secrets: newStubSecrets(),
 				Stdout:  os.Stdout,
 				Stderr:  os.Stderr,
 			}
@@ -196,21 +194,6 @@ func TestNoPlaintextInLogs(t *testing.T) {
 				}
 				if !runPlaceholderRe.Match(received) {
 					t.Error("upstream body has no placeholder; the secret was never processed")
-				}
-			}
-
-			for _, name := range []string{"audit.db", "audit.db-wal"} {
-				p := filepath.Join(dataDir, name)
-				data, err := os.ReadFile(p)
-				if err != nil {
-					if os.IsNotExist(err) {
-						t.Logf("%s absent (checked db only)", name)
-						continue
-					}
-					t.Fatalf("read %s: %v", p, err)
-				}
-				if bytes.Contains(data, []byte(secret)) {
-					t.Fatalf("plaintext secret found in %s", p)
 				}
 			}
 		})
