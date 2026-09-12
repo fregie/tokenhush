@@ -106,7 +106,34 @@ func (d *dataPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = io.NopCloser(bytes.NewReader(transformed))
+
+	// 只有配置了真实 CostSink 时才 tee 响应；nil 即默认 no-op，此时不产生
+	// 任何额外开销。转发发出的始终是上面脱敏后的 transformed，绝不回填。
+	if d.costSink != nil {
+		recorder := &costRecorder{dst: w}
+		forwarder.ServeHTTP(recorder, r)
+		d.recordCost(r, transformed, recorder)
+		return
+	}
 	forwarder.ServeHTTP(w, r)
+}
+
+// recordCost 在上游响应结束（请求完成）时把请求/响应对交给注入的 CostSink。
+// 响应副本捕获于 pipeline 入站回填之前，因此携带占位符而非被还原的 secret；
+// 请求 JSON 同样来自已脱敏的 transformed。nil 接收器是默认 no-op。
+func (d *dataPlane) recordCost(r *http.Request, transformed []byte, rec *costRecorder) {
+	if d.costSink == nil {
+		return
+	}
+	d.costSink.Record(
+		&extension.Request{
+			Method: r.Method,
+			Host:   r.Host,
+			Path:   r.URL.Path,
+			JSON:   parseRequestJSON(transformed),
+		},
+		rec.response(),
+	)
 }
 
 // forwarder returns the cached forwarder for base, building it on first use.
