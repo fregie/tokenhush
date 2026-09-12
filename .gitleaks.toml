@@ -23,3 +23,17 @@ regexTarget = "secret"
 regexes = [
   '''^__PII_[a-z][a-z0-9_]*_[0-9a-f]{8,}__$''',
 ]
+
+[[allowlists]]
+description = "Synthetic README doc example OPENAI_API_KEY=sk-proj-abc123 (not a real credential)"
+regexTarget = "secret"
+regexes = [
+  '''^sk-proj-abc123$''',
+]
+
+[[allowlists]]
+description = "Synthetic placeholder-grammar fixtures used by pkg/gateway/placeholder_test.go (not real credentials), scoped by grammar only so arbitrary secrets in that file are still reported"
+regexTarget = "secret"
+regexes = [
+  '''^_?([A-Za-z][A-Za-z0-9_-]*_?)?[0-9A-Fa-f]{16}$''',
+]
