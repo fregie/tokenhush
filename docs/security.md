@@ -27,6 +27,7 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 3. **No root certificate is installed and no MITM is performed by default.** MITM is an explicit opt-in in later stages and is not implemented in the public core.
 4. **The local service binds dual-stack loopback only (127.0.0.1 + `[::1]`).**
 5. **Fail-safe on detection failure, not fail-open.** When the gateway cannot tell whether content is sensitive, it prefers over-redaction, or allows with a warning, and never silently emits plaintext. The policy is configurable (see below).
+6. **Vendor-bound egress is exactly two switchable, command-scoped categories.** The only requests that leave the machine for the vendor are update check and rule sync, both disclosed in the machine-readable [`egress.yaml`](../egress.yaml) and both switchable. Neither is performed by the gateway's data plane: a proxied request still egresses only to the configured upstream, placeholders are never backfilled outbound, and the audit seam carries metadata only.
 
 > [!IMPORTANT]
 > Invariant 1 is why prompt injection cannot turn the gateway into an exfiltration path: placeholders are only ever replaced on the way back to the client.
@@ -62,7 +63,14 @@ The V1 strategy is **deterministic, high-precision-first detectors** (known key 
 
 ## Network egress
 
-Vendor-bound requests are limited to two switchable categories — update check and rule sync. Both disclose what the server can observe (source IP, timestamp, and Cloudflare access logs) and its retention period. The disclosure is generated from the machine-readable `egress.yaml` manifest, printed by `tokenhush privacy`, and published at [generated/network-egress.md](generated/network-egress.md). In this release both categories are **planned** and are not active; the manifest flips them to `active` only after they ship.
+Vendor-bound requests are limited to two switchable, command-scoped categories — **update check** and **rule sync**. Neither runs on its own and neither is performed by the gateway's data plane. Each category's status is reported truthfully: `active` only after it is really in effect.
+
+| Category | Command | Status |
+|---|---|---|
+| Rule sync | `tokenhush rules sync` | **Active** — fetches the signed rule manifest and bundle from `updates.tokenhush.com` |
+| Update check | `tokenhush update` (self-managed install) | **Planned** — the self-update engine is not wired to the CLI yet, so no request is made |
+
+Both disclose what the server can observe (source IP, timestamp, and Cloudflare access logs) and its retention period, and both can be switched off: set `TOKENHUSH_NO_RULE_SYNC=1` to make `rules sync` refuse without any network request, and the disclosure lists the update-check switch for when that category is active. The disclosure is generated from the machine-readable [`egress.yaml`](../egress.yaml) manifest, printed by `tokenhush privacy`, and published at [generated/network-egress.md](generated/network-egress.md). The scope is locked by `TestNoTelemetry` in `pkg/proxy`, which proves the data plane never dials a vendor host even for vendor-looking paths.
 
 ## Vulnerability disclosure
 

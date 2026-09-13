@@ -11,11 +11,31 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/fregie/tokenhush/pkg/platform"
 	"github.com/fregie/tokenhush/pkg/rules"
 )
+
+// EnvNoRuleSync disables rule sync egress. Rule sync is one of the two
+// disclosed switchable vendor-bound categories (the other is update check); the
+// disclosure in egress.yaml documents this switch, and `rules sync` honours it
+// at the command boundary so no request leaves the machine when it is set.
+const EnvNoRuleSync = "TOKENHUSH_NO_RULE_SYNC"
+
+// ruleSyncDisabled reports whether the operator asked to switch rule sync off.
+// Only an explicit truthy value disables it, so an empty or unrelated value
+// leaves the command's default behaviour unchanged.
+func ruleSyncDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvNoRuleSync))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
 
 // newRulesClient is the injectable seam of the rules commands. Production opens
 // the cache and high-water store under the platform data root and trusts the
@@ -93,6 +113,11 @@ func rulesSyncCommand(args []string, stdout, stderr io.Writer) int {
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "tokenhush: rules sync: unexpected argument %q\n", fs.Arg(0))
 		return ExitUsage
+	}
+
+	if ruleSyncDisabled() {
+		fmt.Fprintf(stdout, "rules sync: disabled by %s; no request sent\n", EnvNoRuleSync)
+		return ExitOK
 	}
 
 	client, err := newRulesClient(func(msg string) { fmt.Fprintln(stderr, msg) })

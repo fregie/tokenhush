@@ -95,10 +95,14 @@ func TestLoadManifest(t *testing.T) {
 	byID := map[string]Item{}
 	for _, it := range m.Items {
 		byID[it.ID] = it
-		// Plan A：两项都必须是 planned，绝不能写成现有行为。
-		if it.Status != StatusPlanned {
-			t.Errorf("%s status = %q, want %q (Plan A)", it.ID, it.Status, StatusPlanned)
-		}
+	}
+	// B9：rule-sync 已由 `tokenhush rules sync` 落地为 active；update-check 的自更新
+	// 引擎尚未接线到 CLI，按 ADR-0022 保持 planned，不得写成现有行为。
+	if got := byID["rule-sync"].Status; got != StatusActive {
+		t.Errorf("rule-sync status = %q, want %q", got, StatusActive)
+	}
+	if got := byID["update-check"].Status; got != StatusPlanned {
+		t.Errorf("update-check status = %q, want %q", got, StatusPlanned)
 	}
 
 	upd, ok := byID["update-check"]

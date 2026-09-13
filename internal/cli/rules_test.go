@@ -265,3 +265,24 @@ func TestRulesUsage(t *testing.T) {
 		t.Fatalf("stderr = %q, want unknown subcommand", stderr.String())
 	}
 }
+
+// TestRulesSyncDisabledByEnv proves the disclosed off switch: with
+// TOKENHUSH_NO_RULE_SYNC set, `rules sync` returns before any client is built,
+// so no network request can leave the machine.
+func TestRulesSyncDisabledByEnv(t *testing.T) {
+	t.Setenv(EnvNoRuleSync, "1")
+	previous := newRulesClient
+	t.Cleanup(func() { newRulesClient = previous })
+	newRulesClient = func(func(string)) (*rules.Client, error) {
+		t.Fatal("rules sync built a client despite TOKENHUSH_NO_RULE_SYNC")
+		return nil, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"rules", "sync"}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("disabled rules sync exit = %d (stderr %q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "disabled by "+EnvNoRuleSync) {
+		t.Fatalf("stdout = %q, want the disabled notice", stdout.String())
+	}
+}

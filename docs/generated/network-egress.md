@@ -13,7 +13,21 @@ become active only after the corresponding release.
 
 ## Active
 
-None in this build.
+### Rule sync (`rule-sync`)
+
+- **Host:** `updates.tokenhush.com`
+- **Purpose:** Fetch signed detection-rule manifests and rule bundles so the local detectors can be tightened without shipping a new binary.
+- **Default when active:** `enabled`
+- **Switch off:** Rule sync runs only when you run `tokenhush rules sync`; it never syncs on its own. Set the environment variable `TOKENHUSH_NO_RULE_SYNC=1` to make the command refuse without any network request.
+- **Server can observe:**
+  - `ip` — Source IP address of the request, visible to the server.
+  - `timestamp` — Request time recorded by the server.
+  - `access_logs` — Cloudflare access logs (path, time, source IP, User-Agent).
+- **Sent to the server:**
+  - `channel` — Rule channel requested (for example stable or beta).
+  - `os_arch` — Operating system and CPU architecture of the running binary.
+  - `current_schema_version` — Schema version and serial of the rule set currently in use.
+- **Retention:** Cloudflare access logs and request records are retained for 30 days.
 
 ## Planned
 
@@ -31,20 +45,4 @@ None in this build.
   - `channel` — Release channel requested (for example stable or beta).
   - `os_arch` — Operating system and CPU architecture of the running binary.
   - `current_version` — Current binary version, so the server can tell whether an update exists.
-- **Retention:** Cloudflare access logs and request records are retained for 30 days.
-
-### Rule sync (`rule-sync`)
-
-- **Host:** `rules.tokenhush.com`
-- **Purpose:** Fetch signed detection-rule manifests and rule bundles so the local detectors can be tightened without shipping a new binary.
-- **Default when active:** `enabled`
-- **Switch off:** When this category is active, set `rules_sync: false` in tokenhush.yaml, or set the environment variable `TOKENHUSH_NO_RULE_SYNC=1`.
-- **Server can observe:**
-  - `ip` — Source IP address of the request, visible to the server.
-  - `timestamp` — Request time recorded by the server.
-  - `access_logs` — Cloudflare access logs (path, time, source IP, User-Agent).
-- **Sent to the server:**
-  - `channel` — Rule channel requested (for example stable or beta).
-  - `os_arch` — Operating system and CPU architecture of the running binary.
-  - `current_schema_version` — Schema version and serial of the rule set currently in use.
 - **Retention:** Cloudflare access logs and request records are retained for 30 days.

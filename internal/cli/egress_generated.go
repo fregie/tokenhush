@@ -26,8 +26,8 @@ const egressGeneratedText = "" +
 	"  Default (when active): enabled\n" +
 	"  Retention: Cloudflare access logs and request records are retained for 30 days.\n" +
 	"\n" +
-	"[PLANNED] Rule sync (rule-sync)\n" +
-	"  Host: rules.tokenhush.com\n" +
+	"[ACTIVE] Rule sync (rule-sync)\n" +
+	"  Host: updates.tokenhush.com\n" +
 	"  Purpose: Fetch signed detection-rule manifests and rule bundles so the local detectors can be tightened without shipping a new binary.\n" +
 	"  Sent to the server:\n" +
 	"    - channel: Rule channel requested (for example stable or beta).\n" +
@@ -37,7 +37,7 @@ const egressGeneratedText = "" +
 	"    - ip: Source IP address of the request, visible to the server.\n" +
 	"    - timestamp: Request time recorded by the server.\n" +
 	"    - access_logs: Cloudflare access logs (path, time, source IP, User-Agent).\n" +
-	"  How to switch off: When this category is active, set `rules_sync: false` in tokenhush.yaml, or set the environment variable `TOKENHUSH_NO_RULE_SYNC=1`.\n" +
+	"  How to switch off: Rule sync runs only when you run `tokenhush rules sync`; it never syncs on its own. Set the environment variable `TOKENHUSH_NO_RULE_SYNC=1` to make the command refuse without any network request.\n" +
 	"  Default (when active): enabled\n" +
 	"  Retention: Cloudflare access logs and request records are retained for 30 days.\n"
 
@@ -121,8 +121,8 @@ const egressGeneratedJSON = "" +
 	"    },\n" +
 	"    {\n" +
 	"      \"id\": \"rule-sync\",\n" +
-	"      \"status\": \"planned\",\n" +
-	"      \"host\": \"rules.tokenhush.com\",\n" +
+	"      \"status\": \"active\",\n" +
+	"      \"host\": \"updates.tokenhush.com\",\n" +
 	"      \"title\": {\n" +
 	"        \"en\": \"Rule sync\",\n" +
 	"        \"zh\": \"规则同步\"\n" +
@@ -182,8 +182,8 @@ const egressGeneratedJSON = "" +
 	"        }\n" +
 	"      ],\n" +
 	"      \"switch\": {\n" +
-	"        \"en\": \"When this category is active, set `rules_sync: false` in tokenhush.yaml, or set the environment variable `TOKENHUSH_NO_RULE_SYNC=1`.\",\n" +
-	"        \"zh\": \"该类别生效后，可在 tokenhush.yaml 设 `rules_sync: false`， 或设置环境变量 `TOKENHUSH_NO_RULE_SYNC=1` 关闭。\"\n" +
+	"        \"en\": \"Rule sync runs only when you run `tokenhush rules sync`; it never syncs on its own. Set the environment variable `TOKENHUSH_NO_RULE_SYNC=1` to make the command refuse without any network request.\",\n" +
+	"        \"zh\": \"规则同步只在你运行 `tokenhush rules sync` 时发生，绝不自动同步。 设置环境变量 `TOKENHUSH_NO_RULE_SYNC=1` 可使该命令拒绝同步且不发起任何网络请求。\"\n" +
 	"      },\n" +
 	"      \"default\": \"enabled\",\n" +
 	"      \"retention\": {\n" +

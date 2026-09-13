@@ -15,6 +15,7 @@ func TestPrivacyCommand(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"[PLANNED]",
+		"[ACTIVE]",
 		"Update check",
 		"Rule sync",
 		"Server can observe",
@@ -25,9 +26,6 @@ func TestPrivacyCommand(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("privacy output missing %q", want)
 		}
-	}
-	if strings.Contains(out, "[ACTIVE]") {
-		t.Error("Plan A output must not label any category ACTIVE")
 	}
 
 	stdout.Reset()
@@ -47,9 +45,10 @@ func TestPrivacyCommand(t *testing.T) {
 	if len(m.Items) != 2 {
 		t.Fatalf("privacy --json items = %d, want 2", len(m.Items))
 	}
+	wantStatus := map[string]string{"rule-sync": "active", "update-check": "planned"}
 	for _, it := range m.Items {
-		if it.Status != "planned" {
-			t.Errorf("%s status = %q, want planned (Plan A)", it.ID, it.Status)
+		if want, ok := wantStatus[it.ID]; ok && it.Status != want {
+			t.Errorf("%s status = %q, want %q", it.ID, it.Status, want)
 		}
 	}
 }

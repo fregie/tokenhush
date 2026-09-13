@@ -140,11 +140,17 @@ func guardedHTTPClient(guard *telemetryGuardDialer) *http.Client {
 	}
 }
 
-// TestNoTelemetry is the W5.4 named invariant (docs/security.md §1,
-// docs/security.md): a proxied request egresses only to the configured upstream.
-// The forwarder is given a dialer that records and refuses non-loopback
-// destinations, so any hidden telemetry call would show up as an extra or
-// non-loopback dial.
+// TestNoTelemetry is the W5.4 named invariant (docs/security.md): the proxy
+// DATA PLANE egresses only to the configured upstream. The only vendor-bound
+// requests the product can make are the two disclosed, switchable,
+// command-scoped categories (update check, rule sync); the proxy performs
+// neither, so a request whose path merely looks like a vendor endpoint is still
+// dialed to the configured upstream and never to a vendor host. The forwarder
+// is given a dialer that records and refuses non-loopback destinations, so any
+// hidden telemetry call would show up as an extra or non-loopback dial. This
+// scope does not relax the data-plane invariants: placeholders are still never
+// backfilled outbound, the gateway still binds loopback only, and the audit
+// seam still carries metadata only.
 func TestNoTelemetry(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -188,6 +194,41 @@ func TestNoTelemetry(t *testing.T) {
 		dials := guard.destinations()
 		if len(dials) != 1 || !strings.HasPrefix(dials[0], "203.0.113.7:") {
 			t.Fatalf("guard dials = %v, want the refused non-loopback attempt recorded", dials)
+		}
+	})
+
+	t.Run("vendor_endpoint_paths_still_go_to_the_configured_upstream", func(t *testing.T) {
+		guard := &telemetryGuardDialer{}
+		fwd, err := NewForwarder(upstream.URL, nil, WithHTTPClient(guardedHTTPClient(guard)))
+		if err != nil {
+			t.Fatalf("NewForwarder: %v", err)
+		}
+		// These are the paths the command-scoped update-check / rule-sync egress
+		// uses. The proxy must never treat them as a vendor shortcut: each one is
+		// still dialed to the configured upstream, and a non-loopback dial would
+		// have been refused above.
+		paths := []string{
+			"/v1/update/manifest",
+			"/v1/update/revocations",
+			"/v1/rules/manifest",
+			"/v1/rules/bundle",
+		}
+		want := upstream.Listener.Addr().String()
+		for _, path := range paths {
+			rec := httptest.NewRecorder()
+			fwd.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s status = %d, want 200", path, rec.Code)
+			}
+		}
+		dials := guard.destinations()
+		if len(dials) == 0 {
+			t.Fatal("no egress dials recorded; the guard would be vacuous")
+		}
+		for _, dialed := range dials {
+			if dialed != want {
+				t.Fatalf("dialed %q, want only the configured upstream %q", dialed, want)
+			}
 		}
 	})
 }

@@ -174,7 +174,7 @@ Unmatched routes fall back to built-ins: `/v1/messages` goes to Anthropic, and `
 
 ## Security model
 
-Tokenhush binds loopback only, enforces a Host allowlist, and stores no request or response content. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. Vendor-bound requests are limited to the two switchable categories in the [network egress disclosure](docs/generated/network-egress.md). See [docs/security.md](docs/security.md) for the threat model and full invariants, and [SECURITY.md](SECURITY.md) for how to report a vulnerability.
+Tokenhush binds loopback only, enforces a Host allowlist, and stores no request or response content. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. Vendor-bound requests are limited to the two switchable, command-scoped categories in the [network egress disclosure](docs/generated/network-egress.md) — rule sync (active; switch it off with `TOKENHUSH_NO_RULE_SYNC=1`) and update check (planned) — which lists each category's fields, what the server observes, retention, and its off switch. See [docs/security.md](docs/security.md) for the threat model and full invariants, and [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
 ## Documentation
 

@@ -363,6 +363,7 @@ These properties are load-bearing. Do not work around them.
 - **No root certificate, no MITM.** The public core installs no CA and intercepts no TLS. Requests reach the gateway as plain HTTP on localhost, so it can see and redact content.
 - **Never backfill outbound.** Placeholders are restored only on responses returning to the client. The gateway never rewrites a placeholder back to its secret in an outbound request, which blocks prompt-injection exfiltration.
 - **Fail-safe, not fail-open.** When a detector cannot decide, Tokenhush over-redacts or blocks and records an alert rather than silently emitting a secret.
+- **Two disclosed, switchable egress categories.** The only vendor-bound requests are rule sync (active; `tokenhush rules sync`, switch it off with `TOKENHUSH_NO_RULE_SYNC=1`) and update check (planned). Each category's fields, what the server observes, retention, and its off switch are in the generated [network egress disclosure](generated/network-egress.md), also printed by `tokenhush privacy`.
 
 The full threat model and invariants are in [security.md](security.md). The request path and module layout are in [architecture.md](architecture.md).
 
@@ -374,6 +375,9 @@ The full threat model and invariants are in [security.md](security.md). The requ
     tokenhush status       show whether the gateway is running
     tokenhush env <tool>   print tool setup snippets
     tokenhush doctor       diagnose common setup problems
+    tokenhush privacy      show requests that leave your machine for the vendor
+    tokenhush update       upgrade via the owning package manager
+    tokenhush rules        sync signed detection rules or roll back
     tokenhush version      print version and build information
 <!-- check-docs:commands:end -->
 ```
@@ -386,6 +390,10 @@ Useful flags:
 | `status` | `--json` |
 | `env <tool>` | `--config PATH`, `--port N`; tools: `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, `kilo` |
 | `doctor` | `--config PATH`, `--port N`, `--json` |
+| `privacy` | `--json` |
+| `update` | `--check` |
+| `rules sync` | `--check` |
+| `rules rollback` | none |
 | `version` | none |
 
 See [../README.md](../README.md) for the project overview and [configuration.md](configuration.md) for tool setup.

@@ -172,7 +172,7 @@ Tokenhush 读取 `tokenhush.yaml`。文件缺失就用默认值，未知键会�
 
 ## 安全模型
 
-Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响应内容。它绝不在外发方向回填占位符，不带根证书，也不做 MITM，出错时选择关闭而非放行。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)；漏洞披露方式见 [SECURITY.md](SECURITY.md)（英文）。
+Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响应内容。它绝不在外发方向回填占位符，不带根证书，也不做 MITM，出错时选择关闭而非放行。面向厂商的请求仅有[网络外发披露](docs/generated/network-egress.md)中列出的两个可关、按命令触发的类别——规则同步（已生效，可用 `TOKENHUSH_NO_RULE_SYNC=1` 关闭）与更新检查（计划中），该披露逐项列出字段、服务端可见信息、保留期与关闭方法。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)；漏洞披露方式见 [SECURITY.md](SECURITY.md)（英文）。
 
 ## 文档
 
@@ -183,6 +183,7 @@ Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响�
 | [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md) | `tokenhush.yaml` 参考与各工具配置 |
 | [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) | 核心架构、数据流和模块 |
 | [docs/security.zh-CN.md](docs/security.zh-CN.md) | 安全模型、威胁模型和硬性不变量 |
+| [docs/generated/network-egress.md](docs/generated/network-egress.md) | 生成的数据外发披露：两个可关的厂商外发类别 |
 | [docs/verify.zh-CN.md](docs/verify.zh-CN.md)（[English](docs/verify.md)） | 用本机回显上游自己验证脱敏 |
 | [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`） |
 | [docs/extension-api.zh-CN.md](docs/extension-api.zh-CN.md) | 跨层扩展接口 |
