@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文**
 
-> 本地小工具，把密钥挡在 AI 编码工具的请求之外。100% 在本机运行。
+> 本地小工具，把密钥挡在 AI 编码工具的请求之外。就在你自己的机器上运行。
 
 [![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
@@ -22,7 +22,7 @@ AI 编码工具会把整个项目传到云端，`.env` 文件和 API 密钥也�
 
 ## 为什么需要 Tokenhush
 
-AI 编码工具要有用，就得读到你的代码和配置。可一次请求带出去的东西，往往比你正在编辑的文件多得多：整个仓库、`.env` 文件、各种密钥，都会一起上传。功能可以关，但关了未必一直有效；数据一旦出门，就没有撤销键。Tokenhush 在这些工具前面加一道关卡：每条请求进来，它把像密钥的内容换掉，再把干净的请求转出去。高置信拦截；除了脱敏后的请求，什么都不会离开你的机器。
+AI 编码工具要有用，就得读到你的代码和配置。可一次请求带出去的东西，往往比你正在编辑的文件多得多：整个仓库、`.env` 文件、各种密钥，都会一起上传。功能可以关，但关了未必一直有效；数据一旦出门，就没有撤销键。Tokenhush 在这些工具前面加一道关卡：每条请求进来，它把像密钥的内容换掉，再把干净的请求转出去。高置信拦截；离开本机的，是脱敏后的请求。
 
 ## 功能特性
 

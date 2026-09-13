@@ -5,7 +5,7 @@
 
 ## What this is
 
-A local base-URL gateway. AI coding tools point their API requests at the local machine (for example `ANTHROPIC_BASE_URL=http://127.0.0.1:PORT`). Tokenhush performs outbound redaction (keys / PII / sensitive text), exposes a metadata-only audit seam for the private Pro layer, then backfills the response before returning it to the client. The core itself stores no audit data. Processing is local only; data does not leave the device.
+A local base-URL gateway. AI coding tools point their API requests at the local machine (for example `ANTHROPIC_BASE_URL=http://127.0.0.1:PORT`). Tokenhush performs outbound redaction (keys / PII / sensitive text), exposes a metadata-only audit seam for the private Pro layer, then backfills the response before returning it to the client. The core itself stores no audit data. Processing is local; sensitive content is redacted before a request leaves the device.
 
 This repository is the Apache-2.0 open-source core. The private Pro layer lives in the private Pro repository and builds by importing this repository's Go module. Never put Pro code in this repository.
 

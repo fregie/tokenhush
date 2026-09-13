@@ -13,7 +13,7 @@ Tokenhush is a local base-URL gateway between your AI coding tool and the model 
 - Detect and redact sensitive content (keys, `.env` values, PII) before a request leaves the machine.
 - Onboard tools that accept a `*_BASE_URL` or custom endpoint with almost no setup.
 - Run **cross-platform** on Windows, Linux, and macOS.
-- Process everything locally: **data never leaves the device**.
+- Process requests locally: **sensitive values are redacted on the device before a request goes out**.
 
 **Non-goals (explicitly out of scope for V1)**
 

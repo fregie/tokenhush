@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-> Keeps secrets out of your AI coding tool's requests. 100% local.
+> Keeps secrets out of your AI coding tool's requests. Runs on your machine.
 
 [![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
@@ -22,7 +22,7 @@ Your tool still gets: OPENAI_API_KEY=sk-proj-abc123
 
 ## Why Tokenhush
 
-AI coding tools need to read your code and config to be useful, but a request sends more than the file you're editing: whole repositories, `.env` files, and keys go along too. You can switch features off, but you can't always trust that they stay off, and after the data leaves there's no undo. Tokenhush adds one gate in front of those tools. It reads each request, replaces anything that looks like a secret, and forwards the cleaned request. You get high-confidence interception, and nothing leaves your machine except the redacted request.
+AI coding tools need to read your code and config to be useful, but a request sends more than the file you're editing: whole repositories, `.env` files, and keys go along too. You can switch features off, but you can't always trust that they stay off, and after the data leaves there's no undo. Tokenhush adds one gate in front of those tools. It reads each request, replaces anything that looks like a secret, and forwards the cleaned request. You get high-confidence interception, and what leaves your machine is the redacted request.
 
 ## Features
 
