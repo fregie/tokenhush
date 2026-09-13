@@ -4,6 +4,19 @@
 [extend]
 useDefault = true
 
+# Custom rule: Cloudflare API tokens carry the `cfat_` prefix, which the
+# built-in rule set does not match (that is how the 2026-09 leaked token
+# slipped past the history scan). No path allowlist on purpose: this rule must
+# fire in every file, including untracked and .gitignore'd working-tree files
+# (see scripts/check-secrets.sh).
+[[rules]]
+id = "tokenhush-cloudflare-api-token"
+description = "Cloudflare API token (cfat_ prefix)"
+regex = '''cfat_[A-Za-z0-9_-]{20,}'''
+keywords = [
+  "cfat_",
+]
+
 [[allowlists]]
 description = "Planted fake secrets in test fixtures (not real credentials)"
 paths = [
