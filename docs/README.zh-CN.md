@@ -19,6 +19,7 @@ Tokenhush 是一个本地基础 URL 网关。把 AI 编程工具指向 `http://1
 | [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
 | [migration-v0.3.0.zh-CN.md](migration-v0.3.0.zh-CN.md) | 迁移到 v0.3.0：`pkg/gateway` 装配层、`/v1/models` 具名例外，以及新增 9 个 `env` 工具 |
 | [../CONTRIBUTING.zh-CN.md](../CONTRIBUTING.zh-CN.md) | 构建、测试与贡献流程，包括私有漏洞披露流程 |
+| [../SECURITY.md](../SECURITY.md) | 漏洞披露政策：支持版本、私密报告渠道与响应时间（英文） |
 
 ## 建议阅读路径
 

@@ -65,4 +65,4 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 ## 漏洞披露
 
 > [!CAUTION]
-> **别为漏洞开公开 issue。** 按 [CONTRIBUTING.zh-CN.md](../CONTRIBUTING.zh-CN.md) 的披露流程走。详情等修复发布后再公开。
+> **别为漏洞开公开 issue。** 按 [SECURITY.md](../SECURITY.md)（英文）的披露流程走（支持版本、私密报告与响应时间）。详情等修复发布后再公开。

@@ -61,4 +61,4 @@ The core is Apache-2.0. Paid and enterprise features ship from a private repo th
 > [!CAUTION]
 > Don't report vulnerabilities in a public issue.
 
-Report privately via the repository profile contact or another private channel. We coordinate a fix and publish details only after a release contains it.
+Report privately via the repository profile contact or another private channel. See [SECURITY.md](SECURITY.md) for supported versions, the private reporting channel, and response times. We coordinate a fix and publish details only after a release contains it.

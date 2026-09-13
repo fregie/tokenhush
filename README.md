@@ -172,7 +172,7 @@ Unmatched routes fall back to built-ins: `/v1/messages` goes to Anthropic, and `
 
 ## Security model
 
-Tokenhush binds loopback only, enforces a Host allowlist, and stores no request or response content. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. See [docs/security.md](docs/security.md) for the threat model and full invariants.
+Tokenhush binds loopback only, enforces a Host allowlist, and stores no request or response content. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. See [docs/security.md](docs/security.md) for the threat model and full invariants, and [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
 ## Documentation
 
@@ -188,6 +188,7 @@ Tokenhush binds loopback only, enforces a Host allowlist, and stores no request 
 | [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |
 | [docs/migration-v0.3.0.md](docs/migration-v0.3.0.md) | Migrating to v0.3.0: `pkg/gateway`, the `/v1/models` named exception, and 9 more `env` tools |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute |
+| [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy, supported versions, and response times |
 
 ## Project status
 

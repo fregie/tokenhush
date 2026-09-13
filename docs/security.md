@@ -63,4 +63,4 @@ The V1 strategy is **deterministic, high-precision-first detectors** (known key 
 ## Vulnerability disclosure
 
 > [!CAUTION]
-> **Do not open a public issue** for a vulnerability. Follow the disclosure process in [CONTRIBUTING.md](../CONTRIBUTING.md). Details are published only after a fix has been released.
+> **Do not open a public issue** for a vulnerability. Follow the disclosure process in [SECURITY.md](../SECURITY.md) (supported versions, private reporting, and response times). Details are published only after a fix has been released.

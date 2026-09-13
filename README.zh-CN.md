@@ -172,7 +172,7 @@ Tokenhush 读取 `tokenhush.yaml`。文件缺失就用默认值，未知键会�
 
 ## 安全模型
 
-Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响应内容。它绝不在外发方向回填占位符，不带根证书，也不做 MITM，出错时选择关闭而非放行。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)。
+Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响应内容。它绝不在外发方向回填占位符，不带根证书，也不做 MITM，出错时选择关闭而非放行。威胁模型和完整不变量见 [docs/security.zh-CN.md](docs/security.zh-CN.md)；漏洞披露方式见 [SECURITY.md](SECURITY.md)（英文）。
 
 ## 文档
 
@@ -188,6 +188,7 @@ Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响�
 | [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
 | [docs/migration-v0.3.0.zh-CN.md](docs/migration-v0.3.0.zh-CN.md) | 迁移到 v0.3.0：`pkg/gateway`、`/v1/models` 具名例外，以及新增 9 个 `env` 工具 |
 | [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) | 如何构建、测试和贡献 |
+| [SECURITY.md](SECURITY.md) | 漏洞披露政策、支持版本与响应时间（英文） |
 
 ## 项目状态
 

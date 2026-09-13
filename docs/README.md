@@ -19,6 +19,7 @@ Tokenhush is a local base-URL gateway. Point your AI coding tools at `http://127
 | [migration-v0.2.0.md](migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |
 | [migration-v0.3.0.md](migration-v0.3.0.md) | Migrating to v0.3.0: the `pkg/gateway` assembly layer, the `/v1/models` named exception, and 9 more `env` tools |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Build, test, and contribution workflow, including the private vulnerability disclosure process |
+| [../SECURITY.md](../SECURITY.md) | Vulnerability disclosure policy: supported versions, private reporting channel, and response times |
 
 ## Suggested reading paths
 
