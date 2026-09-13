@@ -10,6 +10,8 @@
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#支持的工具)
 
+**[给仓库加星](https://github.com/fregie/tokenhush/stargazers)** · **[订阅版本更新](https://github.com/fregie/tokenhush/watchers)** · **[官网 tokenhush.com](https://tokenhush.com)**
+
 AI 编码工具会把整个项目传到云端，`.env` 文件和 API 密钥也在里面。上传开关未必可靠，请求一旦发出去，就收不回来。Tokenhush 装在你自己的机器上，夹在工具和模型之间。请求出门之前，它先把真密钥换成占位符；云端只看到占位符，你的工具拿到回复时，真值还在。它只是一个监听本机的小程序，不装根证书，也不动其他应用。
 
 ```text

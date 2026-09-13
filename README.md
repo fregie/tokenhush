@@ -10,6 +10,8 @@
 [![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
 [![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#supported-tools)
 
+**[Star the repo](https://github.com/fregie/tokenhush/stargazers)** · **[Watch releases](https://github.com/fregie/tokenhush/watchers)** · **[tokenhush.com](https://tokenhush.com)**
+
 Your AI coding tool uploads your whole project to the cloud, `.env` files and API keys included. Opt-outs are unreliable, and there's no undo once a request is sent. Tokenhush runs on your machine, between the tool and the model. Before a request leaves, it swaps real secrets for placeholders; the cloud sees only placeholders, and your tool still gets the real values back. It's one small program that listens only on your own machine, installs no root certificate, and doesn't touch other apps.
 
 ```text
