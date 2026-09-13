@@ -154,7 +154,7 @@ func (c *Client) Sync(ctx context.Context, check bool) (SyncResult, error) {
 		return c.reject(check, "rules high-water unreadable", err)
 	}
 	if ok && m.Serial < highest {
-		return c.reject(check, "rules manifest rollback", fmt.Errorf("%w: serial %d below high-water %d", ErrPackReplayed, m.Serial, highest))
+		return c.rejectKeepingActive(check, "rules manifest rollback", fmt.Errorf("%w: serial %d below high-water %d", ErrPackReplayed, m.Serial, highest))
 	}
 	if ok && m.Serial == highest {
 		return SyncResult{Status: SyncCurrent, Serial: m.Serial}, nil
@@ -264,6 +264,23 @@ func (c *Client) reject(check bool, msg string, cause error) (SyncResult, error)
 		_ = c.Cache.SetActive(0)
 	}
 	c.warn(w)
+	return SyncResult{Status: SyncBuiltin, Warnings: []string{w}}, cause
+}
+
+// rejectKeepingActive refuses a replayed or rolled-back candidate without
+// dropping the currently active verified pack. An attacker who can only replay
+// a validly signed older manifest must not be able to force the client onto the
+// built-in defaults or erase the active selection: when the channel later
+// offers the high-water serial again, SyncCurrent keeps the same verified pack
+// active instead of being stuck on the defaults.
+func (c *Client) rejectKeepingActive(check bool, msg string, cause error) (SyncResult, error) {
+	w := fmt.Sprintf("rules: %s: %v; keeping the active verified rule pack", msg, cause)
+	c.warn(w)
+	if !check {
+		if active, err := c.Active(); err == nil && active.Config != nil {
+			return SyncResult{Status: SyncCached, Serial: active.Serial, Warnings: append([]string{w}, active.Warnings...)}, cause
+		}
+	}
 	return SyncResult{Status: SyncBuiltin, Warnings: []string{w}}, cause
 }
 

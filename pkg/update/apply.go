@@ -46,6 +46,10 @@ var (
 	// ErrChannelMismatch reports a validly signed document for a different
 	// channel than the one requested.
 	ErrChannelMismatch = errors.New("update: document channel does not match the requested channel")
+	// ErrPlatformMismatch reports a validly signed manifest for another
+	// os/arch: installing it would replace the running binary with a foreign
+	// artifact.
+	ErrPlatformMismatch = errors.New("update: manifest targets a different os/arch")
 	// ErrMissingConfig reports an incomplete Applier configuration.
 	ErrMissingConfig = errors.New("update: incomplete applier configuration")
 )
@@ -180,6 +184,10 @@ func (a *Applier) Apply(ctx context.Context) (ApplyResult, error) {
 		if cmp == 0 {
 			return ApplyResult{Version: m.Version, Serial: m.Serial, Status: ApplyUpToDate}, nil
 		}
+	}
+	if m.OS != runtime.GOOS || m.Arch != runtime.GOARCH {
+		return ApplyResult{}, fmt.Errorf("%w: manifest targets %s/%s, running %s/%s",
+			ErrPlatformMismatch, m.OS, m.Arch, runtime.GOOS, runtime.GOARCH)
 	}
 	l, err := newLayout(a.target)
 	if err != nil {

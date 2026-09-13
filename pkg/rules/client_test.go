@@ -39,7 +39,6 @@ type fakeRuleBackend struct {
 	revStatus      int
 	manifestCalls  int
 	bundleCalls    int
-	revCalls       int
 }
 
 // sharedTestKey is the single rule key every fake backend signs with, so packs
@@ -124,7 +123,6 @@ func newFakeBackend(t *testing.T, serial uint64, revoked []uint64) *fakeRuleBack
 	})
 	mux.HandleFunc(RevocationsPath, func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
-		b.revCalls++
 		status := b.revStatus
 		body := b.revocations
 		b.mu.Unlock()
@@ -169,19 +167,6 @@ func (b *fakeRuleBackend) setRevStatus(status int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.revStatus = status
-}
-
-// revCallsCount reports how many times the revocation endpoint was fetched.
-func (b *fakeRuleBackend) revCallsCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.revCalls
-}
-
-func (b *fakeRuleBackend) setManifestStatus(status int) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.manifestStatus = status
 }
 
 func (b *fakeRuleBackend) calls() (manifest, bundle int) {
@@ -247,19 +232,6 @@ func newTestClient(t *testing.T, b *fakeRuleBackend, root string, warn *warnReco
 		HTTPClient: b.srv.Client(),
 		Warn:       sink,
 	}
-}
-
-func mustReadCache(t *testing.T, root string, serial uint64) ([]byte, []byte) {
-	t.Helper()
-	cache, err := OpenFileCache(root)
-	if err != nil {
-		t.Fatalf("OpenFileCache: %v", err)
-	}
-	m, b, err := cache.Load(serial)
-	if err != nil {
-		t.Fatalf("Load(%d): %v", serial, err)
-	}
-	return m, b
 }
 
 func TestSyncInstallsVerifiedPack(t *testing.T) {
@@ -369,6 +341,44 @@ func TestSyncRejectsRollbackAndFallsBack(t *testing.T) {
 	}
 	if res.Status != SyncBuiltin {
 		t.Fatalf("status = %v, want builtin-default", res.Status)
+	}
+}
+
+// TestSyncReplayKeepsVerifiedActivePack is the N1 regression: a replayed older
+// (validly signed) manifest must not clear the verified active pack, or a
+// client that is served serial 4 after installing serial 5 would stay on the
+// built-in defaults forever once the channel recovers to serial 5.
+func TestSyncReplayKeepsVerifiedActivePack(t *testing.T) {
+	root := t.TempDir()
+	warn := &warnRecorder{}
+
+	b5 := newFakeBackend(t, 5, nil)
+	c := newTestClient(t, b5, root, warn, testNow)
+	if _, err := c.Sync(context.Background(), false); err != nil {
+		t.Fatalf("install serial 5: %v", err)
+	}
+
+	b4 := newFakeBackend(t, 4, nil)
+	c4 := newTestClient(t, b4, root, warn, testNow)
+	if _, err := c4.Sync(context.Background(), false); !errors.Is(err, ErrPackReplayed) {
+		t.Fatalf("Sync() error = %v, want ErrPackReplayed", err)
+	}
+	if active, ok, _ := c4.Cache.Active(); !ok || active != 5 {
+		t.Fatalf("active = %d,%v, want the verified serial 5 pack preserved after a rollback refusal", active, ok)
+	}
+
+	b5b := newFakeBackend(t, 5, nil)
+	c5 := newTestClient(t, b5b, root, warn, testNow)
+	res, err := c5.Sync(context.Background(), false)
+	if err != nil {
+		t.Fatalf("recovered Sync() error = %v", err)
+	}
+	if res.Status != SyncCurrent || res.Serial != 5 {
+		t.Fatalf("recovered Sync() = %+v, want current serial 5", res)
+	}
+	state, err := c5.Active()
+	if err != nil || state.Config == nil || state.Serial != 5 {
+		t.Fatalf("Active() = %+v,%v, want the verified serial 5 pack", state, err)
 	}
 }
 

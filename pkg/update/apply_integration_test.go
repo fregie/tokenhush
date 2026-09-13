@@ -497,6 +497,31 @@ func TestApplyAbortsWhenRevocationsUnavailable(t *testing.T) {
 	assertUnchanged(t, target, original, b, 0)
 }
 
+// TestApplyRejectsForeignPlatformManifest asserts a validly signed manifest for
+// another os/arch is refused before the artifact is fetched, so a foreign
+// binary can never replace the running one.
+func TestApplyRejectsForeignPlatformManifest(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tokenhush")
+	original := []byte("ORIGINAL-BINARY-0.3.0")
+	writeBinary(t, target, original)
+
+	b := newApplyBackend(t)
+	b.artifact = []byte("FOREIGN-BINARY-0.4.0")
+	v, _, upd := engineVerifier(t, "0.3.0")
+	m := engineManifest(b.artifact, b.artifactURL())
+	m.Version, m.Serial = "0.4.0", 10
+	m.OS, m.Arch = "plan9", "mips"
+	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
+	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
+
+	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	if !errors.Is(err, ErrPlatformMismatch) {
+		t.Fatalf("Apply error = %v, want ErrPlatformMismatch", err)
+	}
+	assertUnchanged(t, target, original, b, 0)
+}
+
 // TestApplyRejectsChannelMismatch asserts a valid document for another channel
 // is refused: the signature proves authenticity, not the requested channel.
 func TestApplyRejectsChannelMismatch(t *testing.T) {
