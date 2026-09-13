@@ -169,7 +169,7 @@ func (a *Applier) Apply(ctx context.Context) (ApplyResult, error) {
 	if candidateRevoked(rev, m) {
 		return ApplyResult{}, fmt.Errorf("%w: version %s", ErrRevoked, m.Version)
 	}
-	if replayed {
+	if replayed && a.appliedAtLeast(m.Serial) {
 		return ApplyResult{Version: m.Version, Serial: m.Serial, Status: ApplyUpToDate}, nil
 	}
 	if cur := a.verifier.CurrentVersion; cur != "" {
@@ -193,6 +193,7 @@ func (a *Applier) Apply(ctx context.Context) (ApplyResult, error) {
 	if err != nil {
 		return ApplyResult{}, err
 	}
+	_ = a.markApplied(m.Serial)
 	status := ApplyUpdated
 	if restart {
 		status = ApplyPending
@@ -209,6 +210,25 @@ func candidateRevoked(rev RevocationList, m Manifest) bool {
 		return true
 	}
 	return slices.Contains(m.RevokedVersions, m.Version) || slices.Contains(m.RevokedSerials, m.Serial)
+}
+
+// appliedAtLeast reports whether serial has already been installed (the applied
+// high-water reaches it). When false a replayed manifest still has to be
+// fetched and installed, so a failed download can never silently suppress the
+// update.
+func (a *Applier) appliedAtLeast(serial uint64) bool {
+	highest, ok, err := a.verifier.store().Highest(KindApplied)
+	return err == nil && ok && highest >= serial
+}
+
+// markApplied records serial as installed. It never moves the mark backwards,
+// so a re-verify of an older-but-installed serial is a no-op.
+func (a *Applier) markApplied(serial uint64) error {
+	hw := a.verifier.store()
+	if highest, ok, err := hw.Highest(KindApplied); err != nil || (ok && serial <= highest) {
+		return nil
+	}
+	return hw.Advance(KindApplied, serial)
 }
 
 // RefusalMessage explains why a non-self-managed install cannot self-update and

@@ -37,6 +37,12 @@ const (
 	KindRevocations = "revocations"
 	// KindKeyList is the root-signed update key list serial sequence.
 	KindKeyList = "keylist"
+	// KindApplied records the highest manifest serial that was actually
+	// installed. It is deliberately separate from KindManifest: verification
+	// advances the manifest high-water before the artifact is fetched, so the
+	// applied mark is what distinguishes "already installed" from "seen but the
+	// download failed", preventing a silent update suppression.
+	KindApplied = "applied"
 )
 
 // Domain-separation tags prefix each signing input so a signature over one

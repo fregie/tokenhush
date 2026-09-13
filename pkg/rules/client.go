@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 )
 
@@ -20,6 +21,10 @@ const (
 	ManifestPath = "/v1/rules/manifest"
 	// BundlePath serves the signed rule bundle for a channel.
 	BundlePath = "/v1/rules/bundle"
+	// RevocationsPath serves the independent signed rule kill-switch document.
+	// It is fetched separately from the manifest so a frozen manifest feed can
+	// never hide a revocation.
+	RevocationsPath = "/v1/rules/revocations"
 )
 
 // DefaultBaseURL is the rule service origin.
@@ -110,6 +115,26 @@ func (c *Client) Sync(ctx context.Context, check bool) (SyncResult, error) {
 	if err := c.validate(); err != nil {
 		return SyncResult{}, err
 	}
+	rawRev, err := c.get(ctx, c.revocationsURL())
+	if err != nil {
+		return c.offline("fetch rules revocations", err)
+	}
+	rev, err := c.Verifier.VerifyRevocations(rawRev)
+	if err != nil {
+		return c.reject(check, "rules revocations rejected", err)
+	}
+	if rev.Channel != c.Channel {
+		return c.reject(check, "rules revocations channel mismatch", ErrChannelMismatch)
+	}
+	if err := c.checkRevocationRollback(rev.Serial); err != nil {
+		return c.reject(check, "rules revocations rollback", err)
+	}
+	if !check {
+		if err := c.storeRevocations(rev); err != nil {
+			return SyncResult{}, fmt.Errorf("rules: persist revocations: %w", err)
+		}
+	}
+
 	rawManifest, err := c.get(ctx, c.manifestURL())
 	if err != nil {
 		return c.offline("fetch rules manifest", err)
@@ -121,7 +146,7 @@ func (c *Client) Sync(ctx context.Context, check bool) (SyncResult, error) {
 	if m.Channel != c.Channel {
 		return c.reject(check, "rules manifest channel mismatch", ErrChannelMismatch)
 	}
-	if rev, rerr := c.Cache.Revoked(); rerr == nil && rev.Revokes(m.Serial) {
+	if rev.Revokes(m.Serial) || c.cachedRevoked(m.Serial) {
 		return c.reject(check, "rules manifest serial revoked", ErrPackRevoked)
 	}
 	highest, ok, err := c.HighWater.Highest(KindRules)
@@ -163,11 +188,72 @@ func (c *Client) Sync(ctx context.Context, check bool) (SyncResult, error) {
 	if err := c.HighWater.Advance(KindRules, m.Serial); err != nil {
 		return SyncResult{}, fmt.Errorf("rules: advance high-water: %w", err)
 	}
-	if err := c.Cache.SetRevoked(RevokedList{Serials: m.RevokedSerials}); err != nil {
+	if err := c.storeRevocations(rev, m.RevokedSerials); err != nil {
 		return SyncResult{}, fmt.Errorf("rules: persist revocation list: %w", err)
 	}
-	c.evictRevoked(m)
 	return SyncResult{Status: SyncUpdated, Serial: m.Serial}, nil
+}
+
+// storeRevocations merges the given serial lists into the persisted revocation
+// list (monotonic: revocations are never dropped), evicts every revoked cached
+// pack and advances the independent revocation high-water mark.
+func (c *Client) storeRevocations(rev RevocationList, extra ...[]uint64) error {
+	cached, err := c.Cache.Revoked()
+	if err != nil {
+		return err
+	}
+	lists := append([][]uint64{cached.Serials, rev.RevokedSerials}, extra...)
+	merged := unionRevoked(lists...)
+	if err := c.Cache.SetRevoked(merged); err != nil {
+		return err
+	}
+	for _, serial := range merged.Serials {
+		_ = c.Cache.Remove(serial)
+	}
+	return c.advanceRevocationHighWater(rev.Serial)
+}
+
+// advanceRevocationHighWater records the accepted independent revocation serial
+// without ever moving the mark backwards.
+func (c *Client) advanceRevocationHighWater(serial uint64) error {
+	highest, ok, err := c.HighWater.Highest(KindRuleRevocations)
+	if err != nil {
+		return err
+	}
+	if ok && serial <= highest {
+		return nil
+	}
+	return c.HighWater.Advance(KindRuleRevocations, serial)
+}
+
+// checkRevocationRollback refuses an independent revocation document whose
+// serial is below the persisted high-water mark, i.e. a rollback attempt.
+func (c *Client) checkRevocationRollback(serial uint64) error {
+	highest, ok, err := c.HighWater.Highest(KindRuleRevocations)
+	if err != nil {
+		return err
+	}
+	if ok && serial < highest {
+		return fmt.Errorf("%w: revocations serial %d below high-water %d", ErrPackReplayed, serial, highest)
+	}
+	return nil
+}
+
+// cachedRevoked reports whether serial is on the persisted revocation list.
+func (c *Client) cachedRevoked(serial uint64) bool {
+	rev, err := c.Cache.Revoked()
+	return err == nil && rev.Revokes(serial)
+}
+
+// unionRevoked merges serial lists into one sorted, deduplicated revocation
+// list.
+func unionRevoked(lists ...[]uint64) RevokedList {
+	var out []uint64
+	for _, l := range lists {
+		out = append(out, l...)
+	}
+	slices.Sort(out)
+	return RevokedList{Serials: slices.Compact(out)}
 }
 
 // reject refuses a received document, records the reason as a warning and, when
@@ -193,15 +279,4 @@ func (c *Client) offline(op string, cause error) (SyncResult, error) {
 	w := fmt.Sprintf("rules: %s failed: %v; no usable cached rules, using built-in defaults", op, cause)
 	c.warn(w)
 	return SyncResult{Status: SyncBuiltin, Warnings: []string{w}}, nil
-}
-
-// evictRevoked deletes cached packs the accepted manifest revokes, so a later
-// rollback can never restore a revoked pack.
-func (c *Client) evictRevoked(m Manifest) {
-	for _, serial := range m.RevokedSerials {
-		if serial == m.Serial {
-			continue
-		}
-		_ = c.Cache.Remove(serial)
-	}
 }

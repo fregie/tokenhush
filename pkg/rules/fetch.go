@@ -27,6 +27,11 @@ func (c *Client) bundleURL() string {
 	return strings.TrimRight(c.BaseURL, "/") + BundlePath + "?channel=" + url.QueryEscape(c.Channel)
 }
 
+// revocationsURL builds the independent rule kill-switch URL.
+func (c *Client) revocationsURL() string {
+	return strings.TrimRight(c.BaseURL, "/") + RevocationsPath + "?channel=" + url.QueryEscape(c.Channel)
+}
+
 // get performs a bounded JSON GET against the rule service.
 func (c *Client) get(ctx context.Context, rawURL string) ([]byte, error) {
 	client := c.HTTPClient

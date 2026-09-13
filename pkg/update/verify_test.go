@@ -73,6 +73,36 @@ func TestVerifyManifestRejectsTamperedManifest(t *testing.T) {
 	}
 }
 
+// TestVerifyManifestRejectsLicenseSignedManifest asserts the update channel
+// trusts only key-list-installed update keys: a manifest signed by a key with a
+// license-style id is unknown and refused. The two trust chains never converge.
+func TestVerifyManifestRejectsLicenseSignedManifest(t *testing.T) {
+	root := newTestKey("root-1", 90)
+	upd := newTestKey("upd-1", 1)
+	license := newTestKey("license-2026a", 42)
+	v := newVerifier(t, root)
+	installKeyList(t, v, root, upd)
+
+	if _, err := v.VerifyManifest(marshalDoc(t, license.signManifest(t, baseManifest()))); !errors.Is(err, ErrUnknownKey) {
+		t.Fatalf("error = %v, want ErrUnknownKey for a license-signed update manifest", err)
+	}
+}
+
+// TestVerifyManifestRejectsPlainHTTPURL asserts a signed document cannot point
+// the artifact download at an unauthenticated origin.
+func TestVerifyManifestRejectsPlainHTTPURL(t *testing.T) {
+	root := newTestKey("root-1", 90)
+	upd := newTestKey("upd-1", 1)
+	v := newVerifier(t, root)
+	installKeyList(t, v, root, upd)
+
+	m := baseManifest()
+	m.URL = "http://dl.tokenhush.com/v0.4.0/tokenhush-linux-amd64"
+	if _, err := v.VerifyManifest(marshalDoc(t, upd.signManifest(t, m))); !errors.Is(err, ErrMalformed) {
+		t.Fatalf("error = %v, want ErrMalformed for a plain-http artifact URL", err)
+	}
+}
+
 // TestVerifyManifestRejectsUnknownKey 断言 key_id 不在已接受密钥集时拒绝。
 func TestVerifyManifestRejectsUnknownKey(t *testing.T) {
 	root := newTestKey("root-1", 90)

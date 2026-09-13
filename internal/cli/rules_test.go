@@ -27,11 +27,13 @@ type cliBackend struct {
 	pub  ed25519.PublicKey
 	priv ed25519.PrivateKey
 
-	mu       sync.Mutex
-	manifest []byte
-	bundle   []byte
+	mu          sync.Mutex
+	manifest    []byte
+	bundle      []byte
+	revocations []byte
 }
 
+// cliNow is the fixed clock the CLI rule tests verify freshness against.
 var cliNow = time.Unix(1_800_000_000, 0)
 
 func newCLIBackend(t *testing.T, serial uint64, revoked []uint64) *cliBackend {
@@ -52,6 +54,12 @@ func newCLIBackend(t *testing.T, serial uint64, revoked []uint64) *cliBackend {
 	mux.HandleFunc(rules.BundlePath, func(w http.ResponseWriter, r *http.Request) {
 		b.mu.Lock()
 		body := b.bundle
+		b.mu.Unlock()
+		_, _ = w.Write(body)
+	})
+	mux.HandleFunc(rules.RevocationsPath, func(w http.ResponseWriter, r *http.Request) {
+		b.mu.Lock()
+		body := b.revocations
 		b.mu.Unlock()
 		_, _ = w.Write(body)
 	})
@@ -96,9 +104,21 @@ func (b *cliBackend) publish(t *testing.T, serial uint64, revoked []uint64) {
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
 	}
+	revocations := rules.RevocationList{
+		Channel:   "stable",
+		Serial:    1,
+		KeyID:     "rules-cli-test",
+		NotBefore: cliNow.Add(-time.Hour),
+		Expires:   cliNow.Add(24 * time.Hour),
+	}
+	revocations.Signature = signB64(b.priv, rules.RevocationSigningInput(revocations))
+	rawRevocations, err := json.Marshal(revocations)
+	if err != nil {
+		t.Fatalf("marshal revocations: %v", err)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.manifest, b.bundle = rawManifest, bundle
+	b.manifest, b.bundle, b.revocations = rawManifest, bundle, rawRevocations
 }
 
 func signB64(priv ed25519.PrivateKey, input []byte) string {

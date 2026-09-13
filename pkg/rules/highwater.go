@@ -17,6 +17,11 @@ import (
 // KindRules names the anti-rollback sequence a rule manifest serial belongs to.
 const KindRules = "rules"
 
+// KindRuleRevocations names the anti-rollback sequence of the independent
+// revocation document. Keeping it separate from KindRules means a revocation
+// cannot be hidden by replaying an otherwise-current manifest.
+const KindRuleRevocations = "rule-revocations"
+
 // HighWaterStore persists the highest accepted serial per document kind.
 type HighWaterStore interface {
 	// Highest returns the highest accepted serial for kind; ok is false when

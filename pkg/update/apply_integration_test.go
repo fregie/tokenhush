@@ -392,6 +392,111 @@ func TestApplyReplayIsIdempotentAndRollbackIsRejected(t *testing.T) {
 	}
 }
 
+// TestApplyFailedDownloadDoesNotSuppressRetry reproduces the high-water
+// suppression bug: verification advances the manifest high-water mark, so a
+// download that fails *after* verification must not make every later run report
+// up-to-date. Once the artifact is reachable again the update must install.
+func TestApplyFailedDownloadDoesNotSuppressRetry(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tokenhush")
+	original := []byte("ORIGINAL-BINARY-0.3.0")
+	writeBinary(t, target, original)
+
+	b := newApplyBackend(t)
+	b.artifact = []byte("NEW-BINARY-0.4.0")
+	v, _, upd := engineVerifier(t, "0.3.0")
+	m := engineManifest(b.artifact, b.artifactURL())
+	m.Version, m.Serial = "0.4.0", 10
+	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
+	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
+	a := newEngine(t, v, b, target, "linux")
+
+	// First run: the artifact endpoint is unavailable, so the download fails
+	// after the manifest already advanced the high-water mark.
+	artifact := b.artifact
+	b.artifact = nil
+	if _, err := a.Apply(context.Background()); err == nil {
+		t.Fatal("first Apply must fail when the artifact is unreachable")
+	}
+	if got := readBinary(t, target); !bytes.Equal(got, original) {
+		t.Fatalf("failed download changed the binary: %q", got)
+	}
+
+	// Second run: the artifact is back. The update must install rather than be
+	// silently reported as up-to-date because the serial was already seen.
+	b.artifact = artifact
+	res, err := a.Apply(context.Background())
+	if err != nil {
+		t.Fatalf("retry Apply: %v", err)
+	}
+	if res.Status != ApplyUpdated {
+		t.Fatalf("retry Apply = %+v, want updated (a failed download must not suppress the update)", res)
+	}
+	if got := readBinary(t, target); !bytes.Equal(got, artifact) {
+		t.Fatalf("retry did not install the artifact: %q", got)
+	}
+}
+
+// TestApplyRejectsUntrustedTLSCertificate asserts the default client refuses an
+// unknown origin: httptest's self-signed certificate is not trusted, so nothing
+// is fetched and the binary is untouched.
+func TestApplyRejectsUntrustedTLSCertificate(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tokenhush")
+	original := []byte("ORIGINAL-BINARY-0.3.0")
+	writeBinary(t, target, original)
+
+	b := newApplyBackend(t)
+	b.artifact = []byte("NEW-BINARY-0.4.0")
+	v, _, upd := engineVerifier(t, "0.3.0")
+	m := engineManifest(b.artifact, b.artifactURL())
+	m.Version, m.Serial = "0.4.0", 10
+	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
+	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
+
+	a, err := NewApplier(ApplyConfig{
+		Source:   Source{Kind: SourceSelfManaged, Exe: target},
+		Channel:  "stable",
+		BaseURL:  b.srv.URL,
+		Verifier: v,
+		GOOS:     "linux",
+	})
+	if err != nil {
+		t.Fatalf("NewApplier: %v", err)
+	}
+	if _, err := a.Apply(context.Background()); err == nil {
+		t.Fatal("Apply must fail when the server certificate is not trusted")
+	}
+	assertUnchanged(t, target, original, b, 0)
+}
+
+// TestApplyAbortsWhenRevocationsUnavailable asserts the independent kill-switch
+// is a hard precondition: an unreachable revocation feed fails closed without
+// ever trusting the manifest.
+func TestApplyAbortsWhenRevocationsUnavailable(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "tokenhush")
+	original := []byte("ORIGINAL-BINARY-0.3.0")
+	writeBinary(t, target, original)
+
+	b := newApplyBackend(t)
+	b.artifact = []byte("NEW-BINARY-0.4.0")
+	v, _, upd := engineVerifier(t, "0.3.0")
+	m := engineManifest(b.artifact, b.artifactURL())
+	m.Version, m.Serial = "0.4.0", 10
+	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
+	b.revRaw = nil
+
+	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	if !errors.Is(err, ErrHTTPStatus) {
+		t.Fatalf("Apply error = %v, want ErrHTTPStatus", err)
+	}
+	if b.manifestHits != 0 {
+		t.Fatalf("manifest fetched %d times, want 0: revocations must be available first", b.manifestHits)
+	}
+	assertUnchanged(t, target, original, b, 0)
+}
+
 // TestApplyRejectsChannelMismatch asserts a valid document for another channel
 // is refused: the signature proves authenticity, not the requested channel.
 func TestApplyRejectsChannelMismatch(t *testing.T) {

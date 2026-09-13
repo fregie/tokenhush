@@ -25,18 +25,21 @@ var testNow = time.Unix(1_800_000_000, 0)
 // fakeRuleBackend serves signed rule manifests and bundles over TLS so tests
 // exercise the real HTTP client without touching the network.
 type fakeRuleBackend struct {
-	srv      *httptest.Server
-	keyID    string
-	pub      ed25519.PublicKey
-	priv     ed25519.PrivateKey
-	manifest []byte
-	bundle   []byte
+	srv         *httptest.Server
+	keyID       string
+	pub         ed25519.PublicKey
+	priv        ed25519.PrivateKey
+	manifest    []byte
+	bundle      []byte
+	revocations []byte
 
 	mu             sync.Mutex
 	manifestStatus int
 	bundleStatus   int
+	revStatus      int
 	manifestCalls  int
 	bundleCalls    int
+	revCalls       int
 }
 
 // sharedTestKey is the single rule key every fake backend signs with, so packs
@@ -92,6 +95,7 @@ func newFakeBackend(t *testing.T, serial uint64, revoked []uint64) *fakeRuleBack
 	}
 	manifest.Signature = signInput(priv, ManifestSigningInput(manifest))
 	b.manifest = mustJSON(t, manifest)
+	b.revocations = mustJSON(t, signedRevocations(priv, b.keyID, 1, nil))
 
 	mux := http.NewServeMux()
 	mux.HandleFunc(ManifestPath, func(w http.ResponseWriter, r *http.Request) {
@@ -118,9 +122,60 @@ func newFakeBackend(t *testing.T, serial uint64, revoked []uint64) *fakeRuleBack
 		}
 		_, _ = w.Write(body)
 	})
+	mux.HandleFunc(RevocationsPath, func(w http.ResponseWriter, r *http.Request) {
+		b.mu.Lock()
+		b.revCalls++
+		status := b.revStatus
+		body := b.revocations
+		b.mu.Unlock()
+		if status != 0 && status != http.StatusOK {
+			w.WriteHeader(status)
+			return
+		}
+		_, _ = w.Write(body)
+	})
 	b.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(b.srv.Close)
 	return b
+}
+
+// signedRevocations builds and signs an independent revocation document.
+func signedRevocations(priv ed25519.PrivateKey, keyID string, serial uint64, revoked []uint64) RevocationList {
+	rev := RevocationList{
+		Channel:        "stable",
+		Serial:         serial,
+		KeyID:          keyID,
+		NotBefore:      testNow.Add(-time.Hour),
+		Expires:        testNow.Add(24 * time.Hour),
+		RevokedSerials: revoked,
+	}
+	rev.Signature = signInput(priv, RevocationSigningInput(rev))
+	return rev
+}
+
+// setRevocations replaces the served independent revocation document.
+func (b *fakeRuleBackend) setRevocations(rev RevocationList) {
+	raw, err := json.Marshal(rev)
+	if err != nil {
+		panic(err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.revocations = raw
+}
+
+// setRevStatus makes the revocation endpoint return a non-200 status.
+func (b *fakeRuleBackend) setRevStatus(status int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.revStatus = status
+}
+
+// revCallsCount reports how many times the revocation endpoint was fetched.
+func (b *fakeRuleBackend) revCallsCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.revCalls
 }
 
 func (b *fakeRuleBackend) setManifestStatus(status int) {
@@ -564,5 +619,138 @@ func TestSyncRejectsChannelMismatch(t *testing.T) {
 	_, err := c.Sync(context.Background(), false)
 	if !errors.Is(err, ErrChannelMismatch) {
 		t.Fatalf("Sync() error = %v, want ErrChannelMismatch", err)
+	}
+}
+
+// TestSyncFreezeCannotHideIndependentRevocation is the B7 gap regression: a
+// pack is revoked by the independent kill-switch document while the client is
+// still served the identical (frozen) manifest. A revocation carried only by a
+// newer manifest could never reach this client; the independent document must.
+func TestSyncFreezeCannotHideIndependentRevocation(t *testing.T) {
+	b := newFakeBackend(t, 5, nil)
+	root := t.TempDir()
+	warn := &warnRecorder{}
+	c := newTestClient(t, b, root, warn, testNow)
+	if _, err := c.Sync(context.Background(), false); err != nil {
+		t.Fatalf("initial Sync() error = %v", err)
+	}
+	if _, _, err := c.Cache.Load(5); err != nil {
+		t.Fatalf("serial 5 missing after install: %v", err)
+	}
+
+	// Same manifest serial 5 (frozen feed), but the separate kill-switch now
+	// revokes serial 5 with a higher revocation serial.
+	_, priv := sharedTestKey()
+	b.setRevocations(signedRevocations(priv, b.keyID, 2, []uint64{5}))
+
+	res, err := c.Sync(context.Background(), false)
+	if !errors.Is(err, ErrPackRevoked) {
+		t.Fatalf("Sync() error = %v, want ErrPackRevoked", err)
+	}
+	if res.Status != SyncBuiltin {
+		t.Fatalf("status = %v, want builtin-default", res.Status)
+	}
+	if _, _, err := c.Cache.Load(5); !errors.Is(err, ErrCacheMiss) {
+		t.Fatalf("revoked serial 5 still cached: %v", err)
+	}
+	state, err := c.Active()
+	if err != nil || state.Config != nil {
+		t.Fatalf("Active() = %+v,%v, want built-in defaults after revocation", state, err)
+	}
+}
+
+// TestSyncRejectsRevocationsRollback asserts the independent revocation
+// document is anti-rollback protected by its own high-water mark, so an
+// attacker cannot replay an older (non-revoking) document.
+func TestSyncRejectsRevocationsRollback(t *testing.T) {
+	b := newFakeBackend(t, 5, nil)
+	root := t.TempDir()
+	warn := &warnRecorder{}
+	c := newTestClient(t, b, root, warn, testNow)
+	_, priv := sharedTestKey()
+	b.setRevocations(signedRevocations(priv, b.keyID, 5, nil))
+	if _, err := c.Sync(context.Background(), false); err != nil {
+		t.Fatalf("initial Sync() error = %v", err)
+	}
+	manifestCalls, _ := b.calls()
+
+	b.setRevocations(signedRevocations(priv, b.keyID, 4, nil))
+	res, err := c.Sync(context.Background(), false)
+	if !errors.Is(err, ErrPackReplayed) {
+		t.Fatalf("Sync() error = %v, want ErrPackReplayed", err)
+	}
+	if res.Status != SyncBuiltin {
+		t.Fatalf("status = %v, want builtin-default", res.Status)
+	}
+	if after, _ := b.calls(); after != manifestCalls {
+		t.Fatalf("manifest fetched after a revocation rollback: %d -> %d", manifestCalls, after)
+	}
+}
+
+// TestSyncRejectsForgedRevocationsBeforeManifest asserts the independent
+// kill-switch is verified first and with the rule trust root: a forged document
+// fails closed without the manifest ever being trusted.
+func TestSyncRejectsForgedRevocationsBeforeManifest(t *testing.T) {
+	b := newFakeBackend(t, 5, nil)
+	root := t.TempDir()
+	c := newTestClient(t, b, root, &warnRecorder{}, testNow)
+	_, priv := sharedTestKey()
+	forged := signedRevocations(priv, b.keyID, 2, nil)
+	forged.Serial = 99
+	b.setRevocations(forged)
+
+	_, err := c.Sync(context.Background(), false)
+	if !errors.Is(err, ErrPackBadSignature) {
+		t.Fatalf("Sync() error = %v, want ErrPackBadSignature", err)
+	}
+	if calls, _ := b.calls(); calls != 0 {
+		t.Fatalf("manifest fetched %d times, want 0: revocations must verify first", calls)
+	}
+}
+
+// TestSyncCheckHonoursIndependentRevocation asserts --check uses the independent
+// kill-switch and still writes nothing.
+func TestSyncCheckHonoursIndependentRevocation(t *testing.T) {
+	b := newFakeBackend(t, 5, nil)
+	root := t.TempDir()
+	c := newTestClient(t, b, root, &warnRecorder{}, testNow)
+	_, priv := sharedTestKey()
+	b.setRevocations(signedRevocations(priv, b.keyID, 2, []uint64{5}))
+
+	res, err := c.Sync(context.Background(), true)
+	if !errors.Is(err, ErrPackRevoked) {
+		t.Fatalf("check Sync() error = %v, want ErrPackRevoked", err)
+	}
+	if res.Status != SyncBuiltin {
+		t.Fatalf("status = %v, want builtin-default", res.Status)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("--check wrote %d entries, want 0", len(entries))
+	}
+}
+
+// TestSyncOfflineWhenRevocationsUnreachable asserts the client fails closed to
+// the verified cache when the independent kill-switch feed is unavailable,
+// rather than accepting a pack whose revocation status is unknown.
+func TestSyncOfflineWhenRevocationsUnreachable(t *testing.T) {
+	b := newFakeBackend(t, 5, nil)
+	root := t.TempDir()
+	warn := &warnRecorder{}
+	c := newTestClient(t, b, root, warn, testNow)
+	if _, err := c.Sync(context.Background(), false); err != nil {
+		t.Fatalf("initial Sync() error = %v", err)
+	}
+	b.setRevStatus(http.StatusInternalServerError)
+
+	res, err := c.Sync(context.Background(), false)
+	if err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	if res.Status != SyncCached || res.Serial != 5 {
+		t.Fatalf("Sync() = %+v, want cached serial 5", res)
 	}
 }

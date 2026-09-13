@@ -127,3 +127,90 @@ func TestVerifyManifestHappy(t *testing.T) {
 		t.Fatalf("tampered manifest error = %v, want ErrPackBadSignature", err)
 	}
 }
+
+// TestVerifyPackRejectsRemovedCategoryEvenWhenSigned covers the second floor
+// vector: a validly signed pack that removes a required category is refused.
+func TestVerifyPackRejectsRemovedCategoryEvenWhenSigned(t *testing.T) {
+	v, priv := testVerifier(t)
+	p := compliantPack()
+	p.DisabledCategories = []string{"credit_card"}
+	p.Signature = signInput(priv, PackSigningInput(p))
+	if _, err := v.VerifyPack(mustJSON(t, p)); !errors.Is(err, ErrFloorRemovesCategory) {
+		t.Fatalf("error = %v, want ErrFloorRemovesCategory", err)
+	}
+}
+
+// TestVerifyPackRejectsAutoAllowEvenWhenSigned covers the third floor vector: a
+// validly signed pack that auto-allows is refused.
+func TestVerifyPackRejectsAutoAllowEvenWhenSigned(t *testing.T) {
+	v, priv := testVerifier(t)
+	p := compliantPack()
+	p.Rules = append(p.Rules, Rule{ID: "open-door", Type: RuleKeyword, Keywords: []string{"x"}, Action: "allow"})
+	p.Signature = signInput(priv, PackSigningInput(p))
+	if _, err := v.VerifyPack(mustJSON(t, p)); !errors.Is(err, ErrFloorAutoAllow) {
+		t.Fatalf("error = %v, want ErrFloorAutoAllow", err)
+	}
+}
+
+// TestVerifyPackAcceptsNarrowing proves the floor only forbids weakening: a
+// signed pack that adds a block rule is still accepted.
+func TestVerifyPackAcceptsNarrowing(t *testing.T) {
+	v, priv := testVerifier(t)
+	p := compliantPack()
+	p.Rules = append(p.Rules, Rule{ID: "tighter", Type: RuleKeyword, Keywords: []string{"secret"}, Action: "block"})
+	p.Signature = signInput(priv, PackSigningInput(p))
+	if _, err := v.VerifyPack(mustJSON(t, p)); err != nil {
+		t.Fatalf("VerifyPack() error = %v, want a tightening pack accepted", err)
+	}
+}
+
+func validRevocations(keyID string, serial uint64, revoked []uint64) RevocationList {
+	return RevocationList{
+		Channel: "stable", Serial: serial, KeyID: keyID,
+		NotBefore: time.Unix(1_740_000_000, 0), Expires: time.Unix(1_760_000_000, 0),
+		RevokedSerials: revoked,
+	}
+}
+
+func TestVerifyRevocationsHappy(t *testing.T) {
+	v, priv := testVerifier(t)
+	r := validRevocations("rules-2026a", 3, []uint64{2, 1})
+	r.Signature = signInput(priv, RevocationSigningInput(r))
+	got, err := v.VerifyRevocations(mustJSON(t, r))
+	if err != nil {
+		t.Fatalf("VerifyRevocations() error = %v", err)
+	}
+	if !got.Revokes(2) || got.Revokes(9) {
+		t.Fatalf("Revokes() = %v, want {2} revoked", got.RevokedSerials)
+	}
+}
+
+func TestVerifyRevocationsRejectsTampered(t *testing.T) {
+	v, priv := testVerifier(t)
+	r := validRevocations("rules-2026a", 3, nil)
+	r.Signature = signInput(priv, RevocationSigningInput(r))
+	r.RevokedSerials = []uint64{5}
+	if _, err := v.VerifyRevocations(mustJSON(t, r)); !errors.Is(err, ErrPackBadSignature) {
+		t.Fatalf("error = %v, want ErrPackBadSignature", err)
+	}
+}
+
+func TestVerifyRevocationsUnknownKey(t *testing.T) {
+	v, priv := testVerifier(t)
+	r := validRevocations("rules-unknown", 3, nil)
+	r.Signature = signInput(priv, RevocationSigningInput(r))
+	if _, err := v.VerifyRevocations(mustJSON(t, r)); !errors.Is(err, ErrPackUnknownKey) {
+		t.Fatalf("error = %v, want ErrPackUnknownKey", err)
+	}
+}
+
+func TestVerifyRevocationsFreshness(t *testing.T) {
+	v, priv := testVerifier(t)
+	r := validRevocations("rules-2026a", 3, nil)
+	r.NotBefore = time.Unix(1_700_000_000, 0)
+	r.Expires = time.Unix(1_730_000_000, 0)
+	r.Signature = signInput(priv, RevocationSigningInput(r))
+	if _, err := v.VerifyRevocations(mustJSON(t, r)); !errors.Is(err, ErrPackExpired) {
+		t.Fatalf("error = %v, want ErrPackExpired", err)
+	}
+}
