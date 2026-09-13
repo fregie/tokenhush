@@ -218,7 +218,28 @@ func validateManifest(m Manifest) error {
 	if m.Serial == 0 {
 		return ErrPackMalformed
 	}
+	if err := checkRevokedSerials(m.RevokedSerials); err != nil {
+		return err
+	}
+	if m.Revokes(m.Serial) {
+		return ErrPackMalformed
+	}
 	return checkWindow(m.NotBefore, m.Expires)
+}
+
+// checkRevokedSerials bounds the signed revocation list. A self-revoking
+// manifest is rejected in validateManifest because a valid manifest may not
+// revoke itself.
+func checkRevokedSerials(serials []uint64) error {
+	if len(serials) > MaxRevokedSerials {
+		return ErrPackMalformed
+	}
+	for _, s := range serials {
+		if s == 0 {
+			return ErrPackMalformed
+		}
+	}
+	return nil
 }
 
 // validatePack checks every pack field not already covered by decode.

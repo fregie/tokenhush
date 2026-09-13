@@ -28,6 +28,7 @@ usage:
   tokenhush doctor   diagnose common setup problems
   tokenhush privacy  show requests that leave your machine for the vendor
   tokenhush update [--check]  upgrade via the owning package manager
+  tokenhush rules <sync|rollback>  sync signed detection rules or roll back
   tokenhush version  print version and build information
 `
 
@@ -54,6 +55,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return privacyCommand(args[1:], stdout, stderr)
 	case "update":
 		return updateCommand(args[1:], stdout, stderr)
+	case "rules":
+		return rulesCommand(args[1:], stdout, stderr)
 	case "status":
 		// W6.7 seam: statusCommand renders the read-only Pro badge when a
 		// valid license file is present by calling proLicenseBadge().

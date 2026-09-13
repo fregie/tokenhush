@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -25,6 +26,9 @@ const MaxPackSize = 256 << 10
 
 // maxPackFieldLen bounds a free-text envelope field (channel/key id/version).
 const maxPackFieldLen = 200
+
+// MaxRevokedSerials bounds the signed revocation list carried by one manifest.
+const MaxRevokedSerials = 4096
 
 // Domain-separation tags prefix each signing payload so a signature over one
 // document type can never be replayed as the other.
@@ -65,7 +69,20 @@ type Manifest struct {
 	Expires          time.Time `json:"expires"`
 	BundleSHA256     string    `json:"bundle_sha256"`
 	Bundle           string    `json:"bundle"`
+	RevokedSerials   []uint64  `json:"revoked_serials,omitempty"`
 	Signature        string    `json:"signature"`
+}
+
+// Revokes reports whether serial appears on the manifest's signed revocation
+// list. The rules schema identifies a pack by its monotonic serial (there is no
+// separate version string), so revocation is by serial.
+func (m Manifest) Revokes(serial uint64) bool {
+	for _, s := range m.RevokedSerials {
+		if s == serial {
+			return true
+		}
+	}
+	return false
 }
 
 // Pack is a signed remote rule pack: the envelope plus the reused rule content.
@@ -132,18 +149,22 @@ func PackSigningInput(p Pack) []byte {
 }
 
 // ManifestSigningInput returns the canonical bytes covered by a manifest
-// signature.
+// signature. Revoked serials are sorted so issuer and verifier agree without
+// JSON canonicalization.
 func ManifestSigningInput(m Manifest) []byte {
+	revoked := append([]uint64(nil), m.RevokedSerials...)
+	slices.Sort(revoked)
 	payload, _ := json.Marshal(struct {
-		Channel          string `json:"channel"`
-		SchemaVersion    int    `json:"schema_version"`
-		MinBinaryVersion string `json:"min_binary_version"`
-		Serial           uint64 `json:"serial"`
-		KeyID            string `json:"key_id"`
-		NotBefore        int64  `json:"not_before"`
-		Expires          int64  `json:"expires"`
-		BundleSHA256     string `json:"bundle_sha256"`
-		Bundle           string `json:"bundle"`
+		Channel          string   `json:"channel"`
+		SchemaVersion    int      `json:"schema_version"`
+		MinBinaryVersion string   `json:"min_binary_version"`
+		Serial           uint64   `json:"serial"`
+		KeyID            string   `json:"key_id"`
+		NotBefore        int64    `json:"not_before"`
+		Expires          int64    `json:"expires"`
+		BundleSHA256     string   `json:"bundle_sha256"`
+		Bundle           string   `json:"bundle"`
+		RevokedSerials   []uint64 `json:"revoked_serials,omitempty"`
 	}{
 		Channel:          m.Channel,
 		SchemaVersion:    m.SchemaVersion,
@@ -154,6 +175,7 @@ func ManifestSigningInput(m Manifest) []byte {
 		Expires:          m.Expires.Unix(),
 		BundleSHA256:     m.BundleSHA256,
 		Bundle:           m.Bundle,
+		RevokedSerials:   revoked,
 	})
 	sum := sha256.Sum256(payload)
 	return []byte(manifestDomain + "\n" + hex.EncodeToString(sum[:]))
