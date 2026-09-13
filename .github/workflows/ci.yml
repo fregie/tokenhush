@@ -48,6 +48,23 @@ jobs:
       - name: Build (CGO_ENABLED=0)
         run: go build ./...
 
+  # Internal Markdown links and heading anchors must resolve. The wording guard
+  # (scripts/check-wording.sh) is delivered here too, but its CI job is enabled
+  # by B9 — after the core no-telemetry invariant and tests are updated to the
+  # two switchable egress categories (ADR-0022). Core docs still carry absolute
+  # wording until then, so running it now would fail by design.
+  link-check:
+    name: link-check (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Internal Markdown links and anchors
+        shell: bash
+        run: bash scripts/check-links.sh
+
   # Egress disclosure guard: egress.yaml is the single machine-readable source
   # of truth. This job regenerates the CLI output and the documentation
   # fragment and fails if they differ from the checked-in files, so a
