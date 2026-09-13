@@ -48,6 +48,29 @@ jobs:
       - name: Build (CGO_ENABLED=0)
         run: go build ./...
 
+  # Egress disclosure guard: egress.yaml is the single machine-readable source
+  # of truth. This job regenerates the CLI output and the documentation
+  # fragment and fails if they differ from the checked-in files, so a
+  # hand-edited disclosure or a manifest changed without regenerating cannot
+  # land (ADR-0022).
+  egress-guard:
+    name: egress-guard (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Egress disclosure guard (egress.yaml -> generated artifacts)
+        shell: bash
+        run: bash scripts/check-egress.sh
+
   # Supply-chain gates (security.md §6): permissive-license
   # allowlist (no GPL/AGPL), secret scan, SPDX SBOM artifact, and a tidy-module
   # check. Runs once on ubuntu-latest; the three-OS matrix above is unaffected.

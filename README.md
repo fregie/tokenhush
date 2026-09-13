@@ -129,6 +129,7 @@ tokenhush status
     tokenhush status       show whether the gateway is running
     tokenhush env <tool>   print tool setup snippets
     tokenhush doctor       diagnose common setup problems
+    tokenhush privacy      show requests that leave your machine for the vendor
     tokenhush version      print version and build information
 <!-- check-docs:commands:end -->
 ```
@@ -139,6 +140,7 @@ tokenhush status
 | `tokenhush status` | Show whether the gateway is running. | `--json` |
 | `tokenhush env <tool>` | Print tool setup snippets. Tools: `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, `kilo`. | `--config PATH`, `--port N` |
 | `tokenhush doctor` | Diagnose common setup problems. Exits `0` when no check fails, `1` on any failure, `2` on a usage error. | `--config PATH`, `--port N`, `--json` |
+| `tokenhush privacy` | Show every request Tokenhush can send to the vendor, what the server observes, and how to switch each category off. | `--json` |
 | `tokenhush version` | Print version and build information. | none |
 
 > [!NOTE]
@@ -172,7 +174,7 @@ Unmatched routes fall back to built-ins: `/v1/messages` goes to Anthropic, and `
 
 ## Security model
 
-Tokenhush binds loopback only, enforces a Host allowlist, and stores no request or response content. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. See [docs/security.md](docs/security.md) for the threat model and full invariants, and [SECURITY.md](SECURITY.md) for how to report a vulnerability.
+Tokenhush binds loopback only, enforces a Host allowlist, and stores no request or response content. It never backfills placeholders outbound, ships no root certificate and no MITM, and fails safe rather than open. Vendor-bound requests are limited to the two switchable categories in the [network egress disclosure](docs/generated/network-egress.md). See [docs/security.md](docs/security.md) for the threat model and full invariants, and [SECURITY.md](SECURITY.md) for how to report a vulnerability.
 
 ## Documentation
 
@@ -183,6 +185,7 @@ Tokenhush binds loopback only, enforces a Host allowlist, and stores no request 
 | [docs/configuration.md](docs/configuration.md) | `tokenhush.yaml` reference and per-tool setup |
 | [docs/architecture.md](docs/architecture.md) | Core architecture, data flow, and modules |
 | [docs/security.md](docs/security.md) | Security model, threat model, and hard invariants |
+| [docs/generated/network-egress.md](docs/generated/network-egress.md) | Generated network egress disclosure: the two switchable vendor-bound categories |
 | [docs/verify.md](docs/verify.md) | Verify redaction yourself with a local echo upstream |
 | [docs/plugins.md](docs/plugins.md) | Writing content plugins (`Inspector` / `Transformer`) |
 | [docs/extension-api.md](docs/extension-api.md) | Cross-layer extension interfaces |

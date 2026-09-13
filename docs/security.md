@@ -60,6 +60,10 @@ The V1 strategy is **deterministic, high-precision-first detectors** (known key 
 - **Release**: signed builds + checksums + SBOM; CI scans dependencies and secrets.
 - **Updates**: Homebrew / Scoop / `curl|sh` signed distribution.
 
+## Network egress
+
+Vendor-bound requests are limited to two switchable categories — update check and rule sync. Both disclose what the server can observe (source IP, timestamp, and Cloudflare access logs) and its retention period. The disclosure is generated from the machine-readable `egress.yaml` manifest, printed by `tokenhush privacy`, and published at [generated/network-egress.md](generated/network-egress.md). In this release both categories are **planned** and are not active; the manifest flips them to `active` only after they ship.
+
 ## Vulnerability disclosure
 
 > [!CAUTION]
