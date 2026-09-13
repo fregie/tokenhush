@@ -447,18 +447,18 @@ func Run(opts Options) error {
 		if opts.Check {
 			existing, err := os.ReadFile(o.path)
 			if err != nil {
-				return fmt.Errorf("egress-gen: %s: %w", o.path, err)
+				return fmt.Errorf("%s: %w", o.path, err)
 			}
 			if !bytes.Equal(existing, o.content) {
-				return fmt.Errorf("egress-gen: %s 与 %s 不一致；请运行 `go run ./cmd/egress-gen` 重新生成", o.path, manifestPath)
+				return fmt.Errorf("%s 与 %s 不一致；请运行 `go run ./cmd/egress-gen` 重新生成", o.path, manifestPath)
 			}
 			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(o.path), 0o755); err != nil {
-			return fmt.Errorf("egress-gen: mkdir %s: %w", filepath.Dir(o.path), err)
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(o.path), err)
 		}
 		if err := os.WriteFile(o.path, o.content, 0o644); err != nil {
-			return fmt.Errorf("egress-gen: write %s: %w", o.path, err)
+			return fmt.Errorf("write %s: %w", o.path, err)
 		}
 	}
 	return nil
