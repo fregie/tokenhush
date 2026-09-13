@@ -87,7 +87,7 @@ detect_os() {
     Darwin) echo "darwin" ;;
     MINGW*|MSYS*|CYGWIN*)
       die "Windows is not supported by this script; use 'scoop install tokenhush' instead" ;;
-    *) die "unsupported operating system: ${uname_s}" ;;
+    *) die "unsupported operating system: ${uname_s}; use 'brew install --cask fregie/tap/tokenhush' on macOS or 'scoop install tokenhush' on Windows, or build from source" ;;
   esac
 }
 
@@ -98,6 +98,56 @@ detect_arch() {
     x86_64|amd64)   echo "amd64" ;;
     aarch64|arm64)  echo "arm64" ;;
     *) die "unsupported architecture: ${uname_m} (supported: amd64, arm64)" ;;
+  esac
+}
+
+# detect_shell - name of the user's login shell ($SHELL), the PATH-hint target.
+detect_shell() {
+  local name
+  name="$(basename "${SHELL:-sh}")"
+  case "$name" in
+    bash|zsh|fish|ksh|mksh|dash|ash|sh) printf '%s\n' "$name" ;;
+    *) printf 'sh\n' ;;
+  esac
+}
+
+# path_rc <shell> - profile file that <shell> reads at startup.
+path_rc() {
+  case "$1" in
+    zsh)  printf '~/.zshrc\n' ;;
+    bash) printf '~/.bashrc\n' ;;
+    fish) printf '~/.config/fish/config.fish\n' ;;
+    *)    printf '~/.profile\n' ;;
+  esac
+}
+
+# path_snippet <shell> <dir> - one-liner that adds <dir> to PATH in <shell>.
+path_snippet() {
+  local shell="$1" dir="$2"
+  case "$shell" in
+    fish) printf 'fish_add_path "%s"\n' "$dir" ;;
+    *)    printf 'export PATH="%s:$PATH"\n' "$dir" ;;
+  esac
+}
+
+# print_next_steps <install_dir> - run the gateway, then make it reachable;
+# shared by the dry-run and install paths. Prints only; never edits rc files.
+print_next_steps() {
+  local dir="$1" shell rc snippet
+  shell="$(detect_shell)"
+  rc="$(path_rc "$shell")"
+  snippet="$(path_snippet "$shell" "$dir")"
+
+  printf '\nNext steps:\n'
+  printf '  Start the gateway:   %s run\n' "$BINARY"
+  printf '  Verify the install:  %s version\n' "$BINARY"
+  printf '\nIf "%s" is not found, add it to your PATH (%s):\n' "$BINARY" "$shell"
+  printf '  echo %s >> %s\n' "'${snippet}'" "$rc"
+  printf '  # or, for this shell only:\n'
+  printf '  %s\n' "$snippet"
+  case ":${PATH}:" in
+    *":${dir}:"*) printf 'note: %s is already on your PATH\n' "$dir" ;;
+    *) printf 'note: %s is not on your PATH\n' "$dir" ;;
   esac
 }
 
@@ -194,6 +244,7 @@ main() {
 
   if [ "$DRY_RUN" -eq 1 ]; then
     printf '[dry-run] verified %s; would install it to %s/%s\n' "$archive" "$INSTALL_DIR" "$BINARY"
+    print_next_steps "$INSTALL_DIR"
     exit 0
   fi
 
@@ -204,12 +255,7 @@ main() {
 
   install -m 0755 "${TMP_DIR}/src/${BINARY}" "${INSTALL_DIR}/${BINARY}"
   printf 'installed %s to %s/%s\n' "$VERSION" "$INSTALL_DIR" "$BINARY"
-
-  case ":${PATH}:" in
-    *":${INSTALL_DIR}:"*) ;;
-    *) printf 'note: %s is not on your PATH\n' "$INSTALL_DIR" ;;
-  esac
-  printf 'run "%s version" to verify the installation\n' "$BINARY"
+  print_next_steps "$INSTALL_DIR"
 }
 
 main "$@"
