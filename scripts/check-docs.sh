@@ -39,6 +39,8 @@ default_docs=(
 	"$repo_root/docs/plugins.zh-CN.md"
 	"$repo_root/docs/security.md"
 	"$repo_root/docs/security.zh-CN.md"
+	"$repo_root/docs/verify.md"
+	"$repo_root/docs/verify.zh-CN.md"
 )
 docs=("${default_docs[@]}" "$@")
 

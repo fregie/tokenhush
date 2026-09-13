@@ -14,6 +14,7 @@ Tokenhush 是一个本地基础 URL 网关。把 AI 编程工具指向 `http://1
 | [configuration.zh-CN.md](configuration.zh-CN.md) | 各工具配置（Claude Code、Codex、Aider、Cline、Roo、opencode、Qwen Code、Charm Crush、Zed、Continue.dev、Open WebUI、Goose、OpenHands、Kilo Code）、路由可达性矩阵与 `tokenhush.yaml` 参考 |
 | [architecture.zh-CN.md](architecture.zh-CN.md) | 请求路径、模块布局与开源核心边界 |
 | [security.zh-CN.md](security.zh-CN.md) | 威胁模型、硬性不变量、检测器取舍与披露 |
+| [verify.zh-CN.md](verify.zh-CN.md)（[English](verify.md)） | 在本机自己验证脱敏：回环回显上游展示离开的占位符与回来的原值 |
 | [plugins.zh-CN.md](plugins.zh-CN.md) | 编写内容插件（Inspector / Transformer） |
 | [extension-api.zh-CN.md](extension-api.zh-CN.md) | 跨层扩展点与注册契约 |
 | [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |

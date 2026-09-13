@@ -183,6 +183,7 @@ Tokenhush binds loopback only, enforces a Host allowlist, and stores no request 
 | [docs/configuration.md](docs/configuration.md) | `tokenhush.yaml` reference and per-tool setup |
 | [docs/architecture.md](docs/architecture.md) | Core architecture, data flow, and modules |
 | [docs/security.md](docs/security.md) | Security model, threat model, and hard invariants |
+| [docs/verify.md](docs/verify.md) | Verify redaction yourself with a local echo upstream |
 | [docs/plugins.md](docs/plugins.md) | Writing content plugins (`Inspector` / `Transformer`) |
 | [docs/extension-api.md](docs/extension-api.md) | Cross-layer extension interfaces |
 | [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |

@@ -183,6 +183,7 @@ Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响�
 | [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md) | `tokenhush.yaml` 参考与各工具配置 |
 | [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) | 核心架构、数据流和模块 |
 | [docs/security.zh-CN.md](docs/security.zh-CN.md) | 安全模型、威胁模型和硬性不变量 |
+| [docs/verify.zh-CN.md](docs/verify.zh-CN.md)（[English](docs/verify.md)） | 用本机回显上游自己验证脱敏 |
 | [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`） |
 | [docs/extension-api.zh-CN.md](docs/extension-api.zh-CN.md) | 跨层扩展接口 |
 | [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
