@@ -13,7 +13,7 @@ import (
 )
 
 // testUpdated 是固定日期，保证所有渲染断言与 egress.yaml 的实际内容解耦。
-const testUpdated = "2026-09-13"
+const testUpdated = "2026-09-14"
 
 // fieldsFor 返回一份新的字段切片，避免多个条目共享底层数组。
 func fieldsFor() []Field {
@@ -96,13 +96,14 @@ func TestLoadManifest(t *testing.T) {
 	for _, it := range m.Items {
 		byID[it.ID] = it
 	}
-	// B9：rule-sync 已由 `tokenhush rules sync` 落地为 active；update-check 的自更新
-	// 引擎尚未接线到 CLI，按 ADR-0022 保持 planned，不得写成现有行为。
+	// rule-sync 与 update-check 均已接线到 CLI（`rules sync`；`update` 的联网
+	// 检查 + self-managed 自更新），二者在 egress.yaml 中均为 active；任何一方
+	// 未实现即不得标 active。
 	if got := byID["rule-sync"].Status; got != StatusActive {
 		t.Errorf("rule-sync status = %q, want %q", got, StatusActive)
 	}
-	if got := byID["update-check"].Status; got != StatusPlanned {
-		t.Errorf("update-check status = %q, want %q", got, StatusPlanned)
+	if got := byID["update-check"].Status; got != StatusActive {
+		t.Errorf("update-check status = %q, want %q", got, StatusActive)
 	}
 
 	upd, ok := byID["update-check"]

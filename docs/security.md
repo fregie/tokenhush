@@ -68,9 +68,9 @@ Vendor-bound requests are limited to two switchable, command-scoped categories �
 | Category | Command | Status |
 |---|---|---|
 | Rule sync | `tokenhush rules sync` | **Active** — fetches the signed rule manifest and bundle from `updates.tokenhush.com` |
-| Update check | `tokenhush update` (self-managed install) | **Planned** — the self-update engine is not wired to the CLI yet, so no request is made |
+| Update check | `tokenhush update` (self-managed install) | **Active** — fetches the root-signed key-list and the signed update manifest over HTTPS when you run `tokenhush update` (or `--check`) |
 
-Both disclose what the server can observe (source IP, timestamp, and Cloudflare access logs) and its retention period, and both can be switched off: set `TOKENHUSH_NO_RULE_SYNC=1` to make `rules sync` refuse without any network request, and the disclosure lists the update-check switch for when that category is active. The disclosure is generated from the machine-readable [`egress.yaml`](../egress.yaml) manifest, printed by `tokenhush privacy`, and published at [generated/network-egress.md](generated/network-egress.md). The scope is locked by `TestNoTelemetry` in `pkg/proxy`, which proves the data plane never dials a vendor host even for vendor-looking paths.
+Both disclose what the server can observe (source IP, timestamp, and Cloudflare access logs) and its retention period, and both can be switched off: set `TOKENHUSH_NO_RULE_SYNC=1` to make `rules sync` refuse without any network request, and set `TOKENHUSH_NO_UPDATE_CHECK=1` to make `tokenhush update` return before any network request. The disclosure is generated from the machine-readable [`egress.yaml`](../egress.yaml) manifest, printed by `tokenhush privacy`, and published at [generated/network-egress.md](generated/network-egress.md). The scope is locked by `TestNoTelemetry` in `pkg/proxy`, which proves the data plane never dials a vendor host even for vendor-looking paths.
 
 ## Vulnerability disclosure
 

@@ -15,16 +15,18 @@
 #     修改既定的外发披露决策，而不是直接改本文件。
 #   - status: active 表示该外发在当前构建中已生效；planned 表示已披露但尚未
 #     实现。rule-sync 已由 `tokenhush rules sync` 落地，故为 active；update-check
-#     的自更新引擎（B5）尚未接线到 CLI，且缺少生产根密钥与 key-list 分发路径，
-#     无法真正生效，按 ADR-0022 保持 planned（不得把 planned 写成现有行为）。
+#     的命令行自更新分支与联网检查（根签名 key-list → 更新密钥 → 更新清单）也已
+#     接线到 `tokenhush update`（含 --check，仅 self-managed），故为 active。
+#     真实签名内容（manifest / revocations / key-list）的发布属 owner 离线仪式，
+#     未发布时读取面返回 404，但外发类别本身已生效；不得把未实现能力写成现有行为。
 #   - 本文件位于公开核心仓库，正文不得引用私有仓库路径或私有决策编号。
 
 version: 1
-updated: "2026-09-13"
+updated: "2026-09-14"
 
 items:
   - id: update-check
-    status: planned
+    status: active
     host: updates.tokenhush.com
     title:
       en: Update check
@@ -70,11 +72,15 @@ items:
           zh: Cloudflare 访问日志（路径、时间、来源 IP、User-Agent）。
     switch:
       en: >-
-        When this category is active, set `auto_update: false` in tokenhush.yaml,
-        or set the environment variable `TOKENHUSH_NO_UPDATE_CHECK=1`.
+        The check runs only when you run `tokenhush update` (including `--check`)
+        on a self-managed install; Homebrew and Scoop installs are handed to
+        their package manager. Set the environment variable
+        `TOKENHUSH_NO_UPDATE_CHECK=1` to make the command return before any
+        network request.
       zh: >-
-        该类别生效后，可在 tokenhush.yaml 设 `auto_update: false`，
-        或设置环境变量 `TOKENHUSH_NO_UPDATE_CHECK=1` 关闭。
+        更新检查只在 self-managed 安装上运行 `tokenhush update`（含 `--check`）时
+        发生；Homebrew 与 Scoop 安装交由各自的包管理器处理。设置环境变量
+        `TOKENHUSH_NO_UPDATE_CHECK=1` 可使该命令在发起任何网络请求前直接返回。
     default: enabled
     retention:
       en: Cloudflare access logs and request records are retained for 30 days.

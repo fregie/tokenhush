@@ -70,9 +70,9 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 | 类别 | 命令 | 状态 |
 |---|---|---|
 | 规则同步 | `tokenhush rules sync` | **已生效** —— 从 `updates.tokenhush.com` 获取已签名的规则清单与规则包 |
-| 更新检查 | `tokenhush update`（self-managed 安装） | **计划中** —— 自更新引擎尚未接线到 CLI，因此不会发起请求 |
+| 更新检查 | `tokenhush update`（self-managed 安装） | **已生效** —— 运行 `tokenhush update`（或 `--check`）时经 HTTPS 获取根签名 key-list 与已签名更新清单 |
 
-两者都披露服务端可观察到的信息（来源 IP、时间戳与 Cloudflare 访问日志）及其保留期，且均可关闭：设置 `TOKENHUSH_NO_RULE_SYNC=1` 可让 `rules sync` 拒绝同步且不发起任何网络请求；更新检查的关闭方法在其类别生效后由披露列出。披露由机器可读的 [`egress.yaml`](../egress.yaml) 生成，由 `tokenhush privacy` 打印，并发布在 [generated/network-egress.md](generated/network-egress.md)。该范围由 `pkg/proxy` 的 `TestNoTelemetry` 锁定，证明数据面即使面对形似厂商端点的路径也绝不外发到厂商主机。
+两者都披露服务端可观察到的信息（来源 IP、时间戳与 Cloudflare 访问日志）及其保留期，且均可关闭：设置 `TOKENHUSH_NO_RULE_SYNC=1` 可让 `rules sync` 拒绝同步且不发起任何网络请求；设置 `TOKENHUSH_NO_UPDATE_CHECK=1` 可让 `tokenhush update` 在发起任何网络请求前直接返回。披露由机器可读的 [`egress.yaml`](../egress.yaml) 生成，由 `tokenhush privacy` 打印，并发布在 [generated/network-egress.md](generated/network-egress.md)。该范围由 `pkg/proxy` 的 `TestNoTelemetry` 锁定，证明数据面即使面对形似厂商端点的路径也绝不外发到厂商主机。
 
 ## 漏洞披露
 

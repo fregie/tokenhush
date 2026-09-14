@@ -6,12 +6,12 @@ package cli
 const egressGeneratedText = "" +
 	"Tokenhush network egress disclosure\n" +
 	"===================================\n" +
-	"Generated from egress.yaml (version 1, updated 2026-09-13). Do not edit by hand.\n" +
+	"Generated from egress.yaml (version 1, updated 2026-09-14). Do not edit by hand.\n" +
 	"\n" +
 	"Vendor-bound requests are limited to the two switchable categories below.\n" +
 	"Each can be switched off. Categories marked [PLANNED] are not active in this build.\n" +
 	"\n" +
-	"[PLANNED] Update check (update-check)\n" +
+	"[ACTIVE] Update check (update-check)\n" +
 	"  Host: updates.tokenhush.com\n" +
 	"  Purpose: Check for a signed release: the update manifest, its signed revocation document, and the root-signed key-list. These share one host and one switch and are one egress category, not three.\n" +
 	"  Sent to the server:\n" +
@@ -22,7 +22,7 @@ const egressGeneratedText = "" +
 	"    - ip: Source IP address of the request, visible to the server.\n" +
 	"    - timestamp: Request time recorded by the server.\n" +
 	"    - access_logs: Cloudflare access logs (path, time, source IP, User-Agent).\n" +
-	"  How to switch off: When this category is active, set `auto_update: false` in tokenhush.yaml, or set the environment variable `TOKENHUSH_NO_UPDATE_CHECK=1`.\n" +
+	"  How to switch off: The check runs only when you run `tokenhush update` (including `--check`) on a self-managed install; Homebrew and Scoop installs are handed to their package manager. Set the environment variable `TOKENHUSH_NO_UPDATE_CHECK=1` to make the command return before any network request.\n" +
 	"  Default (when active): enabled\n" +
 	"  Retention: Cloudflare access logs and request records are retained for 30 days.\n" +
 	"\n" +
@@ -45,11 +45,11 @@ const egressGeneratedText = "" +
 const egressGeneratedJSON = "" +
 	"{\n" +
 	"  \"version\": 1,\n" +
-	"  \"updated\": \"2026-09-13\",\n" +
+	"  \"updated\": \"2026-09-14\",\n" +
 	"  \"items\": [\n" +
 	"    {\n" +
 	"      \"id\": \"update-check\",\n" +
-	"      \"status\": \"planned\",\n" +
+	"      \"status\": \"active\",\n" +
 	"      \"host\": \"updates.tokenhush.com\",\n" +
 	"      \"title\": {\n" +
 	"        \"en\": \"Update check\",\n" +
@@ -110,8 +110,8 @@ const egressGeneratedJSON = "" +
 	"        }\n" +
 	"      ],\n" +
 	"      \"switch\": {\n" +
-	"        \"en\": \"When this category is active, set `auto_update: false` in tokenhush.yaml, or set the environment variable `TOKENHUSH_NO_UPDATE_CHECK=1`.\",\n" +
-	"        \"zh\": \"该类别生效后，可在 tokenhush.yaml 设 `auto_update: false`， 或设置环境变量 `TOKENHUSH_NO_UPDATE_CHECK=1` 关闭。\"\n" +
+	"        \"en\": \"The check runs only when you run `tokenhush update` (including `--check`) on a self-managed install; Homebrew and Scoop installs are handed to their package manager. Set the environment variable `TOKENHUSH_NO_UPDATE_CHECK=1` to make the command return before any network request.\",\n" +
+	"        \"zh\": \"更新检查只在 self-managed 安装上运行 `tokenhush update`（含 `--check`）时 发生；Homebrew 与 Scoop 安装交由各自的包管理器处理。设置环境变量 `TOKENHUSH_NO_UPDATE_CHECK=1` 可使该命令在发起任何网络请求前直接返回。\"\n" +
 	"      },\n" +
 	"      \"default\": \"enabled\",\n" +
 	"      \"retention\": {\n" +

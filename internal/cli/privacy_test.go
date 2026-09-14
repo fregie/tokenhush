@@ -45,7 +45,7 @@ func TestPrivacyCommand(t *testing.T) {
 	if len(m.Items) != 2 {
 		t.Fatalf("privacy --json items = %d, want 2", len(m.Items))
 	}
-	wantStatus := map[string]string{"rule-sync": "active", "update-check": "planned"}
+	wantStatus := map[string]string{"rule-sync": "active", "update-check": "active"}
 	for _, it := range m.Items {
 		if want, ok := wantStatus[it.ID]; ok && it.Status != want {
 			t.Errorf("%s status = %q, want %q", it.ID, it.Status, want)

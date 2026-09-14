@@ -13,6 +13,22 @@ become active only after the corresponding release.
 
 ## Active
 
+### Update check (`update-check`)
+
+- **Host:** `updates.tokenhush.com`
+- **Purpose:** Check for a signed release: the update manifest, its signed revocation document, and the root-signed key-list. These share one host and one switch and are one egress category, not three.
+- **Default when active:** `enabled`
+- **Switch off:** The check runs only when you run `tokenhush update` (including `--check`) on a self-managed install; Homebrew and Scoop installs are handed to their package manager. Set the environment variable `TOKENHUSH_NO_UPDATE_CHECK=1` to make the command return before any network request.
+- **Server can observe:**
+  - `ip` — Source IP address of the request, visible to the server.
+  - `timestamp` — Request time recorded by the server.
+  - `access_logs` — Cloudflare access logs (path, time, source IP, User-Agent).
+- **Sent to the server:**
+  - `channel` — Release channel requested (for example stable or beta).
+  - `os_arch` — Operating system and CPU architecture of the running binary.
+  - `current_version` — Current binary version, so the server can tell whether an update exists.
+- **Retention:** Cloudflare access logs and request records are retained for 30 days.
+
 ### Rule sync (`rule-sync`)
 
 - **Host:** `updates.tokenhush.com`
@@ -31,18 +47,4 @@ become active only after the corresponding release.
 
 ## Planned
 
-### Update check (`update-check`)
-
-- **Host:** `updates.tokenhush.com`
-- **Purpose:** Check for a signed release: the update manifest, its signed revocation document, and the root-signed key-list. These share one host and one switch and are one egress category, not three.
-- **Default when active:** `enabled`
-- **Switch off:** When this category is active, set `auto_update: false` in tokenhush.yaml, or set the environment variable `TOKENHUSH_NO_UPDATE_CHECK=1`.
-- **Server can observe:**
-  - `ip` — Source IP address of the request, visible to the server.
-  - `timestamp` — Request time recorded by the server.
-  - `access_logs` — Cloudflare access logs (path, time, source IP, User-Agent).
-- **Sent to the server:**
-  - `channel` — Release channel requested (for example stable or beta).
-  - `os_arch` — Operating system and CPU architecture of the running binary.
-  - `current_version` — Current binary version, so the server can tell whether an update exists.
-- **Retention:** Cloudflare access logs and request records are retained for 30 days.
+None in this build.

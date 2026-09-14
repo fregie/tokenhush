@@ -363,7 +363,7 @@ rm "$(command -v tokenhush)"
 - **不装根证书，不做 MITM。** 公开核心不装 CA，也不拦 TLS。请求以纯 HTTP 打到 localhost 上的网关，它才看得到并脱敏内容。
 - **绝不向出站回填。** 占位符只在返回客户端的响应里还原。出站请求里，网关绝不把占位符改回秘密，挡住了提示注入外泄。
 - **失败时偏保守，不放行。** 检测器拿不准时，Tokenhush 宁可过度脱敏或直接阻断并记告警，也不悄悄放出一个秘密。
-- **两个已披露、可关闭的外发类别。** 面向厂商的请求仅有规则同步（已生效；`tokenhush rules sync`，可用 `TOKENHUSH_NO_RULE_SYNC=1` 关闭）与更新检查（计划中）。每个类别的字段、服务端可见信息、保留期与关闭方法见生成的数据外发披露 [network-egress.md](generated/network-egress.md)，也可用 `tokenhush privacy` 打印。
+- **两个已披露、可关闭的外发类别。** 面向厂商的请求仅有规则同步（已生效；`tokenhush rules sync`，可用 `TOKENHUSH_NO_RULE_SYNC=1` 关闭）与更新检查（已生效；`tokenhush update`，可用 `TOKENHUSH_NO_UPDATE_CHECK=1` 关闭）。每个类别的字段、服务端可见信息、保留期与关闭方法见生成的数据外发披露 [network-egress.md](generated/network-egress.md)，也可用 `tokenhush privacy` 打印。
 
 完整的威胁模型和不变量见 [security.zh-CN.md](security.zh-CN.md)。请求路径和模块布局见 [architecture.zh-CN.md](architecture.zh-CN.md)。
 
