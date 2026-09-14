@@ -16,26 +16,28 @@ import (
 	"time"
 )
 
-// bootstrapRootKeyID names the root public key compiled into this build. It is
-// a placeholder for the Plan B offline root ceremony: the owner generates the
-// production root offline and replaces this entry (and its key id) at release.
-// Tests inject their own roots and never depend on this value.
-const bootstrapRootKeyID = "root-bootstrap-2026-09"
+// rootKeyID names the production update trust root compiled into this build.
+// The owner generated the key pair offline during the signing ceremony (ADR-0021);
+// only the public half ships here. The root signs key lists and nothing else:
+// update keys are the online signers, so the root stays offline and a leaked
+// update key never requires the root to go online.
+const rootKeyID = "root-2026-09"
 
-// bootstrapRootPublic is a public-only bootstrap root key. The matching private
-// key is not committed and not held by this build; it exists solely so the
-// trust-root field is populated until the offline root ceremony lands.
-var bootstrapRootPublic = ed25519.PublicKey{
-	0xdd, 0x7a, 0x11, 0x25, 0xbe, 0xb4, 0xcf, 0x1e,
-	0x79, 0x68, 0xcf, 0x6c, 0x75, 0x95, 0x02, 0xdc,
-	0x48, 0xa4, 0xba, 0x76, 0x06, 0xf4, 0x7d, 0xcc,
-	0x19, 0xb2, 0x63, 0xb0, 0x16, 0x08, 0x6c, 0xe1,
+// rootPublic is the production public-only root key. The matching private half
+// is held by the owner offline and is never committed or embedded. It verifies
+// only root-signed key lists (see ApplyKeyList); manifests and revocation
+// documents are signed by the update keys a key list advertises.
+var rootPublic = ed25519.PublicKey{
+	0xe9, 0x7d, 0xd2, 0xcf, 0xed, 0x5c, 0xf6, 0xee,
+	0x62, 0xc9, 0x20, 0x24, 0x1c, 0xc4, 0x91, 0xe0,
+	0xcb, 0xf1, 0x3f, 0x2f, 0x35, 0xd8, 0x55, 0x7b,
+	0x92, 0x3a, 0xea, 0x77, 0xe1, 0xc7, 0x66, 0xf4,
 }
 
 // DefaultRoots returns the embedded root public key set. Root rotation works
 // by shipping a new build whose set contains both the old and the new root.
 func DefaultRoots() []Key {
-	return []Key{{ID: bootstrapRootKeyID, Public: bootstrapRootPublic}}
+	return []Key{{ID: rootKeyID, Public: rootPublic}}
 }
 
 // UpdateKey is one online signing key advertised by a root-signed key list.
@@ -86,6 +88,15 @@ func KeyListSigningInput(k KeyList) []byte {
 // v. It refuses untrusted roots, stale nonces (replay), expired documents and
 // malformed keys, so a replayed pre-recovery list cannot restore a leaked key.
 func (v *Verifier) ApplyKeyList(raw []byte) error {
+	return v.applyKeyList(raw, false)
+}
+
+// applyKeyList verifies and installs a key list. When allowReplay is true an
+// identical re-fetch of the highest accepted serial is tolerated and the keys
+// are reinstalled, mirroring reverifyManifest: a lower serial is a rollback and
+// stays rejected. The online client uses allowReplay so a second run against
+// the same key list is not mistaken for an attack.
+func (v *Verifier) applyKeyList(raw []byte, allowReplay bool) error {
 	if len(raw) > MaxDocumentSize {
 		return ErrTooLarge
 	}
@@ -114,10 +125,19 @@ func (v *Verifier) ApplyKeyList(raw []byte) error {
 		return err
 	}
 	if err := v.admit(KindKeyList, kl.Serial); err != nil {
-		return err
+		if !allowReplay || !errors.Is(err, ErrReplayed) || !v.keyListAtHighWater(kl.Serial) {
+			return err
+		}
 	}
 	v.updateKeys = keys
 	return nil
+}
+
+// keyListAtHighWater reports whether serial is exactly the persisted key-list
+// high-water mark, i.e. an identical re-fetch rather than a rollback.
+func (v *Verifier) keyListAtHighWater(serial uint64) bool {
+	highest, ok, err := v.store().Highest(KindKeyList)
+	return err == nil && ok && serial == highest
 }
 
 // Freshness reports the key list's validity state at now.

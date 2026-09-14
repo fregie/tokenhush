@@ -29,7 +29,15 @@ const (
 	ManifestPath = "/v1/update/manifest"
 	// RevocationsPath serves the independent signed kill-switch document.
 	RevocationsPath = "/v1/update/revocations"
+	// KeyListPath serves the root-signed update key list for a channel.
+	KeyListPath = "/v1/update/keylist"
 )
+
+// DefaultBaseURL is the update service origin.
+const DefaultBaseURL = "https://updates.tokenhush.com"
+
+// DefaultChannel is the release channel checked unless overridden.
+const DefaultChannel = "stable"
 
 // Errors classify engine refusals. Callers branch on them with errors.Is.
 var (

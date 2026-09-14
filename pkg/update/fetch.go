@@ -97,12 +97,21 @@ func (a *Applier) atHighWater(kind string, serial uint64) bool {
 
 // get performs a bounded JSON GET against the update service.
 func (a *Applier) get(ctx context.Context, rawURL string) ([]byte, error) {
+	return httpGet(ctx, a.client, rawURL)
+}
+
+// httpGet performs a bounded JSON GET. The update engine and the check client
+// share it so both inherit one https-only, size-bounded path.
+func httpGet(ctx context.Context, client *http.Client, rawURL string) ([]byte, error) {
+	if client == nil {
+		client = defaultApplyClient()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := a.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}

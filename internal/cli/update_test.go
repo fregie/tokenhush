@@ -15,15 +15,30 @@ import (
 
 // stubUpdate replaces the two update seams for the duration of a test. The
 // detection seam returns src; the runner seam is run (which must be non-nil so
-// no test can reach the real exec path).
+// no test can reach the real exec path). The engine seam fails the test unless
+// the test installs its own via stubUpdateEngine, so a self-managed path can
+// never reach the network by accident.
 func stubUpdate(t *testing.T, src update.Source, run func(context.Context, string, []string) (string, error)) {
 	t.Helper()
-	origSource, origRun := updateDetectSource, updateRunCommand
+	origSource, origRun, origEngine := updateDetectSource, updateRunCommand, updateNewEngine
 	t.Cleanup(func() {
-		updateDetectSource, updateRunCommand = origSource, origRun
+		updateDetectSource, updateRunCommand, updateNewEngine = origSource, origRun, origEngine
 	})
 	updateDetectSource = func() update.Source { return src }
 	updateRunCommand = run
+	updateNewEngine = func(update.Source, bool) (*updateEngine, error) {
+		t.Fatal("test did not expect the online update engine to be built")
+		return nil, nil
+	}
+}
+
+// stubUpdateEngine installs an in-test engine builder. Call it after stubUpdate
+// so the guard it replaces is itself restored on cleanup.
+func stubUpdateEngine(t *testing.T, fn func(update.Source, bool) (*updateEngine, error)) {
+	t.Helper()
+	orig := updateNewEngine
+	t.Cleanup(func() { updateNewEngine = orig })
+	updateNewEngine = fn
 }
 
 // failIfRun is the runner for paths that must not execute anything.
@@ -115,30 +130,19 @@ func TestUpdateCommandScoopDelegatesToManager(t *testing.T) {
 	}
 }
 
-// TestUpdateCommandSelfManagedIsNoticeOnly is the failure-path guard: a
-// self-managed install must run nothing and write nothing.
-func TestUpdateCommandSelfManagedIsNoticeOnly(t *testing.T) {
-	dir := t.TempDir()
-	exe := filepath.Join(dir, ".local", "bin", "tokenhush")
-	if err := os.MkdirAll(filepath.Dir(exe), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(exe, []byte("ORIGINAL"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	before := snapshotTree(t, dir)
-
-	stubUpdate(t, update.Source{Kind: update.SourceSelfManaged, Exe: exe}, failIfRun(t))
+// TestUpdateCommandSelfManagedDisabledMakesNoRequest asserts the update-check
+// switch stops a self-managed run before any engine is built, so no request
+// leaves the machine.
+func TestUpdateCommandSelfManagedDisabledMakesNoRequest(t *testing.T) {
+	t.Setenv(EnvNoUpdateCheck, "1")
+	stubUpdate(t, update.Source{Kind: update.SourceSelfManaged, Exe: "/home/me/.local/bin/tokenhush"}, failIfRun(t))
 
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"update"}, &stdout, &stderr); code != ExitOK {
-		t.Fatalf("update exit = %d, want %d (stderr %q)", code, ExitOK, stderr.String())
+	if code := Run([]string{"update", "--check"}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("update --check exit = %d, want %d (stderr %q)", code, ExitOK, stderr.String())
 	}
-	if after := snapshotTree(t, dir); !reflect.DeepEqual(before, after) {
-		t.Fatalf("self-managed must not write anything: before=%v after=%v", before, after)
-	}
-	if !strings.Contains(stdout.String(), "later release") {
-		t.Errorf("self-managed notice must mention the later release, got %q", stdout.String())
+	if !strings.Contains(stdout.String(), EnvNoUpdateCheck) {
+		t.Errorf("output must name the switch, got %q", stdout.String())
 	}
 }
 
@@ -160,10 +164,10 @@ func TestUpdateCommandUnknownGivesManualGuidance(t *testing.T) {
 }
 
 // TestUpdateCommandCheckDoesNotInstall asserts --check reports the source and
-// runs nothing, for every detected kind.
+// runs nothing, for every package-managed or unknown kind.
 func TestUpdateCommandCheckDoesNotInstall(t *testing.T) {
 	for _, kind := range []update.SourceKind{
-		update.SourceBrew, update.SourceScoop, update.SourceSelfManaged, update.SourceUnknown,
+		update.SourceBrew, update.SourceScoop, update.SourceUnknown,
 	} {
 		stubUpdate(t, update.Source{Kind: kind, Exe: "/opt/homebrew/Cellar/tokenhush/0.3.0/bin/tokenhush"}, failIfRun(t))
 
