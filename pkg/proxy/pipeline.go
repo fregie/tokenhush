@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/fregie/tokenhush/pkg/audit"
@@ -70,6 +71,11 @@ type Pipeline struct {
 	engine   *redact.PlaceholderEngine
 	sink     audit.AuditSink
 	tool     string
+
+	// reporter, when set, receives one masked event per replaced span and per
+	// policy block. It is an atomic pointer so a reporter installed before Run
+	// is read race-free by every request goroutine. See SetRedactionReporter.
+	reporter atomic.Pointer[RedactionReporter]
 }
 
 // NewPipeline builds the pipeline. It fails when cfg.Engine is nil, because no
@@ -157,6 +163,7 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	}
 	switch decision.Action {
 	case extension.Block:
+		p.reportBlock(decision)
 		return nil, &BlockedError{Phase: decision.Phase, Findings: decision.Findings}
 	case extension.Redact:
 		return p.redactBody(body, walked, decision.Findings)
@@ -176,6 +183,7 @@ func (p *Pipeline) redactBody(body []byte, walked []protocol.Leaf, findings []ex
 	if len(spans) == 0 {
 		return body, nil
 	}
+	p.reportSpans(walked, spans)
 	rewriter := &leafRewriter{
 		walked: walked,
 		edit: func(terminalIdx int, _ string, content []byte) ([]byte, bool) {

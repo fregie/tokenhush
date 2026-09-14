@@ -43,6 +43,11 @@ type RunDeps struct {
 	// Ready, when set, is called once the daemon is accepting connections and
 	// its session files exist. It is how tests learn the bound ephemeral port.
 	Ready func(RunInfo)
+	// DisableRedactionLog turns off the default-on masked redaction log. At the
+	// zero value the log is on (the production behavior): when Stderr is set,
+	// the daemon prints one masked line per replaced value and per policy block.
+	// Set it when a caller wants a silent daemon.
+	DisableRedactionLog bool
 }
 
 // RunInfo is the daemon's post-startup snapshot handed to RunDeps.Ready. It is
@@ -82,6 +87,10 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		}
 	}
 
+	if !deps.DisableRedactionLog && deps.Stderr != nil {
+		pipeline.SetRedactionReporter(newRedactionLogger(deps.Stderr).Report)
+	}
+
 	opts := gateway.Options{
 		Core:          *loaded,
 		Sink:          sink,
@@ -91,6 +100,7 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		Stderr:        deps.Stderr,
 		Ready:         deps.Ready,
 	}
+
 	if deps.DataDir != "" {
 		dataDir := deps.DataDir
 		opts.Setup = func(d *gateway.Deps) error {
@@ -108,13 +118,15 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	var (
-		configPath string
-		port       int
-		logLevel   string
+		configPath    string
+		port          int
+		logLevel      string
+		logRedactions bool
 	)
 	fs.StringVar(&configPath, "config", "", "path to tokenhush.yaml (default: platform config dir)")
 	fs.IntVar(&port, "port", 0, "override listen port (1..65535)")
 	fs.StringVar(&logLevel, "log-level", "", "override log level (debug|info|warn|error)")
+	fs.BoolVar(&logRedactions, "log-redactions", true, "print a masked line for every redacted value")
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
@@ -148,7 +160,7 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := RunServer(ctx, cfg, RunDeps{Stdout: stdout, Stderr: stderr}); err != nil {
+	if err := RunServer(ctx, cfg, RunDeps{Stdout: stdout, Stderr: stderr, DisableRedactionLog: !logRedactions}); err != nil {
 		fmt.Fprintf(stderr, "tokenhush: run: %v\n", err)
 		return ExitFailure
 	}

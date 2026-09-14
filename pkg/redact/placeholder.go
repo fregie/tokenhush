@@ -256,3 +256,11 @@ func normalizeRedactions(redactions []Redaction, contentLen int) []Redaction {
 	}
 	return merged
 }
+
+// NormalizeRedactions exposes the span normalisation ApplyPlaceholders applies,
+// so a caller that must observe exactly which spans were replaced (for example
+// the masked redaction log) sees the identical merged set: invalid ranges are
+// dropped and overlaps become their union.
+func NormalizeRedactions(redactions []Redaction, contentLen int) []Redaction {
+	return normalizeRedactions(redactions, contentLen)
+}
