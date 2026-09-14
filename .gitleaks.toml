@@ -50,3 +50,23 @@ regexTarget = "secret"
 regexes = [
   '''^_?([A-Za-z][A-Za-z0-9_-]*_?)?[0-9A-Fa-f]{16}$''',
 ]
+
+# The end-to-end redaction smoke test in docs/oss-testing.md intentionally uses
+# a synthetic, non-real key literal to demonstrate that the gateway strips it
+# before forwarding. Deliberately narrow — scoped to the generic-api-key rule,
+# and path AND exact line must both match, so any other secret-shaped value in
+# this file (or the same literal anywhere else) is still reported; a bare
+# secret-shaped allowlist or a paths-only exemption would blind the scanner.
+[[allowlists]]
+description = "Synthetic example key in the docs/oss-testing.md end-to-end smoke test (not a real credential)"
+targetRules = [
+  "generic-api-key",
+]
+condition = "AND"
+paths = [
+  '''(^|/)docs/oss-testing\.md$''',
+]
+regexTarget = "line"
+regexes = [
+  '''SECRET="sk-proj-abc123def456ghi789"''',
+]
