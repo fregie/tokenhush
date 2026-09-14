@@ -79,13 +79,24 @@ func checkRevoked(serials []uint64, versions []string) error {
 	return nil
 }
 
+// normalizeVersion strips a SemVer pre-release ("-...") or build-metadata
+// ("+...") suffix so a dev or pre-release build still compares on its numeric
+// core: "0.4.0-rc1" -> "0.4.0", "0.0.0-dev" -> "0.0.0". Plain numeric versions
+// are unchanged. A value with no numeric core (e.g. "dev") still fails parsing.
+func normalizeVersion(s string) string {
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // parseVersion parses 1-3 dot-separated numeric components ("1", "1.2",
-// "1.2.3"), padding missing components with zero. Non-numeric input is
-// ErrMalformed. Pre-release suffixes are intentionally unsupported: the update
-// channel only publishes plain numeric release versions.
+// "1.2.3") after normalizing away a SemVer pre-release/build-metadata suffix,
+// padding missing components with zero. Input with no numeric core is
+// ErrMalformed.
 func parseVersion(s string) ([3]uint64, error) {
 	var out [3]uint64
-	parts := strings.Split(s, ".")
+	parts := strings.Split(normalizeVersion(s), ".")
 	if len(parts) == 0 || len(parts) > 3 {
 		return out, ErrMalformed
 	}

@@ -131,6 +131,13 @@ func (c *Checker) Check(ctx context.Context) (CheckResult, error) {
 		res.UpdateAvailable = true
 		return res, nil
 	}
+	// A non-release running version ("dev") has no numeric release semantics,
+	// so there is nothing to compare against: surface the verified release
+	// rather than reporting the signed manifest malformed.
+	if _, err := parseVersion(res.CurrentVersion); err != nil {
+		res.UpdateAvailable = true
+		return res, nil
+	}
 	cmp, err := CompareVersions(m.Version, res.CurrentVersion)
 	if err != nil {
 		return CheckResult{}, fmt.Errorf("%w: %v", ErrMalformed, err)

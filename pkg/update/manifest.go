@@ -194,9 +194,9 @@ func RevocationSigningInput(r RevocationList) []byte {
 	return []byte(b.String())
 }
 
-// CompareVersions compares two numeric release versions ("major.minor.patch",
-// 1-3 numeric components). It returns -1, 0 or 1, or ErrMalformed when either
-// side is not numeric.
+// CompareVersions compares two release versions ("major.minor.patch", 1-3
+// numeric components) after normalizing away a semver pre-release/build suffix.
+// It returns -1, 0 or 1, or ErrMalformed when either side has no numeric core.
 func CompareVersions(a, b string) (int, error) {
 	av, err := parseVersion(a)
 	if err != nil {

@@ -120,8 +120,20 @@ func (v *Verifier) checkFreshness(notBefore, expires time.Time) error {
 }
 
 // checkCompatible refuses a pack that requires a newer binary than this build.
+//
+// The pack's own min_binary_version is always parsed strictly: an unparseable
+// document version is a malformed pack no matter which binary is running. The
+// running version is different: a build from source reports "dev" (or another
+// non-release tag), which has no numeric release semantics, so the floor is
+// skipped rather than rejecting every pack as malformed.
 func (v *Verifier) checkCompatible(minBinary string) error {
 	if v.CurrentBinaryVersion == "" || minBinary == "" {
+		return nil
+	}
+	if _, err := parseVersion(minBinary); err != nil {
+		return ErrPackMalformed
+	}
+	if _, err := parseVersion(v.CurrentBinaryVersion); err != nil {
 		return nil
 	}
 	cmp, err := compareVersions(v.CurrentBinaryVersion, minBinary)
@@ -157,10 +169,22 @@ func compareVersions(a, b string) (int, error) {
 	return 0, nil
 }
 
-// parseVersion parses 1-3 dot-separated numeric components.
+// normalizeVersion strips a SemVer pre-release ("-...") or build-metadata
+// ("+...") suffix so a dev or pre-release build still compares on its numeric
+// core: "0.4.0-rc1" -> "0.4.0", "0.0.0-dev" -> "0.0.0". Plain numeric versions
+// are unchanged. A value with no numeric core (e.g. "dev") still fails parsing.
+func normalizeVersion(s string) string {
+	if i := strings.IndexAny(s, "-+"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// parseVersion parses 1-3 dot-separated numeric components after normalizing
+// away pre-release/build-metadata suffixes.
 func parseVersion(s string) ([3]uint64, error) {
 	var out [3]uint64
-	parts := strings.Split(s, ".")
+	parts := strings.Split(normalizeVersion(s), ".")
 	if len(parts) == 0 || len(parts) > 3 {
 		return out, ErrPackMalformed
 	}

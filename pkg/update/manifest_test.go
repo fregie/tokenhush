@@ -46,6 +46,7 @@ func TestManifestFieldValidation(t *testing.T) {
 		bad  func(m *Manifest)
 	}{
 		{"missing version", func(m *Manifest) { m.Version = "" }},
+		{"non-numeric version", func(m *Manifest) { m.Version = "banana" }},
 		{"missing os", func(m *Manifest) { m.OS = "" }},
 		{"missing arch", func(m *Manifest) { m.Arch = "" }},
 		{"missing url", func(m *Manifest) { m.URL = "" }},
@@ -112,6 +113,10 @@ func TestCompareVersions(t *testing.T) {
 		{"0.3.0", "0.3.0", 0},
 		{"1.0.0", "0.9.9", 1},
 		{"0.3.10", "0.3.9", 1},
+		{"0.4.0-rc1", "0.4.0", 0},
+		{"0.0.0-dev", "0.0.0", 0},
+		{"0.4.0+build.7", "0.4.0", 0},
+		{"0.4.0-rc1", "0.3.0", 1},
 	}
 	for _, tt := range tests {
 		got, err := CompareVersions(tt.a, tt.b)

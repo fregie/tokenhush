@@ -193,12 +193,19 @@ func (a *Applier) Apply(ctx context.Context) (ApplyResult, error) {
 		return ApplyResult{Version: m.Version, Serial: m.Serial, Status: ApplyUpToDate}, nil
 	}
 	if cur := a.verifier.CurrentVersion; cur != "" {
-		cmp, err := CompareVersions(m.Version, cur)
-		if err != nil {
-			return ApplyResult{}, fmt.Errorf("%w: %v", ErrMalformed, err)
-		}
-		if cmp == 0 {
-			return ApplyResult{Version: m.Version, Serial: m.Serial, Status: ApplyUpToDate}, nil
+		// A running version with no numeric core ("dev", a build from source)
+		// has no release semantics: skip the equality gate rather than
+		// reporting the signed manifest malformed. fetchManifest already
+		// skipped the downgrade gate for the same reason, and m.Version was
+		// strictly parsed during verification.
+		if _, err := parseVersion(cur); err == nil {
+			cmp, err := CompareVersions(m.Version, cur)
+			if err != nil {
+				return ApplyResult{}, fmt.Errorf("%w: %v", ErrMalformed, err)
+			}
+			if cmp == 0 {
+				return ApplyResult{Version: m.Version, Serial: m.Serial, Status: ApplyUpToDate}, nil
+			}
 		}
 	}
 	if m.OS != a.goos || m.Arch != a.goarch {

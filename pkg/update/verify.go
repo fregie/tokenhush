@@ -186,8 +186,16 @@ func (v *Verifier) Status(lastKnown *Manifest) Status {
 
 // checkDowngrade refuses a manifest below the running version unless the
 // dev-only override is active, in which case it records an audit event.
+//
+// A running version with no numeric core ("dev", a build from source) has no
+// release semantics, so the gate is skipped rather than reporting the signed
+// manifest malformed. The manifest's own version was already parsed strictly by
+// m.validate() before this runs, so the document side stays strict.
 func (v *Verifier) checkDowngrade(m Manifest, now time.Time) error {
 	if v.CurrentVersion == "" {
+		return nil
+	}
+	if _, err := parseVersion(v.CurrentVersion); err != nil {
 		return nil
 	}
 	cmp, err := CompareVersions(m.Version, v.CurrentVersion)
