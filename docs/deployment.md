@@ -6,7 +6,7 @@
 
 Tokenhush is one static binary: no runtime dependencies, no daemon, no root certificate. Install it, run it in the foreground, then point your AI tools at `http://127.0.0.1:8787`.
 
-## 1. Requirements
+## 🎯 1. Requirements
 
 | Requirement | Value |
 |---|---|
@@ -18,7 +18,7 @@ Tokenhush is one static binary: no runtime dependencies, no daemon, no root cert
 
 Release binaries are pure Go (`CGO_ENABLED=0`), so no C toolchain is needed. The gateway refuses `0.0.0.0` and empty hosts; it binds only `127.0.0.1`, `::1`, and `localhost`, because it is a local component, not a network service.
 
-## 2. Install
+## 📦 2. Install
 
 ### macOS (Homebrew cask)
 
@@ -97,7 +97,7 @@ tokenhush version
 > [!NOTE]
 > The macOS Homebrew and Windows Scoop channels are still under manual verification for the `v0.3.0` line. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
 
-## 3. First run
+## 🚀 3. First run
 
 Start the gateway in the foreground:
 
@@ -132,12 +132,12 @@ Print a ready-to-paste snippet:
 tokenhush env claude
 ```
 
-`env` supports `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, and `kilo`, and prints the dialect for your platform. For full per-tool setup, including the `tokenhush.yaml` upstream map, see [configuration.md](configuration.md). See the V1 limits below.
+`env` supports `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, and `kilo`, and prints the dialect for your platform. For full per-tool setup, including the `tokenhush.yaml` upstream map, see [tool-setup.md](tool-setup.md). See the V1 limits below.
 
 > [!IMPORTANT]
 > Codex CLI works in API key mode only; ChatGPT subscription login cannot pass through the gateway. Cursor agent traffic, the ChatGPT and Claude desktop apps, and browser web UIs are not covered in V1; they need system-level MITM, which the public core does not implement.
 
-## 4. Run modes
+## 🚀 4. Run modes
 
 V1 has one run mode: the foreground gateway `tokenhush run`, which stays attached to the terminal and exits on `Ctrl-C`. There is no daemon mode and no service subcommand.
 
@@ -146,6 +146,7 @@ V1 has one run mode: the foreground gateway `tokenhush run`, which stays attache
 | `--config PATH` | Path to a `tokenhush.yaml` | Overrides the platform default location |
 | `--port N` | `1` to `65535` | Defaults to `8787` (or the configured `listen.port`) |
 | `--log-level LEVEL` | `debug`, `info`, `warn`, `error` | Defaults to `info` |
+| `--log-redactions BOOL` | `true` (default) or `false` | Print one masked line per redacted value to stderr |
 
 Start on a custom port:
 
@@ -164,6 +165,16 @@ Turn up logging while debugging:
 ```bash
 tokenhush run --log-level debug
 ```
+
+### Redaction log
+
+`tokenhush run` prints one masked line per redacted value to stderr by default. Each line names the detector type and the matched byte length, plus a masked fragment — never the full value:
+
+```text
+tokenhush: redacted request api_key (len=32) sk-p…j0
+```
+
+Turn it off with `--log-redactions=false`.
 
 The control API stays loopback-only and needs the bearer token from `<data-dir>/control.token`. See [architecture.md](architecture.md) for the request path.
 
@@ -282,7 +293,7 @@ Remove it:
 Unregister-ScheduledTask -TaskName "Tokenhush Gateway" -Confirm:$false
 ```
 
-## 5. Directories and environment
+## ⚙️ 5. Directories and environment
 
 Tokenhush uses two directories: a config directory for `tokenhush.yaml`, and a data directory for runtime state. On macOS they are the same path; on Linux and Windows they differ.
 
@@ -303,15 +314,15 @@ The data directory holds:
 
 `run.json` and `control.token` are session files. `run` removes them on clean shutdown, and a stale `run.json` only affects diagnostics, not data safety. The core stores no request or response content.
 
-## 6. Configuration
+## ⚙️ 6. Configuration
 
 Tokenhush reads `tokenhush.yaml` from the config directory, or from the path passed to `--config`. A missing file means defaults. Unknown keys are rejected, so a typo fails loudly instead of being ignored.
 
 The settings you are most likely to touch: the listen port, the six detectors, the allowlist, the log level, and the `upstreams` map that routes a host or path prefix to your own OpenAI-compatible endpoint.
 
-Full annotated defaults and every supported key live in [configuration.md](configuration.md); this guide does not repeat the YAML sample.
+Full annotated defaults and every supported key live in [tool-setup.md](tool-setup.md#tokenhushyaml-reference); this guide does not repeat the YAML sample.
 
-## 7. Upgrade
+## ⬆️ 7. Upgrade
 
 | Channel | Command |
 |---|---|
@@ -320,9 +331,9 @@ Full annotated defaults and every supported key live in [configuration.md](confi
 | install.sh | Re-run the install command; it resolves the latest release |
 | Source | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: delete the removed `audit:` block before restarting. See [migration-v0.2.0.md](migration-v0.2.0.md). The `v0.3.0` upgrade needs no config change; see [migration-v0.3.0.md](migration-v0.3.0.md). Restart the gateway after upgrading so the new binary serves traffic.
+Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: the core config has no `audit:` key, so a file that still contains one fails to load — delete that block before restarting. The audit block lives in the private Pro layer. The `v0.3.0` upgrade needs no config change: it moves the shared assembly layer into the exported `pkg/gateway` package. Restart the gateway after upgrading so the new binary serves traffic.
 
-## 8. Uninstall
+## 🗑️ 8. Uninstall
 
 Remove the binary through the channel you installed it with:
 
@@ -342,7 +353,7 @@ rm "$(command -v tokenhush)"
 
 If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories for a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the session files (the control token and `run.json`).
 
-## 9. Troubleshooting
+## 🛠️ 9. Troubleshooting
 
 Start with `tokenhush doctor`. It reports the config path, directory permissions, secret store, and session state in one pass; the exit code tells you whether anything failed.
 
@@ -355,7 +366,7 @@ Start with `tokenhush doctor`. It reports the config path, directory permissions
 | Windows SmartScreen blocks `tokenhush.exe` | Click More info, then Run anyway. Scoop installs do not trigger this prompt |
 | `status` fails with a control token error | No live session, or the token is stale. Start `tokenhush run` again; the token is regenerated per session |
 
-## 10. Security notes
+## 🛡️ 10. Security notes
 
 These properties are load-bearing. Do not work around them.
 
@@ -367,7 +378,7 @@ These properties are load-bearing. Do not work around them.
 
 The full threat model and invariants are in [security.md](security.md). The request path and module layout are in [architecture.md](architecture.md).
 
-## Command reference
+## ⌨️ Command reference
 
 ```text
 <!-- check-docs:commands:start -->
@@ -386,7 +397,7 @@ Useful flags:
 
 | Command | Flags |
 |---|---|
-| `run` | `--config PATH`, `--port N`, `--log-level debug\|info\|warn\|error` |
+| `run` | `--config PATH`, `--port N`, `--log-level debug\|info\|warn\|error`, `--log-redactions true\|false` |
 | `status` | `--json` |
 | `env <tool>` | `--config PATH`, `--port N`; tools: `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, `kilo` |
 | `doctor` | `--config PATH`, `--port N`, `--json` |
@@ -396,4 +407,4 @@ Useful flags:
 | `rules rollback` | none |
 | `version` | none |
 
-See [../README.md](../README.md) for the project overview and [configuration.md](configuration.md) for tool setup.
+See [../README.md](../README.md) for the project overview and [tool-setup.md](tool-setup.md) for tool setup.

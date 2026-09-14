@@ -6,7 +6,7 @@
 
 Tokenhush runs content through a **compiled-in, capability-tiered** plugin pipeline. The six built-in detectors (`pkg/redact`) are plugins themselves, and yours follows the same interfaces and least-privilege rules. V1 has **no dynamic loading**: plugins compile into the binary at build time.
 
-## Mental model
+## 🎯 Mental model
 
 ```mermaid
 flowchart LR
@@ -19,7 +19,7 @@ Two rules are non-negotiable:
 1. **Plugins propose, the core decides.** An Inspector returns `Finding` values, each carrying the `Action` it wants. The core's policy engine aggregates them (`Allow < Warn < Redact < Block`) and executes the result. A plugin states intent; the core applies it.
 2. **Only the core touches outbound plaintext.** A `Transformer` may declare `response_content` and `metadata` only. It never sees request content or raw headers, and it can't reach the placeholder-to-original mapping.
 
-## The two plugin kinds
+## 🧩 The two plugin kinds
 
 | Interface | Role | Allowed phases | Returns |
 |---|---|---|---|
@@ -35,7 +35,7 @@ type Plugin interface {
 }
 ```
 
-## Phases and capabilities
+## 🔁 Phases and capabilities
 
 `Phase` marks a point in the request/response lifecycle. It tells the core where your plugin runs.
 
@@ -72,7 +72,7 @@ extension.Capabilities{
 - In the `Header` phase the core clears `Content` whether or not you requested `ReadContent`. `Authorization`, `Cookie`, and API key values never reach a plugin.
 - A `Finding` carrying `Block` takes effect only when `CanBlock` is true; otherwise the core treats the plugin's output as malformed.
 
-## What the core guarantees
+## 🛡️ What the core guarantees
 
 - The core runs `extension.Gate` first: content you didn't request stays hidden, and you never get a document for an undeclared phase.
 - The core overwrites `Finding.PluginID` with your `ID()`, so you can't spoof provenance.
@@ -80,7 +80,7 @@ extension.Capabilities{
 - Response Transformers run **before backfill**, so their output can't hold plaintext that only backfill would restore.
 - The core splices returned content into the body by leaf ordinal first, then by path. A `nil` `Content`, or content equal to the original, leaves the raw token untouched.
 
-## Writing an Inspector
+## 🔍 Writing an Inspector
 
 An Inspector reads leaves and reports findings. This compilable detector marks the literal `INTERNAL-` as `Redact`:
 
@@ -139,7 +139,7 @@ Key points:
 - Don't write placeholders yourself. The core's redaction engine owns substitution.
 - A finding the core rejects fails the **whole plugin**, not just that finding. Triggers: `Action` outside the known set, `Confidence` outside `[0,1]` or `NaN`, a negative `Start` or `LeafIndex`, an `End` before `Start`, or a `Block` without `CanBlock`. The core never drops a single bad finding, so a plugin can't hide a real verdict behind malformed output.
 
-## Writing a Transformer
+## 🔁 Writing a Transformer
 
 A Transformer rewrites inbound responses (say, normalizing a class of fields). It may declare `response_content` and `metadata` only. It **never sees the original secrets**: it works on already-redacted content, so there's no plaintext to leak.
 
@@ -180,7 +180,7 @@ func (*HeaderStamper) Transform(doc *extension.Document) (*extension.Document, e
 - Multiple Transformers run as a `Priority` chain, each seeing the previous result.
 - In the `Header` phase `Content` is always empty, so a Transformer never gets header values.
 
-## Registering a plugin (compiled-in)
+## 🧩 Registering a plugin (compiled-in)
 
 Plugins register into `extension.Registry` at startup. `Register` is the security gate: it validates every capability before admitting a plugin.
 
@@ -239,7 +239,7 @@ func main() {
 
 > `pkg/proxy` exports `Listen`, `NewPipeline`, `NewResolver`, `NewForwarder`, `HostAllowlist`, `ControlAuth`, and `OriginPolicy`. The `run` wiring in `internal/cli` is the reference usage, though an external module can't import `internal/`.
 
-## Registration-time rejections
+## ✅ Registration-time rejections
 
 `Register` returns **typed errors**; classify them with `errors.Is`. If any requirement fails, the plugin isn't admitted:
 
@@ -256,13 +256,13 @@ func main() {
 
 A plugin implementing both Inspector and Transformer is validated under the **stricter Transformer rules**, so it may declare `response_content` and `metadata` only.
 
-## Failure strategy
+## 📌 Failure strategy
 
 - The default is `FailOpenWarn`: on error, timeout, or panic the core drops the plugin's findings, emits an audit warning through the injected `AuditSink` seam, and lets the request continue.
 - `FailClosed`: for critical detectors, a failure rejects the request (returns `Block`). The built-in detectors use this stricter setting.
 - Under either policy, **a failure always emits an audit warning through the seam**. Nothing is swallowed silently. The default sink is a no-op; the private Pro layer persists the warning.
 
-## Testing your plugin
+## ✅ Testing your plugin
 
 A plugin is an ordinary Go type, so unit-test it directly. No gateway needed:
 
@@ -286,7 +286,7 @@ func TestInternalMarker(t *testing.T) {
 
 Also cover: the registration gate (`Register` rejects over-broad capabilities), visibility under `Gate` (`Content == nil` without `ReadContent`), and the path where a malformed finding fails the plugin. The `pkg/redact/*_test.go` files are good examples.
 
-## Do / Don't
+## 📌 Do / Don't
 
 - **Do** request the minimum `Capabilities`; declare only the phases you handle.
 - **Do** handle arbitrary bytes safely, including invalid UTF-8. Never panic.

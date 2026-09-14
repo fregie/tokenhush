@@ -11,7 +11,7 @@ When it works you will see:
 - the echo upstream prints a placeholder such as `__PII_api_key_...__`, never the raw key;
 - the client response still contains the original value, because backfill runs only on the way back to your tool.
 
-## Prerequisites
+## 🎯 Prerequisites
 
 - Go 1.25+ to build from source (or any installed `tokenhush` binary).
 - `python3` (standard library only) and `curl`.
@@ -24,7 +24,7 @@ mkdir -p "$WORK/bin" "$WORK/home"
 go build -o "$WORK/bin/tokenhush" ./cmd/tokenhush
 ```
 
-## Commands used on this page
+## ⌨️ Commands used on this page
 
 ```text
 <!-- check-docs:commands:start -->
@@ -34,7 +34,7 @@ go build -o "$WORK/bin/tokenhush" ./cmd/tokenhush
 <!-- check-docs:commands:end -->
 ```
 
-## 1. Start the echo upstream
+## 🚀 1. Start the echo upstream
 
 The block below writes the echo script to the scratch directory and starts it in the background. It prints each request body it receives and echoes the body back as JSON.
 
@@ -70,7 +70,7 @@ python3 "$WORK/echo_upstream.py" 9101 > "$WORK/upstream.log" 2>&1 &
 UPSTREAM_PID=$!
 ```
 
-## 2. Point a route at the echo upstream and start the gateway
+## ⚙️ 2. Point a route at the echo upstream and start the gateway
 
 `upstreams:` maps a host or path prefix to an upstream base URL. An explicit override wins over the built-in provider table, so the configuration below routes the ordinary `/v1/messages` path to the loopback echo instead of Anthropic:
 
@@ -119,7 +119,7 @@ tokenhush: gateway running
   address: 127.0.0.1:8799, [::1]:8799
 ```
 
-## 3. Send a request with a synthetic secret
+## ⌨️ 3. Send a request with a synthetic secret
 
 The key below is invented for this page. Send it through the gateway:
 
@@ -135,7 +135,7 @@ The client response still carries the original key: the echo returned the placeh
 {"echo": "{\"model\":\"demo\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"Deploy with sk-proj-abc123def456ghi789\"}]}"}
 ```
 
-## 4. Read what the upstream received
+## 🔍 4. Read what the upstream received
 
 ```bash
 cat "$WORK/upstream.log"
@@ -152,7 +152,7 @@ grep exit=1
 
 The suffix (`b557d7e77dad` above) is session-specific: it is derived per gateway run. What the upstream sees is a `__PII_...__` placeholder in place of the value.
 
-## 5. Clean up
+## 🧹 5. Clean up
 
 ```bash
 kill "$GATEWAY_PID" "$UPSTREAM_PID"
@@ -161,14 +161,14 @@ rm -rf "$WORK"
 
 The demo touches nothing outside `$WORK`: the gateway's control token and config both lived in `$WORK/home`.
 
-## What this does and does not prove
+## 📌 What this does and does not prove
 
 Proves: detected secrets are replaced before the body is forwarded; backfill runs only on the client-bound response; an `upstreams:` override can redirect a route and redaction still runs first.
 
 Does not prove: perfect recall. Detection is deterministic and high-precision-first ([security.md](security.md)); a value that no detector recognises is forwarded unchanged. The hard invariant this demo shows is one-way: **placeholders are never backfilled outbound** ([security.md](security.md#hard-invariants)).
 
-## Related
+## 📚 Related
 
-- [configuration.md](configuration.md): `upstreams:` and the full `tokenhush.yaml` reference
+- [tool-setup.md](tool-setup.md): `upstreams:` and the full `tokenhush.yaml` reference
 - [security.md](security.md): threat model and hard invariants
 - [architecture.md](architecture.md): request path and modules

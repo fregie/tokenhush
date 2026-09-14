@@ -11,7 +11,7 @@ Tokenhush 的说法很窄，因此可以自己检查：请求离开你的机器�
 - 回显上游打印的是 `__PII_api_key_...__` 这样的占位符，而不是密钥原文；
 - 客户端响应里仍带着原值，因为回填只在返回工具的入站方向发生。
 
-## 前置条件
+## 🎯 前置条件
 
 - Go 1.25+（从源码构建），或任意已安装的 `tokenhush` 二进制。
 - `python3`（仅标准库）和 `curl`。
@@ -24,7 +24,7 @@ mkdir -p "$WORK/bin" "$WORK/home"
 go build -o "$WORK/bin/tokenhush" ./cmd/tokenhush
 ```
 
-## 本页用到的命令
+## ⌨️ 本页用到的命令
 
 ```text
 <!-- check-docs:commands:start -->
@@ -34,7 +34,7 @@ go build -o "$WORK/bin/tokenhush" ./cmd/tokenhush
 <!-- check-docs:commands:end -->
 ```
 
-## 1. 启动回显上游
+## 🚀 1. 启动回显上游
 
 下面的代码块把回显脚本写入临时目录并在后台启动它。它会把收到的每个请求体打印出来，并把请求体以 JSON 形式回显。
 
@@ -70,7 +70,7 @@ python3 "$WORK/echo_upstream.py" 9101 > "$WORK/upstream.log" 2>&1 &
 UPSTREAM_PID=$!
 ```
 
-## 2. 把一条路由指向回显上游并启动网关
+## ⚙️ 2. 把一条路由指向回显上游并启动网关
 
 `upstreams:` 把主机名或路径前缀映射到上游 base URL。显式覆盖优先于内置服务商路由表，因此下面的配置会把常规的 `/v1/messages` 路径改派到本机回显，而不是 Anthropic：
 
@@ -119,7 +119,7 @@ tokenhush: gateway running
   address: 127.0.0.1:8799, [::1]:8799
 ```
 
-## 3. 发送一个带合成密钥的请求
+## ⌨️ 3. 发送一个带合成密钥的请求
 
 下面的密钥是为本页虚构的。把它经网关发出：
 
@@ -135,7 +135,7 @@ curl -sS -H 'Content-Type: application/json' \
 {"echo": "{\"model\":\"demo\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"Deploy with sk-proj-abc123def456ghi789\"}]}"}
 ```
 
-## 4. 查看上游实际收到了什么
+## 🔍 4. 查看上游实际收到了什么
 
 ```bash
 cat "$WORK/upstream.log"
@@ -152,7 +152,7 @@ grep exit=1
 
 后缀（上例中的 `b557d7e77dad`）随会话变化：它按每次网关运行派生。上游看到的是替代原值的 `__PII_...__` 占位符。
 
-## 5. 清理
+## 🧹 5. 清理
 
 ```bash
 kill "$GATEWAY_PID" "$UPSTREAM_PID"
@@ -161,14 +161,14 @@ rm -rf "$WORK"
 
 该演示不会触碰 `$WORK` 之外的任何东西：网关的控制 token 与配置都在 `$WORK/home` 里。
 
-## 这证明了什么、没证明什么
+## 📌 这证明了什么、没证明什么
 
 证明了：检测到的密钥在请求体转发之前就被替换；回填只发生在返回客户端的入站响应上；`upstreams:` 覆盖可以改派路由，且脱敏仍然先执行。
 
 没有证明：完美的召回率。检测器是确定性的、高精度优先（见 [security.zh-CN.md](security.zh-CN.md)）；任何检测器都不认识的取值会原样转发。本演示展示的硬性不变量是单向的：**占位符绝不向出站方向回填**（[security.zh-CN.md](security.zh-CN.md#硬不变量)）。
 
-## 相关文档
+## 📚 相关文档
 
-- [configuration.zh-CN.md](configuration.zh-CN.md)：`upstreams:` 与完整 `tokenhush.yaml` 参考
+- [tool-setup.zh-CN.md](tool-setup.zh-CN.md)：`upstreams:` 与完整 `tokenhush.yaml` 参考
 - [security.zh-CN.md](security.zh-CN.md)：威胁模型与硬性不变量
 - [architecture.zh-CN.md](architecture.zh-CN.md)：请求路径与模块

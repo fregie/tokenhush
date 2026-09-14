@@ -4,7 +4,7 @@
 > 除 [`tokenhush privacy`](#4-验收清单五条) 列出的两个可关外发类别外，核心不连外网。
 > 措辞约定：Tokenhush 提供的是**高置信拦截**，不是"绝不泄露"；没有检测器命中的内容会原样转发。
 
-## TL;DR (English)
+## 📌 TL;DR (English)
 
 Build with `CGO_ENABLED=0 go build -o bin/tokenhush ./cmd/tokenhush`, run `tokenhush run`,
 point any supported tool's base URL at `http://127.0.0.1:8787`, then run the five acceptance
@@ -12,7 +12,7 @@ checks in [§4](#4-验收清单五条). [§3](#3-端到端脱敏冒烟本地假�
 upstream so you can read byte-for-byte what leaves and what comes back. The core stores no
 request or response content, and placeholders are never backfilled on the way out.
 
-## 1. 从源码构建 / 安装
+## 📦 1. 从源码构建 / 安装
 
 需要 Go 1.25 或更高版本。
 
@@ -27,7 +27,7 @@ CGO_ENABLED=0 go build -o bin/tokenhush ./cmd/tokenhush
 go install github.com/fregie/tokenhush/cmd/tokenhush@latest
 ```
 
-包管理器（brew / scoop / install.sh）见 [README.md](../README.md#installation)。
+包管理器（brew / scoop / install.sh）见 [README.md](../README.md#quick-start-5-minutes)。
 
 推荐用一个临时目录当数据根，既不污染真实配置，也让下面的清理一步到位。注意二进制要放在
 `TOKENHUSH_HOME` **之外**（`TOKENHUSH_HOME` 会拒绝位于可执行文件目录内的路径）：
@@ -40,7 +40,7 @@ export TOKENHUSH_HOME="$WORK/home"        # 配置与数据都落在这里
 BIN="$WORK/bin/tokenhush"
 ```
 
-## 2. 把 tokenhush 接到一个真实 AI 工具（最短步骤）
+## 🧩 2. 把 tokenhush 接到一个真实 AI 工具（最短步骤）
 
 1. 在一个终端里前台启动网关，并确认它在跑：
 
@@ -62,7 +62,7 @@ claude
 `tokenhush env <tool>` 覆盖 14 个工具：`claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、
 `qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands`、`kilo`。约定：
 **Anthropic 客户端用裸 origin**（`http://127.0.0.1:8787`），**OpenAI 兼容客户端用 `/v1`**
-（`http://127.0.0.1:8787/v1`）。逐工具说明见 [configuration.md](configuration.md)。
+（`http://127.0.0.1:8787/v1`）。逐工具说明见 [tool-setup.md](tool-setup.md)。
 
 3. 跑自检：
 
@@ -89,7 +89,7 @@ upstreams:
 未匹配的路由回退内置规则（`/v1/messages` → Anthropic，`/v1/chat/completions`、`/v1/responses`
 → OpenAI）；唯一的**具名例外**是 `GET /v1/models`，其余未知路径明确报错，绝不静默错路由。
 
-## 3. 端到端脱敏冒烟（本地假上游）
+## 🔍 3. 端到端脱敏冒烟（本地假上游）
 
 用一个本地回显上游（`python3` 标准库）冒充云端，读它到底收到了什么。以下命令全部只连回环。
 
@@ -171,7 +171,7 @@ raw-key grep exit=1
 **把本会话占位符当内容再发出时，上游仍收到占位符字面量** —— 出站方向绝不回填，
 提示注入无法把它变成外泄通道。
 
-## 4. 验收清单（五条）
+## ✅ 4. 验收清单（五条）
 
 | # | 验收项 | 怎么验 | 通过标准 |
 |---|---|---|---|
@@ -185,7 +185,7 @@ raw-key grep exit=1
 应显示 **0 个网络系统调用**；不设开关时才会连 `updates.tokenhush.com:443`。`rules sync --check`
 同理受 `TOKENHUSH_NO_RULE_SYNC=1` 控制。
 
-## 5. 常见问题与排查
+## 🛠️ 5. 常见问题与排查
 
 - **`doctor` 报 `port ... already in use`（fail）**：默认 8787 被别的进程占了。用 `--port` 换一个空闲端口，
   或在 `tokenhush.yaml` 改 `listen.port`，再 `tokenhush doctor --config <file>`。
@@ -202,16 +202,16 @@ raw-key grep exit=1
 - **macOS 首次启动被 Gatekeeper 拦下**：右键打开一次，或 `xattr -dr com.apple.quarantine "$(command -v tokenhush)"`。
 - **`tokenhush run` 是前台进程**：用系统自带方式常驻（macOS launchd / Linux systemd user unit / Windows 任务计划程序）。
 
-## 6. 局限与诚实边界
+## 📌 6. 局限与诚实边界
 
 - 覆盖的是 **base-URL 代理**：把工具指向网关即可生效。**未覆盖** Cursor 代理流量、ChatGPT/Claude 桌面应用、
   浏览器 Web UI —— 它们需要系统级 MITM，公开核心不实现，也不安装任何根证书。
 - 检测是**确定性、高精度优先**的（已知前缀、高熵、JWT、PEM 私钥头、Luhn 卡号、邮箱）；没有命中的值会原样转发。
 - 同机同用户的其它进程仍可能读写内存；核心不把明文写入磁盘，但不宣称对进程隔离之外的场景提供保护。
 
-## 相关
+## 📚 相关
 
 - [verify.md](verify.md)：同样用回环回显上游验证脱敏（本页 §3 的可复现版本）
 - [security.md](security.md)：威胁模型与硬性不变量
-- [configuration.md](configuration.md)：`tokenhush.yaml` 参考与逐工具接入
+- [tool-setup.md](tool-setup.md)：`tokenhush.yaml` 参考与逐工具接入
 - [deployment.md](deployment.md)：安装、服务化与发行产物

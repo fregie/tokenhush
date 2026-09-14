@@ -6,7 +6,7 @@
 
 Tokenhush is a local base-URL gateway between your AI coding tool and the model provider. Before a request leaves the machine, it finds sensitive content and replaces it.
 
-## Goals and non-goals
+## 🎯 Goals and non-goals
 
 **Goals**
 
@@ -23,7 +23,7 @@ Tokenhush is a local base-URL gateway between your AI coding tool and the model 
 - System-level interception on all three platforms; system extensions and MITM stay macOS-first, a decision recorded in the private Pro repository.
 - NER or a local small model for semantic detection.
 
-## Data flow
+## 🔁 Data flow
 
 ```mermaid
 flowchart LR
@@ -51,7 +51,7 @@ flowchart LR
 > [!NOTE]
 > Outbound requests are read in full before redaction. Only the inbound response path needs incremental handling, and it only ever rewrites placeholders back to originals.
 
-## Components
+## 🏗️ Components
 
 | Package | Responsibility |
 |---|---|
@@ -65,7 +65,7 @@ flowchart LR
 | `pkg/license` | Read-only Pro license validation and display (isolated, fuzz-tested) |
 | `cmd/tokenhush` | Free CLI: `run` (foreground gateway), `status`, `env` (print setup snippets), `doctor`, `version`, plus the control-plane API |
 
-## Key design decisions
+## 🏗️ Key design decisions
 
 ### Protocol-agnostic leaf walk (no API normalization)
 
@@ -94,7 +94,7 @@ A **placeholder** is the fake string that replaces a real secret on the way out.
 
 Deterministic rules with **high precision first**: known key prefixes (`sk-`, `AKIA`, `ghp_`, ...), high-entropy strings, JWT, private-key headers, Luhn card-number checksums, and email addresses. An allowlist and one-click release are provided. The wording stays honest: **"high-confidence secret interception"**, never "never leaks".
 
-## Open-core boundary
+## 📄 Open-core boundary
 
 The public core (this repository, Apache-2.0) is **fully usable for a single user**: proxy, redaction, the CLI, and the extension-point interfaces.
 
@@ -109,7 +109,7 @@ The private Pro repository builds paid binaries by importing this repository's G
 > [!IMPORTANT]
 > Pro code and algorithms **never enter this repository**, and this repository contains no `if license { ... }` paid implementation branches. The full distribution and open-core policy lives in the private Pro repository.
 
-## Capability ladder
+## 🎯 Capability ladder
 
 | Stage | Capability | Channel |
 |---|---|---|

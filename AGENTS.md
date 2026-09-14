@@ -22,10 +22,8 @@ tokenhush/
 │   ├── architecture.md     # core architecture + open-core boundary
 │   ├── extension-api.md    # public extension point interfaces
 │   ├── plugins.md          # writing content plugins (Inspector / Transformer)
-│   ├── configuration.md    # tool setup + tokenhush.yaml reference
+│   ├── tool-setup.md       # per-tool setup + route matrix + tokenhush.yaml reference
 │   ├── deployment.md       # deployment + OS-native auto-start
-│   ├── migration-v0.2.0.md # v0.2.0: audit moved to the private Pro layer
-│   ├── migration-v0.3.0.md # v0.3.0: pkg/gateway layer, /v1/models exception, 14 env tools
 │   └── security.md         # security/threat model + hard invariants
 ├── scripts/
 │   └── check-docs.sh       # verify docs match the CLI and config
@@ -52,12 +50,10 @@ tokenhush/
 | Architecture / data flow / open-core boundary | `docs/architecture.md` |
 | Adding or changing extension point interfaces | `docs/extension-api.md` + `pkg/extension/` |
 | Writing content plugins (Inspector / Transformer) | `docs/plugins.md` |
-| Adding a tool integration | `docs/configuration.md` |
+| Adding a tool integration | `docs/tool-setup.md` |
 | Deployment and OS-native auto-start | `docs/deployment.md` |
 | Documentation index | `docs/README.md` |
 | Security invariants / threat model | `docs/security.md` |
-| Migrating the v0.1.x `audit:` config | `docs/migration-v0.2.0.md` |
-| Migrating to the current release line | `docs/migration-v0.3.0.md` |
 | Docs vs CLI / config consistency | `scripts/check-docs.sh` |
 | Product, market, roadmap, pricing | the private Pro repository (maintainer-only) |
 

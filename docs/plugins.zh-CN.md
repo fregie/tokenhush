@@ -6,7 +6,7 @@
 
 Tokenhush 用一条**编译期内置、按能力分级**的流水线处理内容。六个内置检测器（`pkg/redact`）本身就是插件，你的插件遵循同一套接口和同样的最小权限规则。V1 **不支持动态加载**：插件在构建时编译进二进制。
 
-## 心智模型
+## 🎯 心智模型
 
 ```mermaid
 flowchart LR
@@ -19,7 +19,7 @@ flowchart LR
 1. **插件提议，核心裁决。** Inspector 返回一批 `Finding`，每个带上自己期望的 `Action`；核心的策略引擎把它们聚合（`Allow < Warn < Redact < Block`）再执行。插件只表达意图，落地由核心完成。
 2. **出站明文只有核心能碰。** `Transformer` 只能声明 `response_content` 和 `metadata`。请求内容和原始头部永远不会交给它，占位符到原文的映射也对它不可达。
 
-## 两种插件
+## 🧩 两种插件
 
 | 接口 | 角色 | 允许的阶段 | 返回值 |
 |---|---|---|---|
@@ -35,7 +35,7 @@ type Plugin interface {
 }
 ```
 
-## 阶段与能力
+## 🔁 阶段与能力
 
 `Phase` 标记请求/响应生命周期中的一个位置，告诉核心你的插件在哪里运行。
 
@@ -72,7 +72,7 @@ extension.Capabilities{
 - 处于 `Header` 阶段时，无论你是否申请 `ReadContent`，`Content` 都会被清空。`Authorization`、`Cookie` 和 API key 的值永远到不了插件手里。
 - 带 `Block` 的 `Finding` 只有在 `CanBlock` 为 true 时才生效；否则核心当作插件输出格式错误处理。
 
-## 核心保证
+## 🛡️ 核心保证
 
 - 调用你之前，核心先跑 `extension.Gate`：你没申请的内容保持隐藏，未声明阶段的文档绝不交给你。
 - 核心用你自己的 `ID()` 覆盖 `Finding.PluginID`，所以你无法冒用别的插件来源。
@@ -80,7 +80,7 @@ extension.Capabilities{
 - 响应 Transformer 在**回填之前**运行，输出里不可能含有只有回填才会还原的明文。
 - 核心按叶子序号优先、路径次之，把返回内容拼回请求体。`Content` 为 `nil`，或内容与原文相同，原始内容不动。
 
-## 编写 Inspector
+## 🔍 编写 Inspector
 
 Inspector 读取叶子并上报发现。下面这个检测器可编译，把字面量 `INTERNAL-` 标为 `Redact`：
 
@@ -139,7 +139,7 @@ func (*InternalMarker) Inspect(doc *extension.Document) ([]extension.Finding, er
 - 不要自己写占位符，替换由核心的脱敏引擎负责。
 - 核心拒绝的 finding 会让**整个插件**失败，而不只是那一个。触发条件：`Action` 不在已知集合内、`Confidence` 超出 `[0,1]` 或为 `NaN`、`Start` 或 `LeafIndex` 为负、`End` 早于 `Start`、没有 `CanBlock` 却给出 `Block`。核心绝不单独丢弃一个坏 finding，插件也就无法用畸形输出盖住真实判定。
 
-## 编写 Transformer
+## 🔁 编写 Transformer
 
 Transformer 改写入站响应（比如规范化某类字段）。它只能声明 `response_content` 和 `metadata`，而且**永远看不到原始机密**：它处理的已是脱敏后的内容，没有明文可泄。
 
@@ -180,7 +180,7 @@ func (*HeaderStamper) Transform(doc *extension.Document) (*extension.Document, e
 - 多个 Transformer 按 `Priority` 串成链，每个都能看到上一个的结果。
 - `Header` 阶段里 `Content` 始终为空，Transformer 拿不到头部值。
 
-## 注册插件（编译期内置）
+## 🧩 注册插件（编译期内置）
 
 插件在启动时注册进 `extension.Registry`。`Register` 就是安全门：它逐项校验能力，通过后才接纳插件。
 
@@ -239,7 +239,7 @@ func main() {
 
 > `pkg/proxy` 导出 `Listen`、`NewPipeline`、`NewResolver`、`NewForwarder`、`HostAllowlist`、`ControlAuth` 和 `OriginPolicy`。`internal/cli` 里的 `run` 接线是参考用法，不过外部模块无法导入 `internal/`。
 
-## 注册期拒绝
+## ✅ 注册期拒绝
 
 `Register` 返回**类型化错误**，用 `errors.Is` 分类。任何一项要求不满足，插件都不会被接纳：
 
@@ -256,13 +256,13 @@ func main() {
 
 同时实现 Inspector 和 Transformer 的插件按**更严格的 Transformer 规则**校验，因此只能声明 `response_content` 和 `metadata`。
 
-## 失败策略
+## 📌 失败策略
 
 - 默认是 `FailOpenWarn`：出错、超时或 panic 时，核心丢弃该插件的 findings，通过注入的 `AuditSink` 接缝发一条审计警告，然后让请求继续。
 - `FailClosed`：关键检测器用这一档，失败即拒绝请求（返回 `Block`）。内置检测器用的就是它。
 - 两种策略下，**失败一定通过接缝发出审计警告**，不会有东西被无声吞掉。默认 sink 是 no-op，警告的持久化由私有 Pro 层负责。
 
-## 测试插件
+## ✅ 测试插件
 
 插件就是普通的 Go 类型，直接做单元测试即可，不需要网关：
 
@@ -286,7 +286,7 @@ func TestInternalMarker(t *testing.T) {
 
 还应覆盖：注册门（`Register` 拒绝过宽能力）、`Gate` 下的可见性（没有 `ReadContent` 时 `Content == nil`），以及畸形 finding 导致插件失败。仓库里的 `pkg/redact/*_test.go` 是很好的参考。
 
-## 该做 / 不该做
+## 📌 该做 / 不该做
 
 - **要**申请最小的 `Capabilities`，只声明你真正处理的阶段。
 - **要**对任意字节保持健壮，包括非法 UTF-8。永不 panic。

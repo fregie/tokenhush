@@ -6,7 +6,7 @@
 
 Tokenhush is itself a security tool, so **it must be secure first**. This document defines the threat model and the invariants that cannot be broken.
 
-## Threat model
+## 🛡️ Threat model
 
 | Threat | Description | Mitigation |
 |---|---|---|
@@ -20,10 +20,10 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 - **Prompt injection, concretely.** A poisoned file tells the model to print `__PII_email_3f9a2b__`. If the model echoes it and the gateway backfilled outbound, the real email would go upstream. Invariant 1 blocks that: backfill only runs toward the client.
 - **Local reachability, concretely.** A random npm `postinstall` script, or a web page you have open, can call `fetch("http://127.0.0.1:8787/...")`. It still fails: loopback-only bind, `Host` check, and a per-`run` bearer token.
 
-## Hard invariants
+## 🛡️ Hard invariants
 
 1. **Never backfill placeholders outbound.** Backfill happens only on responses returned to the client.
-2. **Do not store request/response plaintext by default.** The core stores no request or response content.
+2. **Do not store request/response plaintext by default.** The core stores no request or response content. The redaction log line printed to the console is a transient local diagnostic: only a masked form, the detector type, and the byte length, never the full value, and it is never persisted. It is on by default and can be disabled with `--log-redactions=false`.
 3. **No root certificate is installed and no MITM is performed by default.** MITM is an explicit opt-in in later stages and is not implemented in the public core.
 4. **The local service binds dual-stack loopback only (127.0.0.1 + `[::1]`).**
 5. **Fail-safe on detection failure, not fail-open.** When the gateway cannot tell whether content is sensitive, it prefers over-redaction, or allows with a warning, and never silently emits plaintext. The policy is configurable (see below).
@@ -32,7 +32,7 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 > [!IMPORTANT]
 > Invariant 1 is why prompt injection cannot turn the gateway into an exfiltration path: placeholders are only ever replaced on the way back to the client.
 
-## Named routing exceptions
+## 📌 Named routing exceptions
 
 The gateway **refuses to guess** an upstream for an unrecognised request: an unknown route is an explicit typed error (`ErrUnknownUpstream`), never a silent misroute. There is exactly one **named exception list**, and a path gets on it only because the call carries no user data and every provider serves it identically:
 
@@ -42,26 +42,26 @@ The gateway **refuses to guess** an upstream for an unrecognised request: an unk
 
 A configured `upstreams:` override still wins over the exception (and over the built-in table). Every other path — including near-misses such as `/v1/model`, `/v1/models/foo` or `/v1/modelsX` — stays a typed error, so the never-misroute rule is unchanged. The list is closed and test-locked by `TestResolveModels` in `pkg/proxy`; adding an entry is a deliberate, documented decision, not a default.
 
-## Detector trade-offs
+## 🔍 Detector trade-offs
 
 - **False positives (over-redaction)** hurt the experience: the model receives a placeholder and code or answers degrade.
 - **False negatives (under-redaction)** hurt the promise: sensitive content leaves the machine.
 
 The V1 strategy is **deterministic, high-precision-first detectors** (known key prefixes, high entropy, JWT, private-key headers, Luhn card-number checksums, and email addresses), backed by an allowlist and one-click release. The project does **not** claim "never leaks". The honest claim is **"high-confidence secret interception"**.
 
-## Key handling
+## 🔑 Key handling
 
 - **V1: passthrough.** Tools carry their own provider keys; the gateway only forwards and **does not store** them.
 - When multi-account/routing (Pro) needs to store keys, it goes through the cross-platform keyring abstraction (macOS Keychain / Windows Credential Manager / Linux Secret Service plus a fallback chain, a design recorded in the private Pro repository), and adds a gateway token + Origin validation to prevent CSRF.
 - **Honest degradation**: without an OS keyring, storage falls back to a restricted file (`0600`), reported **explicitly** through the secret store's `Backend()`, never silently.
 
-## Release and supply chain
+## 📦 Release and supply chain
 
 - **Dependency audit**: the core allows permissive licenses only (MIT/Apache/BSD); **GPL/AGPL are forbidden**.
 - **Release**: signed builds + checksums + SBOM; CI scans dependencies and secrets.
 - **Updates**: Homebrew / Scoop / `curl|sh` signed distribution.
 
-## Network egress
+## 🔁 Network egress
 
 Vendor-bound requests are limited to two switchable, command-scoped categories — **update check** and **rule sync**. Neither runs on its own and neither is performed by the gateway's data plane. Each category's status is reported truthfully: `active` only after it is really in effect.
 
@@ -72,7 +72,7 @@ Vendor-bound requests are limited to two switchable, command-scoped categories �
 
 Both disclose what the server can observe (source IP, timestamp, and Cloudflare access logs) and its retention period, and both can be switched off: set `TOKENHUSH_NO_RULE_SYNC=1` to make `rules sync` refuse without any network request, and set `TOKENHUSH_NO_UPDATE_CHECK=1` to make `tokenhush update` return before any network request. The disclosure is generated from the machine-readable [`egress.yaml`](../egress.yaml) manifest, printed by `tokenhush privacy`, and published at [generated/network-egress.md](generated/network-egress.md). The scope is locked by `TestNoTelemetry` in `pkg/proxy`, which proves the data plane never dials a vendor host even for vendor-looking paths.
 
-## Vulnerability disclosure
+## 🛡️ Vulnerability disclosure
 
 > [!CAUTION]
 > **Do not open a public issue** for a vulnerability. Follow the disclosure process in [SECURITY.md](../SECURITY.md) (supported versions, private reporting, and response times). Details are published only after a fix has been released.

@@ -6,7 +6,7 @@
 
 Tokenhush 就是一个静态二进制：无运行时依赖，不起后台守护进程，也不装根证书。前台启动后，把 AI 工具指向 `http://127.0.0.1:8787`。
 
-## 1. 环境要求
+## 🎯 1. 环境要求
 
 | 要求 | 值 |
 |---|---|
@@ -18,7 +18,7 @@ Tokenhush 就是一个静态二进制：无运行时依赖，不起后台守护�
 
 发行版二进制是纯 Go（`CGO_ENABLED=0`），不需要 C 工具链。网关拒绝 `0.0.0.0` 和空主机，只绑定 `127.0.0.1`、`::1`、`localhost`；它是本地组件，不是网络服务。
 
-## 2. 安装
+## 📦 2. 安装
 
 ### macOS（Homebrew cask）
 
@@ -97,7 +97,7 @@ tokenhush version
 > [!NOTE]
 > macOS Homebrew 和 Windows Scoop 渠道在 `v0.3.0` 线下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
 
-## 3. 首次运行
+## 🚀 3. 首次运行
 
 前台启动网关：
 
@@ -132,12 +132,12 @@ tokenhush doctor
 tokenhush env claude
 ```
 
-`env` 支持 `claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands` 和 `kilo`，按当前平台打印对应写法。各工具的完整配置（含 `tokenhush.yaml` 上游映射）见 [configuration.zh-CN.md](configuration.zh-CN.md)。定工作流前先看清下面的 V1 限制。
+`env` 支持 `claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands` 和 `kilo`，按当前平台打印对应写法。各工具的完整配置（含 `tokenhush.yaml` 上游映射）见 [tool-setup.zh-CN.md](tool-setup.zh-CN.md)。定工作流前先看清下面的 V1 限制。
 
 > [!IMPORTANT]
 > Codex CLI 只能用 API key 模式，ChatGPT 订阅登录无法走网关。Cursor 智能体流量、ChatGPT 和 Claude 桌面应用、浏览器 Web UI 在 V1 都不覆盖；它们要系统级 MITM，而公开核心不实现。
 
-## 4. 运行模式
+## 🚀 4. 运行模式
 
 V1 只有一种运行模式：前台网关 `tokenhush run`，挂在终端上，按 `Ctrl-C` 退出。没有守护进程模式，也没有 service 子命令。
 
@@ -146,6 +146,7 @@ V1 只有一种运行模式：前台网关 `tokenhush run`，挂在终端上，�
 | `--config PATH` | `tokenhush.yaml` 的路径 | 覆盖平台默认位置 |
 | `--port N` | `1` 到 `65535` | 默认 `8787`（或配置的 `listen.port`） |
 | `--log-level LEVEL` | `debug`、`info`、`warn`、`error` | 默认 `info` |
+| `--log-redactions BOOL` | `true`（默认）或 `false` | 为每个被脱敏的值向 stderr 打印一行掩码日志 |
 
 在自定义端口启动：
 
@@ -164,6 +165,16 @@ tokenhush run --config ~/.config/tokenhush/tokenhush.yaml
 ```bash
 tokenhush run --log-level debug
 ```
+
+### 脱敏日志
+
+`tokenhush run` 默认会为每个被脱敏的值向 stderr 打印一行掩码日志。每行包含检测器类型、匹配到的字节长度与一段掩码片段，绝不打印完整值：
+
+```text
+tokenhush: redacted request api_key (len=32) sk-p…j0
+```
+
+可用 `--log-redactions=false` 关闭。
 
 控制面 API 只在环回可用，需要 `<data-dir>/control.token` 里的 bearer 令牌。请求路径见 [architecture.zh-CN.md](architecture.zh-CN.md)。
 
@@ -282,7 +293,7 @@ Get-ScheduledTask -TaskName "Tokenhush Gateway" | Get-ScheduledTaskInfo
 Unregister-ScheduledTask -TaskName "Tokenhush Gateway" -Confirm:$false
 ```
 
-## 5. 目录与环境
+## ⚙️ 5. 目录与环境
 
 Tokenhush 用两个目录：存 `tokenhush.yaml` 的配置目录，存运行时状态的数据目录。macOS 上两者同路径，Linux 和 Windows 上分开。
 
@@ -303,15 +314,15 @@ Tokenhush 用两个目录：存 `tokenhush.yaml` 的配置目录，存运行时�
 
 `run.json` 和 `control.token` 都是会话文件。干净关闭时 `run` 会删掉；`run.json` 残留只影响诊断，不影响数据安全。核心不保存请求或响应内容。
 
-## 6. 配置
+## ⚙️ 6. 配置
 
 Tokenhush 从配置目录读 `tokenhush.yaml`，或从 `--config` 指定的路径读。文件不存在就用默认值。未知键会被拒绝，所以拼错会直接报错，不会悄悄忽略。
 
 最常改的设置：监听端口、六个检测器、白名单、日志级别，以及把主机或路径前缀路由到你自己的 OpenAI 兼容端点的 `upstreams` 映射。
 
-完整的带注释默认值和全部受支持的键见 [configuration.zh-CN.md](configuration.zh-CN.md)，本指南不重复 YAML 示例。
+完整的带注释默认值和全部受支持的键见 [tool-setup.zh-CN.md](tool-setup.zh-CN.md#tokenhushyaml-参考)，本指南不重复 YAML 示例。
 
-## 7. 升级
+## ⬆️ 7. 升级
 
 | 渠道 | 命令 |
 |---|---|
@@ -320,9 +331,9 @@ Tokenhush 从配置目录读 `tokenhush.yaml`，或从 `--config` 指定的路�
 | install.sh | 重新运行安装命令；它会解析最新发行版 |
 | 源码 | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：重启前先删掉被移除的 `audit:` 块。见 [migration-v0.2.0.zh-CN.md](migration-v0.2.0.zh-CN.md)。`v0.3.0` 升级无需修改配置；见 [migration-v0.3.0.zh-CN.md](migration-v0.3.0.zh-CN.md)。升级后重启网关，让新二进制接管流量。
+配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：核心配置没有 `audit:` 键，仍带该键的文件会加载失败——重启前请删掉该块。审计块位于私有 Pro 层。`v0.3.0` 升级无需修改配置：它把共享装配层移入导出的 `pkg/gateway` 包。升级后重启网关，让新二进制接管流量。
 
-## 8. 卸载
+## 🗑️ 8. 卸载
 
 用当初安装的渠道移除二进制：
 
@@ -342,7 +353,7 @@ rm "$(command -v tokenhush)"
 
 若加过 launchd agent、systemd unit 或计划任务，先删掉那个条目（见[让它在后台持续运行](#让它在后台持续运行)）。想彻底清干净，再删配置目录和数据目录。macOS 上两者都在 `~/Library/Application Support/tokenhush/`；Linux 上是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；Windows 上是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删数据目录会丢掉会话文件（控制令牌和 `run.json`）。
 
-## 9. 故障排查
+## 🛠️ 9. 故障排查
 
 先跑 `tokenhush doctor`。它一次报出配置路径、目录权限、密钥存储和会话状态，退出码直接告诉你有无失败。
 
@@ -355,7 +366,7 @@ rm "$(command -v tokenhush)"
 | Windows SmartScreen 拦下 `tokenhush.exe` | 点“更多信息”，再点“仍要运行”。Scoop 安装不会触发该提示 |
 | `status` 报控制令牌错误 | 没有活跃会话，或令牌已过期。重新启动 `tokenhush run`；令牌按会话重新生成 |
 
-## 10. 安全说明
+## 🛡️ 10. 安全说明
 
 下面这些是底线，别绕过。
 
@@ -367,7 +378,7 @@ rm "$(command -v tokenhush)"
 
 完整的威胁模型和不变量见 [security.zh-CN.md](security.zh-CN.md)。请求路径和模块布局见 [architecture.zh-CN.md](architecture.zh-CN.md)。
 
-## 命令参考
+## ⌨️ 命令参考
 
 ```text
 <!-- check-docs:commands:start -->
@@ -386,7 +397,7 @@ rm "$(command -v tokenhush)"
 
 | 命令 | 标志 |
 |---|---|
-| `run` | `--config PATH`、`--port N`、`--log-level debug\|info\|warn\|error` |
+| `run` | `--config PATH`、`--port N`、`--log-level debug\|info\|warn\|error`、`--log-redactions true\|false` |
 | `status` | `--json` |
 | `env <tool>` | `--config PATH`、`--port N`；工具：`claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands`、`kilo` |
 | `doctor` | `--config PATH`、`--port N`、`--json` |
@@ -396,4 +407,4 @@ rm "$(command -v tokenhush)"
 | `rules rollback` | 无 |
 | `version` | 无 |
 
-项目概览见 [../README.zh-CN.md](../README.zh-CN.md)，工具设置见 [configuration.zh-CN.md](configuration.zh-CN.md)。
+项目概览见 [../README.zh-CN.md](../README.zh-CN.md)，工具设置见 [tool-setup.zh-CN.md](tool-setup.zh-CN.md)。

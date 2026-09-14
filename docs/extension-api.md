@@ -4,11 +4,11 @@
 
 > Status: V1 implemented (2026-09). These interfaces match the real wiring in `pkg/extension`, `pkg/proxy`, and `pkg/gateway`. Plugin-author walkthrough: [plugins.md](plugins.md).
 
-## Purpose
+## 🎯 Purpose
 
 The public core ships one implementation: single-account direct. Private builds (closed source) and third parties mount extra capabilities through extension-point interfaces. A public interface does not mean a public implementation.
 
-## Interfaces (`pkg/extension`)
+## 🧩 Interfaces (`pkg/extension`)
 
 ### Cross-layer extension points
 
@@ -124,7 +124,7 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 
 Supporting types (illustrative): `Request` (method/path/headers/parsed JSON), `Response`, `Upstream` (base URL, no credentials; V1 passes them through). `Query`/`Record` alias `pkg/audit` types; its `AuditSink`/`AuditQuerier` seams own audit reads and writes. Core default is a no-op sink; Pro injects the store.
 
-## Assembly layer (`pkg/gateway`)
+## 🏗️ Assembly layer (`pkg/gateway`)
 
 The core CLI (`internal/cli`) and the private Pro daemon assemble through one shared layer. `pkg/gateway` owns the dual-stack loopback listener lifecycle, the per-session control token and `run.json`, the Host-allowlist and per-request stats middleware chain, the data plane, and the bounded graceful shutdown. Callers keep their build-specific concepts (audit store, control session, entitlement, web UI) behind the lifecycle hooks in `Options`.
 
@@ -239,7 +239,7 @@ func WriteRunState(dataDir string, st RunState) error
 func ResolveConfig(cfg *config.Config, path string) (*config.Config, error)
 ```
 
-## How implementations are mounted
+## 🧩 How implementations are mounted
 
 ### Public core (default)
 
@@ -280,7 +280,7 @@ func main() {
 
 **Key point**: Pro capability comes from private source, not a switch here. Cracking the public core cannot unlock Pro: the public binary contains no Pro implementation.
 
-## Stability policy
+## 📌 Stability policy
 
 | Interface | Stability | Notes |
 |---|---|---|
@@ -297,6 +297,6 @@ func main() {
 - Public interfaces follow semantic versioning; breaking changes bump the major version.
 - Third-party extensions should not depend on unfrozen fields before v1.0.
 
-## Third-party extensions
+## 🧩 Third-party extensions
 
 V1 supports **compile-time** plugins only (see [plugins.md](plugins.md)); no runtime loading of WASM, subprocesses, or dynamic libraries. A WASM sandbox (for ecosystem use, not IP protection) is out of scope for V1.

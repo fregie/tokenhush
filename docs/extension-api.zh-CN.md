@@ -4,11 +4,11 @@
 
 > 状态：V1 已实现（2026-09）。下列接口与 `pkg/extension`、`pkg/proxy` 以及 `pkg/gateway` 的真实接线一致。插件作者上手指南见 [plugins.zh-CN.md](plugins.zh-CN.md)。
 
-## 目的
+## 🎯 目的
 
 公开核心只带一种实现：单账号直连。私有构建（闭源）和第三方通过扩展点接口挂载额外能力。接口公开，不等于实现公开。
 
-## 接口（`pkg/extension`）
+## 🧩 接口（`pkg/extension`）
 
 ### 跨层扩展点
 
@@ -124,7 +124,7 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 
 辅助类型（示意）：`Request`（method/path/headers/解析后的 JSON）、`Response`、`Upstream`（base URL；不携带凭据，V1 透传凭据）。`Query` 与 `Record` 是 `pkg/audit` 类型的别名；审计读写由该包的 `AuditSink` / `AuditQuerier` 接缝承担。核心默认是 no-op sink，私有 Pro 层注入具体存储。
 
-## 装配层（`pkg/gateway`）
+## 🏗️ 装配层（`pkg/gateway`）
 
 核心 CLI（`internal/cli`）与私有 Pro daemon 通过同一装配层落地。`pkg/gateway` 负责：双栈环回监听器的生命周期、每会话控制 token 与 `run.json`、Host 允许列表与按请求统计的中间件链、数据面，以及有界的优雅关闭。各构建的特有概念（审计存储、控制会话、entitlement、Web UI）留在 `Options` 的生命周期钩子之后。
 
@@ -237,7 +237,7 @@ func WriteRunState(dataDir string, st RunState) error
 func ResolveConfig(cfg *config.Config, path string) (*config.Config, error)
 ```
 
-## 实现如何挂载
+## 🧩 实现如何挂载
 
 ### 公开核心（默认）
 
@@ -278,7 +278,7 @@ func main() {
 
 **要点**：Pro 能力来自私有源代码，不是本仓库里的开关。破解公开核心解锁不了 Pro，因为公开二进制里没有任何 Pro 实现。
 
-## 稳定性策略
+## 📌 稳定性策略
 
 | 接口 | 稳定性 | 说明 |
 |---|---|---|
@@ -295,6 +295,6 @@ func main() {
 - 公开接口按语义化版本管理；破坏性变更提升主版本号。
 - 第三方扩展在 v1.0 之前不应依赖未冻结的字段。
 
-## 第三方扩展
+## 🧩 第三方扩展
 
 V1 只支持**编译期**插件（见 [plugins.zh-CN.md](plugins.zh-CN.md)）；不在运行时加载 WASM、子进程或动态库。面向生态（而非 IP 保护）的 WASM 沙箱不在 V1 范围内。
