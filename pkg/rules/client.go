@@ -121,13 +121,13 @@ func (c *Client) Sync(ctx context.Context, check bool) (SyncResult, error) {
 	}
 	rev, err := c.Verifier.VerifyRevocations(rawRev)
 	if err != nil {
-		return c.reject(check, "rules revocations rejected", err)
+		return c.rejectKeepingActive(check, "rules revocations rejected", err)
 	}
 	if rev.Channel != c.Channel {
 		return c.reject(check, "rules revocations channel mismatch", ErrChannelMismatch)
 	}
 	if err := c.checkRevocationRollback(rev.Serial); err != nil {
-		return c.reject(check, "rules revocations rollback", err)
+		return c.rejectKeepingActive(check, "rules revocations rollback", err)
 	}
 	if !check {
 		if err := c.storeRevocations(rev); err != nil {
@@ -267,12 +267,16 @@ func (c *Client) reject(check bool, msg string, cause error) (SyncResult, error)
 	return SyncResult{Status: SyncBuiltin, Warnings: []string{w}}, cause
 }
 
-// rejectKeepingActive refuses a replayed or rolled-back candidate without
-// dropping the currently active verified pack. An attacker who can only replay
-// a validly signed older manifest must not be able to force the client onto the
-// built-in defaults or erase the active selection: when the channel later
-// offers the high-water serial again, SyncCurrent keeps the same verified pack
-// active instead of being stuck on the defaults.
+// rejectKeepingActive refuses a candidate that was rejected — a replayed or
+// rolled-back manifest, or a revocation document that fails verification or
+// rolls back — without dropping the currently active verified pack. An attacker
+// who can only replay a validly signed older document, or serve a single forged
+// or stale revocation document, must not be able to force the client onto the
+// built-in defaults or erase the active selection: when the channel recovers,
+// SyncCurrent (or the next verified revocation) keeps the same verified pack
+// active instead of being stuck on the defaults. The candidate is still refused
+// fail-closed: Sync returns the cause as an error and never proceeds to fetch
+// or apply the manifest.
 func (c *Client) rejectKeepingActive(check bool, msg string, cause error) (SyncResult, error) {
 	w := fmt.Sprintf("rules: %s: %v; keeping the active verified rule pack", msg, cause)
 	c.warn(w)

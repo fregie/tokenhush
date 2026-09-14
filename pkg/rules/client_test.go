@@ -671,7 +671,9 @@ func TestSyncFreezeCannotHideIndependentRevocation(t *testing.T) {
 
 // TestSyncRejectsRevocationsRollback asserts the independent revocation
 // document is anti-rollback protected by its own high-water mark, so an
-// attacker cannot replay an older (non-revoking) document.
+// attacker cannot replay an older (non-revoking) document. The already verified
+// active pack is preserved (N1-class availability): a single stale revocation
+// feed must not erase it, and the manifest is never fetched.
 func TestSyncRejectsRevocationsRollback(t *testing.T) {
 	b := newFakeBackend(t, 5, nil)
 	root := t.TempDir()
@@ -689,11 +691,52 @@ func TestSyncRejectsRevocationsRollback(t *testing.T) {
 	if !errors.Is(err, ErrPackReplayed) {
 		t.Fatalf("Sync() error = %v, want ErrPackReplayed", err)
 	}
-	if res.Status != SyncBuiltin {
-		t.Fatalf("status = %v, want builtin-default", res.Status)
+	if res.Status != SyncCached || res.Serial != 5 {
+		t.Fatalf("Sync() = %+v, want cached serial 5 (active preserved)", res)
+	}
+	if active, ok, _ := c.Cache.Active(); !ok || active != 5 {
+		t.Fatalf("active = %d,%v, want the verified serial 5 pack preserved", active, ok)
 	}
 	if after, _ := b.calls(); after != manifestCalls {
 		t.Fatalf("manifest fetched after a revocation rollback: %d -> %d", manifestCalls, after)
+	}
+}
+
+// TestSyncForgedRevocationsKeepsVerifiedActivePack is the N1-class follow-up: a
+// forged (bad-signature) independent revocation document must not clear the
+// already verified active pack, or a single malformed kill-switch feed could
+// force a permanent fallback to the built-in defaults. Fail-closed is retained:
+// the manifest is never fetched.
+func TestSyncForgedRevocationsKeepsVerifiedActivePack(t *testing.T) {
+	b := newFakeBackend(t, 7, nil)
+	root := t.TempDir()
+	warn := &warnRecorder{}
+	c := newTestClient(t, b, root, warn, testNow)
+	if _, err := c.Sync(context.Background(), false); err != nil {
+		t.Fatalf("initial Sync() error = %v", err)
+	}
+	manifestCalls, _ := b.calls()
+
+	_, priv := sharedTestKey()
+	forged := signedRevocations(priv, b.keyID, 2, nil)
+	forged.Serial = 99 // signature no longer covers the mutated serial
+	b.setRevocations(forged)
+
+	res, err := c.Sync(context.Background(), false)
+	if !errors.Is(err, ErrPackBadSignature) {
+		t.Fatalf("Sync() error = %v, want ErrPackBadSignature", err)
+	}
+	if res.Status != SyncCached || res.Serial != 7 {
+		t.Fatalf("Sync() = %+v, want cached serial 7 (active preserved)", res)
+	}
+	if active, ok, _ := c.Cache.Active(); !ok || active != 7 {
+		t.Fatalf("active = %d,%v, want the verified serial 7 pack preserved", active, ok)
+	}
+	if after, _ := b.calls(); after != manifestCalls {
+		t.Fatalf("manifest fetched after a forged revocation: %d -> %d (must fail closed)", manifestCalls, after)
+	}
+	if !warn.contains("keeping the active verified rule pack") {
+		t.Fatalf("warnings = %v, want a keep-active warning", warn.all())
 	}
 }
 
@@ -715,6 +758,9 @@ func TestSyncRejectsForgedRevocationsBeforeManifest(t *testing.T) {
 	}
 	if calls, _ := b.calls(); calls != 0 {
 		t.Fatalf("manifest fetched %d times, want 0: revocations must verify first", calls)
+	}
+	if state, _ := c.Active(); state.Config != nil {
+		t.Fatalf("Active() = %+v, want built-in defaults when no verified pack was ever active", state)
 	}
 }
 
