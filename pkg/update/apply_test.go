@@ -39,10 +39,13 @@ func sha256Sum(b []byte) []byte {
 func sha256Hex(b []byte) string { return hex.EncodeToString(sha256Sum(b)) }
 
 // validApplyConfig is a complete, valid self-managed configuration reused by
-// every configuration test.
-func validApplyConfig() ApplyConfig {
+// every configuration test. The target is a real absolute path on every OS
+// (t.TempDir is absolute on Windows too), so the tests do not depend on a unix
+// path shape.
+func validApplyConfig(t *testing.T) ApplyConfig {
+	t.Helper()
 	return ApplyConfig{
-		Source:   Source{Kind: SourceSelfManaged, Exe: "/home/me/.local/bin/tokenhush"},
+		Source:   Source{Kind: SourceSelfManaged, Exe: filepath.Join(t.TempDir(), "tokenhush")},
 		Channel:  "stable",
 		BaseURL:  "https://updates.tokenhush.com",
 		Verifier: &Verifier{},
@@ -55,8 +58,8 @@ func validApplyConfig() ApplyConfig {
 // behind the "brew never self-replaces" acceptance.
 func TestNewApplierRefusesNonSelfManagedSources(t *testing.T) {
 	for _, kind := range []SourceKind{SourceBrew, SourceScoop, SourceUnknown} {
-		cfg := validApplyConfig()
-		cfg.Source = Source{Kind: kind, Exe: "/usr/bin/tokenhush"}
+		cfg := validApplyConfig(t)
+		cfg.Source = Source{Kind: kind, Exe: filepath.Join(t.TempDir(), "tokenhush")}
 		_, err := NewApplier(cfg)
 		if !errors.Is(err, ErrNotSelfManaged) {
 			t.Fatalf("NewApplier(%s) error = %v, want ErrNotSelfManaged", kind, err)
@@ -67,7 +70,7 @@ func TestNewApplierRefusesNonSelfManagedSources(t *testing.T) {
 // TestNewApplierValidatesConfiguration asserts every required field is
 // enforced before the engine can fetch or write anything.
 func TestNewApplierValidatesConfiguration(t *testing.T) {
-	if _, err := NewApplier(validApplyConfig()); err != nil {
+	if _, err := NewApplier(validApplyConfig(t)); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
 	}
 
@@ -86,7 +89,7 @@ func TestNewApplierValidatesConfiguration(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := validApplyConfig()
+			cfg := validApplyConfig(t)
 			tt.bad(&cfg)
 			_, err := NewApplier(cfg)
 			if err == nil {
@@ -102,7 +105,7 @@ func TestNewApplierValidatesConfiguration(t *testing.T) {
 // TestNewApplierDefaultsTargetToSourceExe asserts the running binary path from
 // source detection is the default install target.
 func TestNewApplierDefaultsTargetToSourceExe(t *testing.T) {
-	cfg := validApplyConfig()
+	cfg := validApplyConfig(t)
 	a, err := NewApplier(cfg)
 	if err != nil {
 		t.Fatalf("NewApplier: %v", err)
@@ -207,7 +210,7 @@ func TestHashMatchesConstantTime(t *testing.T) {
 // TestApplyURLsEncodeTheChannel asserts the engine builds the B2 endpoint
 // contract with the channel safely encoded.
 func TestApplyURLsEncodeTheChannel(t *testing.T) {
-	cfg := validApplyConfig()
+	cfg := validApplyConfig(t)
 	cfg.Channel = "beta/../evil"
 	a, err := NewApplier(cfg)
 	if err != nil {

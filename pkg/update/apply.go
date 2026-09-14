@@ -75,7 +75,8 @@ type ApplyResult struct {
 }
 
 // ApplyConfig configures an Applier. Source and Verifier are required; Target
-// defaults to Source.Exe, HTTPClient and GOOS default to the real process.
+// defaults to Source.Exe. GOOS and GOARCH are the target platform an artifact
+// must match; both default to the running process platform.
 type ApplyConfig struct {
 	Source     Source
 	Channel    string
@@ -84,6 +85,7 @@ type ApplyConfig struct {
 	Verifier   *Verifier
 	HTTPClient *http.Client
 	GOOS       string
+	GOARCH     string
 	MaxSize    int64
 }
 
@@ -96,6 +98,7 @@ type Applier struct {
 	verifier *Verifier
 	client   *http.Client
 	goos     string
+	goarch   string
 	maxSize  int64
 }
 
@@ -130,6 +133,10 @@ func NewApplier(cfg ApplyConfig) (*Applier, error) {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
+	goarch := cfg.GOARCH
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = defaultApplyClient()
@@ -146,6 +153,7 @@ func NewApplier(cfg ApplyConfig) (*Applier, error) {
 		verifier: cfg.Verifier,
 		client:   client,
 		goos:     goos,
+		goarch:   goarch,
 		maxSize:  maxSize,
 	}, nil
 }
@@ -185,9 +193,9 @@ func (a *Applier) Apply(ctx context.Context) (ApplyResult, error) {
 			return ApplyResult{Version: m.Version, Serial: m.Serial, Status: ApplyUpToDate}, nil
 		}
 	}
-	if m.OS != runtime.GOOS || m.Arch != runtime.GOARCH {
+	if m.OS != a.goos || m.Arch != a.goarch {
 		return ApplyResult{}, fmt.Errorf("%w: manifest targets %s/%s, running %s/%s",
-			ErrPlatformMismatch, m.OS, m.Arch, runtime.GOOS, runtime.GOARCH)
+			ErrPlatformMismatch, m.OS, m.Arch, a.goos, a.goarch)
 	}
 	l, err := newLayout(a.target)
 	if err != nil {

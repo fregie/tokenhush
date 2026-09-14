@@ -80,7 +80,7 @@ func emptyRevocations() RevocationList {
 	return RevocationList{Channel: "stable", Serial: 1, NotBefore: validFrom(), Expires: validUntil()}
 }
 
-func newEngine(t *testing.T, v *Verifier, b *applyBackend, target, goos string) *Applier {
+func newEngine(t *testing.T, v *Verifier, b *applyBackend, target, goos, goarch string) *Applier {
 	t.Helper()
 	a, err := NewApplier(ApplyConfig{
 		Source:     Source{Kind: SourceSelfManaged, Exe: target},
@@ -89,6 +89,7 @@ func newEngine(t *testing.T, v *Verifier, b *applyBackend, target, goos string) 
 		Verifier:   v,
 		HTTPClient: b.srv.Client(),
 		GOOS:       goos,
+		GOARCH:     goarch,
 	})
 	if err != nil {
 		t.Fatalf("NewApplier: %v", err)
@@ -129,7 +130,7 @@ func TestApplyHappyPathInstallsVerifiedUpdateAndRollsBack(t *testing.T) {
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
 
-	res, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	res, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -172,7 +173,7 @@ func TestApplyBadSignatureLeavesOriginalUntouched(t *testing.T) {
 	b.manifestRaw = marshalDoc(t, tampered)
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("Apply error = %v, want ErrBadSignature", err)
 	}
@@ -195,7 +196,7 @@ func TestApplyBadHashLeavesOriginalUntouched(t *testing.T) {
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrHashMismatch) {
 		t.Fatalf("Apply error = %v, want ErrHashMismatch", err)
 	}
@@ -220,7 +221,7 @@ func TestApplyRevokedVersionIsRejected(t *testing.T) {
 	rev.RevokedVersions = []string{"0.4.0"}
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, rev))
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrRevoked) {
 		t.Fatalf("Apply error = %v, want ErrRevoked", err)
 	}
@@ -244,7 +245,7 @@ func TestApplyRevokedSerialIsRejected(t *testing.T) {
 	rev.RevokedSerials = []uint64{10}
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, rev))
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrRevoked) {
 		t.Fatalf("Apply error = %v, want ErrRevoked", err)
 	}
@@ -270,7 +271,7 @@ func TestApplyRejectsForgedRevocationDocument(t *testing.T) {
 	forged.Serial = 99
 	b.revRaw = marshalDoc(t, forged)
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("Apply error = %v, want ErrBadSignature", err)
 	}
@@ -296,7 +297,7 @@ func TestApplyUpToDateDoesNotDownload(t *testing.T) {
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
 
-	res, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	res, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -320,10 +321,11 @@ func TestApplyWindowsStagesThenCompletesOnRecover(t *testing.T) {
 	v, _, upd := engineVerifier(t, "0.3.0")
 	m := engineManifest(b.artifact, b.artifactURL())
 	m.Version, m.Serial = "0.4.0", 10
+	m.OS = "windows"
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
 
-	res, err := newEngine(t, v, b, target, "windows").Apply(context.Background())
+	res, err := newEngine(t, v, b, target, "windows", "amd64").Apply(context.Background())
 	if err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
@@ -372,7 +374,7 @@ func TestApplyReplayIsIdempotentAndRollbackIsRejected(t *testing.T) {
 	m.Version, m.Serial = "0.4.0", 10
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
-	a := newEngine(t, v, b, target, "linux")
+	a := newEngine(t, v, b, target, "linux", "amd64")
 
 	if res, err := a.Apply(context.Background()); err != nil || res.Status != ApplyUpdated {
 		t.Fatalf("first Apply = (%+v, %v), want updated", res, err)
@@ -409,7 +411,7 @@ func TestApplyFailedDownloadDoesNotSuppressRetry(t *testing.T) {
 	m.Version, m.Serial = "0.4.0", 10
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
-	a := newEngine(t, v, b, target, "linux")
+	a := newEngine(t, v, b, target, "linux", "amd64")
 
 	// First run: the artifact endpoint is unavailable, so the download fails
 	// after the manifest already advanced the high-water mark.
@@ -460,6 +462,7 @@ func TestApplyRejectsUntrustedTLSCertificate(t *testing.T) {
 		BaseURL:  b.srv.URL,
 		Verifier: v,
 		GOOS:     "linux",
+		GOARCH:   "amd64",
 	})
 	if err != nil {
 		t.Fatalf("NewApplier: %v", err)
@@ -487,7 +490,7 @@ func TestApplyAbortsWhenRevocationsUnavailable(t *testing.T) {
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = nil
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrHTTPStatus) {
 		t.Fatalf("Apply error = %v, want ErrHTTPStatus", err)
 	}
@@ -515,7 +518,7 @@ func TestApplyRejectsForeignPlatformManifest(t *testing.T) {
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrPlatformMismatch) {
 		t.Fatalf("Apply error = %v, want ErrPlatformMismatch", err)
 	}
@@ -538,7 +541,7 @@ func TestApplyRejectsChannelMismatch(t *testing.T) {
 	b.manifestRaw = marshalDoc(t, upd.signManifest(t, m))
 	b.revRaw = marshalDoc(t, upd.signRevocations(t, emptyRevocations()))
 
-	_, err := newEngine(t, v, b, target, "linux").Apply(context.Background())
+	_, err := newEngine(t, v, b, target, "linux", "amd64").Apply(context.Background())
 	if !errors.Is(err, ErrChannelMismatch) {
 		t.Fatalf("Apply error = %v, want ErrChannelMismatch", err)
 	}
