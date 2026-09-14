@@ -130,6 +130,8 @@ tokenhush status
     tokenhush env <tool>   print tool setup snippets
     tokenhush doctor       diagnose common setup problems
     tokenhush privacy      show requests that leave your machine for the vendor
+    tokenhush update       upgrade via the owning package manager
+    tokenhush rules        sync signed detection rules or roll back
     tokenhush version      print version and build information
 <!-- check-docs:commands:end -->
 ```
@@ -141,6 +143,8 @@ tokenhush status
 | `tokenhush env <tool>` | Print tool setup snippets. Tools: `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, `kilo`. | `--config PATH`, `--port N` |
 | `tokenhush doctor` | Diagnose common setup problems. Exits `0` when no check fails, `1` on any failure, `2` on a usage error. | `--config PATH`, `--port N`, `--json` |
 | `tokenhush privacy` | Show every request Tokenhush can send to the vendor, what the server observes, and how to switch each category off. | `--json` |
+| `tokenhush update` | Upgrade Tokenhush. Homebrew and Scoop installs delegate to their package manager; a self-managed install verifies the signed release and self-updates. | `--check` |
+| `tokenhush rules <sync\|rollback>` | Sync the signed detection rules, or roll back to the previous verified pack (or the built-in defaults). | `sync --check` |
 | `tokenhush version` | Print version and build information. | none |
 
 > [!NOTE]
@@ -187,6 +191,7 @@ Tokenhush binds loopback only, enforces a Host allowlist, and stores no request 
 | [docs/security.md](docs/security.md) | Security model, threat model, and hard invariants |
 | [docs/generated/network-egress.md](docs/generated/network-egress.md) | Generated network egress disclosure: the two switchable vendor-bound categories |
 | [docs/verify.md](docs/verify.md) | Verify redaction yourself with a local echo upstream |
+| [docs/oss-testing.md](docs/oss-testing.md) | Self-test guide: build from source, connect a real tool, and run the acceptance checklist |
 | [docs/plugins.md](docs/plugins.md) | Writing content plugins (`Inspector` / `Transformer`) |
 | [docs/extension-api.md](docs/extension-api.md) | Cross-layer extension interfaces |
 | [docs/migration-v0.2.0.md](docs/migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |

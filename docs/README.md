@@ -15,6 +15,7 @@ Tokenhush is a local base-URL gateway. Point your AI coding tools at `http://127
 | [architecture.md](architecture.md) | Request path, module layout, and the open-core boundary |
 | [security.md](security.md) | Threat model, hard invariants, detector trade-offs, and disclosure |
 | [verify.md](verify.md) | Verify redaction on your own machine: a loopback echo upstream shows the placeholder that leaves and the value that comes back |
+| [oss-testing.md](oss-testing.md) | Self-test guide for the public core: build from source, connect a real AI tool, run the five-point acceptance checklist, and troubleshoot |
 | [plugins.md](plugins.md) | Writing content plugins (Inspector / Transformer) |
 | [extension-api.md](extension-api.md) | Cross-layer extension points and the registration contract |
 | [migration-v0.2.0.md](migration-v0.2.0.md) | Migrating from v0.1.x: the audit capability moved to the Pro layer |

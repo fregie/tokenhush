@@ -129,6 +129,9 @@ tokenhush status
     tokenhush status       显示网关是否正在运行
     tokenhush env <tool>   打印工具配置片段
     tokenhush doctor       诊断常见配置问题
+    tokenhush privacy      显示会离开本机发往厂商的请求
+    tokenhush update       通过所属包管理器升级
+    tokenhush rules        同步已签名的检测规则或回滚
     tokenhush version      打印版本与构建信息
 <!-- check-docs:commands:end -->
 ```
@@ -139,6 +142,9 @@ tokenhush status
 | `tokenhush status` | 显示网关是否正在运行。 | `--json` |
 | `tokenhush env <tool>` | 打印工具配置片段。工具：`claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands`、`kilo`。 | `--config PATH`、`--port N` |
 | `tokenhush doctor` | 诊断常见配置问题。无检查失败时退出码为 `0`，任一项失败为 `1`，用法错误为 `2`。 | `--config PATH`、`--port N`、`--json` |
+| `tokenhush privacy` | 显示 Tokenhush 可能发往厂商的每类请求、服务端可见信息，以及各类别的关闭方式。 | `--json` |
+| `tokenhush update` | 升级 Tokenhush。Homebrew 与 Scoop 安装交由各自包管理器处理；self-managed 安装会校验已签名版本并自更新。 | `--check` |
+| `tokenhush rules <sync\|rollback>` | 同步已签名的检测规则，或回滚到上一个已验签的规则包（无则回退内置默认）。 | `sync --check` |
 | `tokenhush version` | 打印版本与构建信息。 | 无 |
 
 > [!NOTE]
@@ -185,6 +191,7 @@ Tokenhush 只绑定环回地址，强制 Host 白名单，不保存请求或响�
 | [docs/security.zh-CN.md](docs/security.zh-CN.md) | 安全模型、威胁模型和硬性不变量 |
 | [docs/generated/network-egress.md](docs/generated/network-egress.md) | 生成的数据外发披露：两个可关的厂商外发类别 |
 | [docs/verify.zh-CN.md](docs/verify.zh-CN.md)（[English](docs/verify.md)） | 用本机回显上游自己验证脱敏 |
+| [docs/oss-testing.md](docs/oss-testing.md) | 自测指南：从源码构建、接入真实工具、跑验收清单（英文） |
 | [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`） |
 | [docs/extension-api.zh-CN.md](docs/extension-api.zh-CN.md) | 跨层扩展接口 |
 | [docs/migration-v0.2.0.zh-CN.md](docs/migration-v0.2.0.zh-CN.md) | 从 v0.1.x 迁移：审计能力已移至 Pro 层 |
