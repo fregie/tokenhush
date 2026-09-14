@@ -38,7 +38,19 @@ func (r RevocationList) Revokes(serial uint64) bool {
 // signature: the domain tag followed by the SHA-256 of the payload projection.
 // Serials are sorted so issuer and verifier agree without JSON canonicalization.
 func RevocationSigningInput(r RevocationList) []byte {
-	revoked := append([]uint64(nil), r.RevokedSerials...)
+	sum := sha256.Sum256(revocationPayload(r))
+	return []byte(revocationDomain + "\n" + hex.EncodeToString(sum[:]))
+}
+
+// revocationPayload renders the exact JSON projection a revocation signature
+// covers. The list is signed *without* omitempty, so an empty list must render
+// as `[]`, never `null`: the document is issued by the Python signer
+// (scripts/rules-manifest.py), which always emits `[]`, and a `null` here
+// silently rejects every published revocation document. A non-nil slice is
+// built so the empty case marshals to `[]`.
+func revocationPayload(r RevocationList) []byte {
+	revoked := make([]uint64, 0, len(r.RevokedSerials))
+	revoked = append(revoked, r.RevokedSerials...)
 	slices.Sort(revoked)
 	payload, _ := json.Marshal(struct {
 		Channel        string   `json:"channel"`
@@ -55,8 +67,7 @@ func RevocationSigningInput(r RevocationList) []byte {
 		Expires:        r.Expires.Unix(),
 		RevokedSerials: revoked,
 	})
-	sum := sha256.Sum256(payload)
-	return []byte(revocationDomain + "\n" + hex.EncodeToString(sum[:]))
+	return payload
 }
 
 // VerifyRevocations verifies raw and returns the independent revocation list:
