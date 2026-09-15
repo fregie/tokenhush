@@ -10,7 +10,7 @@ Tokenhush 是一个本地基础 URL 网关：把 AI 编程工具的 API 基础 U
 
 ## 🎯 开始之前
 
-1. **启动网关。** `tokenhush run` 留在前台运行，并打印 `tokenhush: gateway listening on http://127.0.0.1:<port>`，默认端口 `8787`。安装渠道、服务包装与目录见 [deployment.zh-CN.md](deployment.zh-CN.md)。
+1. **启动网关。** `tokenhush run` 留在前台运行，并在 `tokenhush: gateway listening on http://127.0.0.1:<port>` 之前打印生效的上游路由表和 `tokenhush env <tool>` 接入提示。默认端口 `8787`。安装渠道、服务包装与目录见 [deployment.zh-CN.md](deployment.zh-CN.md)。
 2. **确认网关在运行。** `tokenhush status` 会打印 `requests` 与 `redactions` 计数。工具发出请求后，这两个计数可用于确认流量确实到达网关。`tokenhush status --json` 会以 JSON 输出同样字段。
 3. **打印片段。** `tokenhush env <tool>` 会按当前端口渲染。用 `--port N` 对齐非默认网关，或用 `--config PATH` 从别处读取 `tokenhush.yaml`。
 4. **匹配你的 shell。** macOS 与 Linux 上 `tokenhush env` 打印 POSIX `export` 行；Windows PowerShell 上会打印当前会话的 `$env:NAME = "..."` 以及用于持久化的 `setx` 行。有疑问时直接运行 `tokenhush env` 并复制其原样输出。

@@ -62,6 +62,43 @@ var namedExceptionUpstreams = map[string]extension.Upstream{
 	"/v1/models": {Name: ProviderOpenAI, BaseURL: OpenAIBaseURL},
 }
 
+// Route is one entry of the built-in routing table: a request-path key and the
+// upstream it maps to. BuiltinRoutes exposes the table so callers (the CLI
+// startup summary) can display it without duplicating it.
+type Route struct {
+	Path     string
+	Upstream extension.Upstream
+	// Exception is true for a namedExceptionUpstreams entry: a non-data-bearing
+	// path assigned a default provider (currently only /v1/models).
+	Exception bool
+}
+
+// BuiltinRoutes returns the built-in routing table in a stable order: the
+// data-bearing provider paths from builtinUpstreams (sorted by path), then the
+// named-exception paths (sorted by path, Exception=true). The slice is a fresh
+// copy; the caller must not mutate the package tables. A config `upstreams:`
+// override still wins over every entry (Resolver precedence).
+func BuiltinRoutes() []Route {
+	routes := make([]Route, 0, len(builtinUpstreams)+len(namedExceptionUpstreams))
+	paths := make([]string, 0, len(builtinUpstreams))
+	for path := range builtinUpstreams {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		routes = append(routes, Route{Path: path, Upstream: builtinUpstreams[path]})
+	}
+	exceptions := make([]string, 0, len(namedExceptionUpstreams))
+	for path := range namedExceptionUpstreams {
+		exceptions = append(exceptions, path)
+	}
+	sort.Strings(exceptions)
+	for _, path := range exceptions {
+		routes = append(routes, Route{Path: path, Upstream: namedExceptionUpstreams[path], Exception: true})
+	}
+	return routes
+}
+
 // DefaultRouterName is the extension.Router name of the built-in router.
 const DefaultRouterName = "default"
 

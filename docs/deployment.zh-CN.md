@@ -105,9 +105,16 @@ tokenhush version
 tokenhush run
 ```
 
-成功后打印监听地址和控制令牌文件：
+成功后先打印生效的上游路由表与 `tokenhush env <tool>` 接入提示，再打印监听地址和控制令牌文件：
 
 ```text
+tokenhush: upstream routes (a request path selects its upstream; config `upstreams:` overrides win):
+tokenhush:   /v1/chat/completions       -> openai     https://api.openai.com
+tokenhush:   ... (the effective route table; config `upstreams:` overrides win)
+tokenhush: point a tool at the gateway, then run it:
+tokenhush:   tokenhush env claude   # ANTHROPIC_BASE_URL=http://127.0.0.1:8787
+tokenhush:   tokenhush env codex    # base_url=http://127.0.0.1:8787/v1
+tokenhush:   tokenhush env <tool>   # claude, codex, aider, cline, roo, opencode, qwen, crush, zed, continue, openwebui, goose, openhands, kilo
 tokenhush: gateway listening on http://127.0.0.1:8787
 tokenhush: control token file: <data-dir>/control.token
 ```

@@ -10,7 +10,7 @@ If you only want the copy-paste one-liner, `tokenhush env <tool>` prints it. Thi
 
 ## 🎯 Before you start
 
-1. **Start the gateway.** `tokenhush run` stays in the foreground and prints `tokenhush: gateway listening on http://127.0.0.1:<port>`. The default port is `8787`. See [deployment.md](deployment.md) for packages, service wrappers, and directories.
+1. **Start the gateway.** `tokenhush run` stays in the foreground and, before the `tokenhush: gateway listening on http://127.0.0.1:<port>` line, prints the effective upstream route table and a `tokenhush env <tool>` onboarding hint. The default port is `8787`. See [deployment.md](deployment.md) for packages, service wrappers, and directories.
 2. **Confirm it is up.** `tokenhush status` prints `requests` and `redactions` counters. After a tool sends a request, both let you confirm traffic reached the gateway. `tokenhush status --json` renders the same fields as JSON.
 3. **Print the snippet.** `tokenhush env <tool>` renders the current port. Add `--port N` to match a non-default gateway, or `--config PATH` to read `tokenhush.yaml` from another location.
 4. **Match your shell.** On macOS and Linux `tokenhush env` prints POSIX `export` lines. On Windows PowerShell it prints `$env:NAME = "..."` for the current session plus `setx` lines to persist. Run `tokenhush env` and copy its exact output when in doubt.

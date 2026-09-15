@@ -100,7 +100,7 @@ export TOKENHUSH_HOME="$WORK/home"
 GATEWAY_PID=$!
 ```
 
-`tokenhush run` 会打印监听地址。等它就绪，再确认网关可以应答：
+`tokenhush run` 会打印生效的上游路由表和监听地址。等它就绪，再确认网关可以应答：
 
 ```bash
 for _ in $(seq 1 100); do
@@ -112,6 +112,13 @@ cat "$WORK/gateway.log"
 ```
 
 ```text
+tokenhush: upstream routes (a request path selects its upstream; config `upstreams:` overrides win):
+tokenhush:   /v1/chat/completions       -> openai     https://api.openai.com
+tokenhush:   ... (the effective route table; config `upstreams:` overrides win)
+tokenhush: point a tool at the gateway, then run it:
+tokenhush:   tokenhush env claude   # ANTHROPIC_BASE_URL=http://127.0.0.1:8799
+tokenhush:   tokenhush env codex    # base_url=http://127.0.0.1:8799/v1
+tokenhush:   tokenhush env <tool>   # claude, codex, aider, cline, roo, opencode, qwen, crush, zed, continue, openwebui, goose, openhands, kilo
 tokenhush: gateway listening on http://127.0.0.1:8799
 tokenhush: control token file: /tmp/.../home/control.token
 tokenhush: gateway running

@@ -157,6 +157,8 @@ func runCommand(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	writeStartupSummary(stdout, cfg)
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
