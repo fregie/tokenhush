@@ -64,8 +64,11 @@ type PipelineConfig struct {
 //
 // Inbound (upstream to client): a fully-buffered response is inspected,
 // ResponseContent transformers run, and core backfill runs last. An SSE
-// (text/event-stream) response streams through a protocol.BackfillWriter so a
-// placeholder split across chunks is restored without buffering the stream.
+// (text/event-stream) response streams through an SSE-aware backfiller that
+// reassembles a placeholder split across several `data:` events: it holds a
+// bounded window of decoded leaf content (sseBackfillMaxHoldbackBytes) and
+// rewrites the contributing events in place, so the client sees the restored
+// secret with the event count and the `data:`/blank-line framing unchanged.
 //
 // A Pipeline is safe for concurrent use once built: the registry and policy are
 // immutable, and the engine is internally synchronised.
@@ -418,10 +421,11 @@ func contentDocument(phase extension.Phase, tool string, walked []protocol.Leaf)
 }
 
 // ResponseMiddleware wraps next so every client-bound response gets the inbound
-// path. An SSE (text/event-stream) response streams through an incremental
-// backfill writer; any other body is buffered, inspected and transformed, then
-// backfilled as one unit. A response that a Block inspector rejects is answered
-// with 403 before any body is written.
+// path. An SSE (text/event-stream) response streams through an SSE-aware
+// backfill writer that reassembles placeholders spanning several events; any
+// other body is buffered, inspected and transformed, then backfilled as one
+// unit. A response that a Block inspector rejects is answered with 403 before
+// any body is written.
 func (p *Pipeline) ResponseMiddleware(next http.Handler) http.Handler {
 	if next == nil {
 		next = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -448,8 +452,8 @@ const (
 	// identity body and for a decodable (gzip/deflate) body, which is
 	// decompressed here before any status code is committed.
 	modeBuffered responseMode = iota
-	// modeStreaming passes an identity-encoded SSE body through an incremental
-	// backfill writer.
+	// modeStreaming passes an identity-encoded SSE body through an SSE-aware
+	// backfiller that reassembles a placeholder split across several events.
 	modeStreaming
 	// modeDiscard drops every upstream byte after a fail-closed decision. The
 	// error status has already been committed, so nothing else may be sent.
@@ -458,7 +462,7 @@ const (
 
 // pipelineResponseWriter buffers a non-streaming response so the pipeline can
 // process it before the client sees a byte, and streams an identity SSE
-// response through a protocol.BackfillWriter. A content-encoded response is
+// response through an SSE-aware backfiller. A content-encoded response is
 // never passed through uninspected: a decodable body is buffered and
 // decompressed before commit, and an unsupported body is answered 502 with the
 // upstream bytes discarded.
@@ -468,7 +472,7 @@ type pipelineResponseWriter struct {
 	header   http.Header
 	status   int
 	buf      bytes.Buffer
-	backfill *protocol.BackfillWriter
+	backfill *sseBackfiller
 	mode     responseMode
 	decided  bool
 	// encodings holds the ordered, lower-cased Content-Encoding tokens of a
@@ -522,7 +526,7 @@ func (w *pipelineResponseWriter) WriteHeader(status int) {
 			w.mode = modeStreaming
 			w.Header().Del("Content-Length")
 			w.dst.WriteHeader(status)
-			w.backfill = protocol.NewBackfillWriter(w.dst, w.pipeline.engine.MaxPlaceholderLen(), w.pipeline.engine.BackfillFunc())
+			w.backfill = newSSEBackfiller(w.dst, w.pipeline.engine.MaxPlaceholderLen(), w.pipeline.engine.BackfillFunc())
 		} else {
 			w.mode = modeBuffered
 		}
@@ -565,6 +569,10 @@ func (w *pipelineResponseWriter) Flush() {
 func (w *pipelineResponseWriter) finish() {
 	switch w.mode {
 	case modeStreaming:
+		// Exactly one Flush ends the stream (it also closes the decoder and
+		// drains held events). A sticky write error was already returned by
+		// Write to the body copier, and the status is committed by now, so
+		// there is no second channel to re-raise it on.
 		if w.backfill != nil {
 			_ = w.backfill.Flush()
 		}
