@@ -26,7 +26,36 @@ Tokenhush 就是一个静态二进制：无运行时依赖，不起后台守护�
 brew install --cask fregie/tap/tokenhush
 ```
 
-### Windows（Scoop）
+### Windows（install.ps1）
+
+```powershell
+irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1 | iex
+```
+
+脚本按架构下载 Windows zip，用 `checksums.txt`（sha256）校验后装到 `%LOCALAPPDATA%\Programs\tokenhush`，并把该目录加入用户 `PATH`。无需管理员权限；校验和不匹配就拒绝。
+
+管道形式的一行命令无法接收参数，需要传参时包进脚本块：
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1))) -DryRun
+```
+
+| 参数 | 含义 |
+|---|---|
+| `-DryRun` | 下载、校验并解包，但不安装 |
+| `-Version VERSION` | 安装指定版本，不带前导 `v` |
+| `-Dir PATH` | 目标目录（默认 `%LOCALAPPDATA%\Programs\tokenhush`） |
+| `-BaseUrl URL` | 供镜像或测试使用的下载基础 URL（需要显式指定 `-Version`） |
+
+| 环境变量 | 含义 |
+|---|---|
+| `TOKENHUSH_VERSION` | 要安装的版本（默认：最新发行版） |
+| `TOKENHUSH_INSTALL_DIR` | 目标目录（默认 `%LOCALAPPDATA%\Programs\tokenhush`） |
+| `TOKENHUSH_BASE_URL` | 供镜像或测试使用的下载基础 URL |
+
+退出码：成功 `0`，运行时失败 `1`，用法错误 `2`。脚本会把安装目录加入用户 `PATH`；请新开一个终端使其生效。
+
+### Windows（Scoop，备选）
 
 ```powershell
 scoop bucket add fregie https://github.com/fregie/scoop-bucket
@@ -54,7 +83,7 @@ curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh | 
 | `TOKENHUSH_INSTALL_DIR` | 目标目录（默认 `~/.local/bin`） |
 | `TOKENHUSH_BASE_URL` | 供镜像或测试使用的下载基础 URL |
 
-退出码：成功 `0`，运行时失败 `1`，用法错误 `2`。脚本若输出 `note: ~/.local/bin is not on your PATH`，就把该目录写进 shell 配置，让 `tokenhush` 能被找到。Windows 请改用 Scoop。
+退出码：成功 `0`，运行时失败 `1`，用法错误 `2`。脚本若输出 `note: ~/.local/bin is not on your PATH`，就把该目录写进 shell 配置，让 `tokenhush` 能被找到。该脚本不支持 Windows，Windows 请改用 install.ps1。
 
 ### 从源码构建
 
@@ -74,7 +103,7 @@ go build -o bin/tokenhush ./cmd/tokenhush
 
 ### 验证安装
 
-每个发行版都发布 `checksums.txt`（sha256）和每个归档的 SPDX SBOM。`install.sh` 装前就校验，Homebrew 和 Scoop 各自校验产物。
+每个发行版都发布 `checksums.txt`（sha256）和每个归档的 SPDX SBOM。`install.sh` 和 `install.ps1` 装前就校验，Homebrew 和 Scoop 各自校验产物。
 
 手动下载的，把归档哈希和 `checksums.txt` 对应行比一比：
 
@@ -84,7 +113,7 @@ sha256sum tokenhush_0.1.0_linux_amd64.tar.gz
 grep tokenhush_0.1.0_linux_amd64.tar.gz checksums.txt
 ```
 
-归档命名是 `tokenhush_<version>_<os>_<arch>.tar.gz`。macOS 上换成 `shasum -a 256 <archive>`。
+归档命名是 `tokenhush_<version>_<os>_<arch>.tar.gz`（Windows 为 `.zip`）。macOS 上换成 `shasum -a 256 <archive>`；Windows 上用 `Get-FileHash -Algorithm SHA256 <archive>`。
 
 确认二进制能跑：
 
@@ -95,7 +124,7 @@ tokenhush version
 `version` 打印版本和构建信息，不接受任何标志。
 
 > [!NOTE]
-> macOS Homebrew 和 Windows Scoop 渠道在 `v0.3.0` 线下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
+> macOS Homebrew 和 Windows install.ps1/Scoop 渠道在 `v0.3.0` 线下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
 
 ## 🚀 3. 首次运行
 
@@ -277,7 +306,7 @@ sudo loginctl enable-linger "$USER"
 
 #### Windows（任务计划程序）
 
-注册一个登录时启动网关的任务。通过 Scoop shim 解析可执行文件，确保路径正确：
+注册一个登录时启动网关的任务。用 `Get-Command` 解析可执行文件，install.ps1 与 Scoop 安装都适用：
 
 ```powershell
 $exe = (Get-Command tokenhush).Source
@@ -334,8 +363,9 @@ Tokenhush 从配置目录读 `tokenhush.yaml`，或从 `--config` 指定的路�
 | 渠道 | 命令 |
 |---|---|
 | Homebrew | `brew upgrade --cask tokenhush` |
+| Windows（install.ps1） | 重新运行安装命令；它会解析最新发行版 |
 | Scoop | `scoop update tokenhush` |
-| install.sh | 重新运行安装命令；它会解析最新发行版 |
+| Linux（install.sh） | 重新运行安装命令；它会解析最新发行版 |
 | 源码 | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
 配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：核心配置没有 `audit:` 键，仍带该键的文件会加载失败——重启前请删掉该块。审计块位于私有 Pro 层。`v0.3.0` 升级无需修改配置：它把共享装配层移入导出的 `pkg/gateway` 包。升级后重启网关，让新二进制接管流量。
@@ -352,10 +382,16 @@ brew uninstall --cask tokenhush
 scoop uninstall tokenhush
 ```
 
-`install.sh` 或源码安装的，直接删二进制：
+`install.sh`、`install.ps1` 或源码安装的，直接删二进制。macOS 和 Linux 上：
 
 ```bash
 rm "$(command -v tokenhush)"
+```
+
+Windows 上删掉安装目录，并从用户 `PATH` 中移除：
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\tokenhush"
 ```
 
 若加过 launchd agent、systemd unit 或计划任务，先删掉那个条目（见[让它在后台持续运行](#让它在后台持续运行)）。想彻底清干净，再删配置目录和数据目录。macOS 上两者都在 `~/Library/Application Support/tokenhush/`；Linux 上是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；Windows 上是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删数据目录会丢掉会话文件（控制令牌和 `run.json`）。
@@ -367,11 +403,11 @@ rm "$(command -v tokenhush)"
 | 症状 | 原因与修复 |
 |---|---|
 | `run` 报告端口已被占用 | 另一个进程（可能是先前的 `tokenhush run`）占用了端口。检查 `tokenhush status`，停掉那个进程，或换 `--port` 启动 |
-| 安装后找不到 `tokenhush` | `~/.local/bin` 或 `$(go env GOPATH)/bin` 不在 `PATH` 上。把它写进 shell 配置，再开一个新 shell |
+| 安装后找不到 `tokenhush` | 安装目录不在 `PATH` 上：`~/.local/bin`（Linux）、`$(go env GOPATH)/bin`（源码）、`%LOCALAPPDATA%\Programs\tokenhush`（Windows）。加上它，再开一个新 shell 或终端 |
 | 仅在公司网络内请求失败 | HTTP 代理拦了环回流量。把 `127.0.0.1,localhost,::1` 加进 `NO_PROXY`（以及 `no_proxy`），或在代理设置里排除 |
 | 主机没有 IPv6 / 出现 `[::1]` 绑定提示 | 主机没有 IPv6 环回时，网关只服务 `127.0.0.1`，并打印 `tokenhush: IPv6 loopback [::1] unavailable (<cause>); listening on 127.0.0.1 only`。这是预期行为，不是错误。若想同时服务 `[::1]`，可启用 IPv6 环回（Linux：`sysctl -w net.ipv6.conf.all.disable_ipv6=0`） |
 | macOS 首次运行拦下二进制 | 发行版二进制未公证。右键点二进制，选“打开”，再确认。或运行 `xattr -dr com.apple.quarantine "$(command -v tokenhush)"` |
-| Windows SmartScreen 拦下 `tokenhush.exe` | 点“更多信息”，再点“仍要运行”。Scoop 安装不会触发该提示 |
+| Windows SmartScreen 拦下 `tokenhush.exe` | 二进制尚未代码签名。点“更多信息”，再点“仍要运行”。Scoop 与已签名发行版不会触发该提示 |
 | `status` 报控制令牌错误 | 没有活跃会话，或令牌已过期。重新启动 `tokenhush run`；令牌按会话重新生成 |
 
 ## 🛡️ 10. 安全说明

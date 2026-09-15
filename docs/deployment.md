@@ -26,7 +26,36 @@ Release binaries are pure Go (`CGO_ENABLED=0`), so no C toolchain is needed. The
 brew install --cask fregie/tap/tokenhush
 ```
 
-### Windows (Scoop)
+### Windows (install.ps1)
+
+```powershell
+irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1 | iex
+```
+
+The script downloads the Windows zip for your architecture, checks it against the release `checksums.txt` (sha256), installs to `%LOCALAPPDATA%\Programs\tokenhush`, and adds that directory to your user `PATH`. No administrator rights are required, and it refuses to install on a checksum mismatch.
+
+The piped one-liner cannot take arguments; wrap it in a script block to pass any:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1))) -DryRun
+```
+
+| Parameter | Meaning |
+|---|---|
+| `-DryRun` | Download, verify and unpack, but do not install |
+| `-Version VERSION` | Install a specific version, without the leading `v` |
+| `-Dir PATH` | Destination directory (default `%LOCALAPPDATA%\Programs\tokenhush`) |
+| `-BaseUrl URL` | Download base URL for mirrors or testing (requires an explicit `-Version`) |
+
+| Environment variable | Meaning |
+|---|---|
+| `TOKENHUSH_VERSION` | Version to install (default: latest release) |
+| `TOKENHUSH_INSTALL_DIR` | Destination directory (default `%LOCALAPPDATA%\Programs\tokenhush`) |
+| `TOKENHUSH_BASE_URL` | Download base URL for mirrors or testing |
+
+Exit codes: `0` success, `1` runtime failure, `2` usage error. The script adds the install directory to your user `PATH`; open a new terminal so it takes effect.
+
+### Windows (Scoop, alternative)
 
 ```powershell
 scoop bucket add fregie https://github.com/fregie/scoop-bucket
@@ -54,7 +83,7 @@ The script downloads the archive for your OS and architecture, checks it against
 | `TOKENHUSH_INSTALL_DIR` | Destination directory (default `~/.local/bin`) |
 | `TOKENHUSH_BASE_URL` | Download base URL for mirrors or testing |
 
-Exit codes: `0` success, `1` runtime failure, `2` usage error. If the script prints `note: ~/.local/bin is not on your PATH`, add that directory to your shell profile so `tokenhush` resolves. The script does not support Windows; use Scoop instead.
+Exit codes: `0` success, `1` runtime failure, `2` usage error. If the script prints `note: ~/.local/bin is not on your PATH`, add that directory to your shell profile so `tokenhush` resolves. The script does not support Windows; use install.ps1 instead.
 
 ### Build from source
 
@@ -74,7 +103,7 @@ go build -o bin/tokenhush ./cmd/tokenhush
 
 ### Verify the installation
 
-Every release publishes `checksums.txt` (sha256) and a per-archive SPDX SBOM. `install.sh` verifies the checksum before installing; Homebrew and Scoop verify their own artifacts.
+Every release publishes `checksums.txt` (sha256) and a per-archive SPDX SBOM. `install.sh` and `install.ps1` verify the checksum before installing; Homebrew and Scoop verify their own artifacts.
 
 For a manual download, compare the archive hash with the matching line in `checksums.txt`:
 
@@ -84,7 +113,7 @@ sha256sum tokenhush_0.1.0_linux_amd64.tar.gz
 grep tokenhush_0.1.0_linux_amd64.tar.gz checksums.txt
 ```
 
-Archive names follow `tokenhush_<version>_<os>_<arch>.tar.gz`. On macOS, use `shasum -a 256 <archive>`.
+Archive names follow `tokenhush_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows). On macOS, use `shasum -a 256 <archive>`; on Windows, use `Get-FileHash -Algorithm SHA256 <archive>`.
 
 Confirm the binary runs:
 
@@ -95,7 +124,7 @@ tokenhush version
 `version` prints the version and build information, and takes no flags.
 
 > [!NOTE]
-> The macOS Homebrew and Windows Scoop channels are still under manual verification for the `v0.3.0` line. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
+> The macOS Homebrew and Windows install.ps1/Scoop channels are still under manual verification for the `v0.3.0` line. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
 
 ## 🚀 3. First run
 
@@ -277,7 +306,7 @@ sudo loginctl enable-linger "$USER"
 
 #### Windows (Task Scheduler)
 
-Register a task that starts the gateway at logon. Resolve the executable through the Scoop shim so the path is correct:
+Register a task that starts the gateway at logon. Resolving the executable through `Get-Command` works for both the install.ps1 and Scoop installs:
 
 ```powershell
 $exe = (Get-Command tokenhush).Source
@@ -334,8 +363,9 @@ Full annotated defaults and every supported key live in [tool-setup.md](tool-set
 | Channel | Command |
 |---|---|
 | Homebrew | `brew upgrade --cask tokenhush` |
+| Windows (install.ps1) | Re-run the install command; it resolves the latest release |
 | Scoop | `scoop update tokenhush` |
-| install.sh | Re-run the install command; it resolves the latest release |
+| Linux (install.sh) | Re-run the install command; it resolves the latest release |
 | Source | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
 Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: the core config has no `audit:` key, so a file that still contains one fails to load — delete that block before restarting. The audit block lives in the private Pro layer. The `v0.3.0` upgrade needs no config change: it moves the shared assembly layer into the exported `pkg/gateway` package. Restart the gateway after upgrading so the new binary serves traffic.
@@ -352,10 +382,16 @@ brew uninstall --cask tokenhush
 scoop uninstall tokenhush
 ```
 
-For an `install.sh` or source install, delete the binary directly:
+For an `install.sh`, `install.ps1`, or source install, delete the binary directly. On macOS and Linux:
 
 ```bash
 rm "$(command -v tokenhush)"
+```
+
+On Windows, remove the install directory and drop it from your user `PATH`:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\tokenhush"
 ```
 
 If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories for a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the session files (the control token and `run.json`).
@@ -367,11 +403,11 @@ Start with `tokenhush doctor`. It reports the config path, directory permissions
 | Symptom | Cause and fix |
 |---|---|
 | `run` reports the port is already in use | Another process (possibly a previous `tokenhush run`) holds the port. Check `tokenhush status`, stop the other process, or start with `--port` |
-| `tokenhush` not found after install | `~/.local/bin` or `$(go env GOPATH)/bin` is not on `PATH`. Add it to your shell profile, then open a new shell |
+| `tokenhush` not found after install | The install directory is not on `PATH`: `~/.local/bin` (Linux), `$(go env GOPATH)/bin` (source), or `%LOCALAPPDATA%\Programs\tokenhush` (Windows). Add it, then open a new shell or terminal |
 | Requests fail only inside a corporate network | An HTTP proxy is intercepting loopback traffic. Add `127.0.0.1,localhost,::1` to `NO_PROXY` (and `no_proxy`), or exclude it in your proxy settings |
 | Server has no IPv6 / `[::1]` bind notice | On a host without an IPv6 loopback, the gateway serves `127.0.0.1` only and logs `tokenhush: IPv6 loopback [::1] unavailable (<cause>); listening on 127.0.0.1 only`. This is expected, not an error. To also serve `[::1]`, enable the IPv6 loopback (Linux: `sysctl -w net.ipv6.conf.all.disable_ipv6=0`) |
 | macOS blocks the binary on first run | The release binaries are not notarized. Right-click the binary and choose Open, then confirm. Or run `xattr -dr com.apple.quarantine "$(command -v tokenhush)"` |
-| Windows SmartScreen blocks `tokenhush.exe` | Click More info, then Run anyway. Scoop installs do not trigger this prompt |
+| Windows SmartScreen blocks `tokenhush.exe` | The binary is not code-signed yet. Click More info, then Run anyway. Scoop and signed release installs do not trigger this prompt |
 | `status` fails with a control token error | No live session, or the token is stale. Start `tokenhush run` again; the token is regenerated per session |
 
 ## 🛡️ 10. Security notes
