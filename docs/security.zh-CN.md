@@ -30,9 +30,18 @@ Tokenhush 本身就是安全工具，所以**它自己必须先安全**。本文
 4. **本地服务仅绑环回：始终绑 `127.0.0.1`；主机有 IPv6 环回时同时绑 `[::1]`。主机没有 IPv6 环回时只服务 `127.0.0.1`，并打印提示。**
 5. **检测失败时失败安全（fail-safe），不是失败开放（fail-open）。** 网关判断不了内容是否敏感时，宁可过度脱敏，或在告警下放行，绝不静默发出明文。该策略可配置（见下）。
 6. **面向厂商的外发仅有更新检查与规则同步两个可关、按命令触发的类别。** 这两个类别均记录在机器可读的 [`egress.yaml`](../egress.yaml) 中且均可关闭；二者都不由网关数据面执行：代理请求仍只发往配置的上游，占位符绝不向出站方向回填，审计接缝仅携带元数据。
+7. **入站响应若带非 identity 的 `Content-Encoding`，要么被解码，要么 fail-closed——绝不未经检视就透传。** 管线会分类**每一行** `Content-Encoding`（用 `Header.Values` 按逗号拆分，而非只取首个值）。`gzip`/`deflate` 的 body 在 buffered 路径中、**提交任何状态码之前**整体解压，随后检视并回填，并删除 `Content-Encoding`。不支持的编码（`br`、`zstd` 等）、解压失败，或 `text/event-stream` body 上的可解编码，一律应答 **502 Bad Gateway** 并丢弃上游字节。由 `TestPipelineGzipResponseBackfilled`、`TestPipelineDecodableResponseInspected`、`TestPipelineUndecodableEncodingFailsClosed`、`TestPipelineMultiValuedEncodingFailsClosed` 锁定。
+8. **入站请求若带非 identity 的 `Content-Encoding`，在任何改写之前、拨号上游之前即以 415 拒绝。** 否则客户端压缩过的请求体会绕过脱敏，因为请求路径只遍历明文 JSON，无法解码压缩体。该检查位于 `Forwarder.ServeHTTP`——唯一能读到该头的层：body 从不读取，不运行任何改写，也不建立上游连接。由 `TestPipelineCompressedRequestBodyFailsClosed` 锁定。
+9. **入站回填对 SSE 感知，且其保留量有界。** 占位符可能被拆到多个 `data:` 事件（每个携带一段部分 JSON delta）里，在原始字节流中找不到，因此回填器按 JSON 叶子路径重新拼装，并在该路径窗口于事件边界清空时还原。被改写的事件就地拼接，故 SSE 分帧、事件数、以及所有非 delta 字段（`event:`、`id:`、`retry:`、注释、多行或无冒号 `data:`）都逐字节保留。保留字节由 `sseBackfillMaxHoldbackBytes`（256 KiB）限定；超过上限时最旧的窗口按字面文本刷出。由 `TestPipelineSSEBackfillAcrossDeltas`、`TestSSEBackfillerRestoresAcrossProviderDeltaPaths`、`TestSSEBackfillerHoldbackBoundEnforcedFromConstant` 锁定。
 
 > [!IMPORTANT]
 > 正是不变量 1，让提示注入没法把网关变成外泄通道：占位符只在返回客户端的路径上被替换。
+
+> [!NOTE]
+> **兼容性变更（有意为之）。** 过去会压缩请求体的客户端（`Content-Encoding: gzip`）被原样转发，从而静默绕过脱敏——压缩字节不是可遍历的 JSON。现在它会收到 **415 Unsupported Media Type**（不变量 8）。这是 fail-safe 取舍：宁可拒绝请求，也不转发未检视的 body。响应方向同理：上游无视 identity 请求仍返回 `br`/`zstd` 时，应答 **502**（不变量 7）。
+
+> [!NOTE]
+> **已知边界（stdlib 行为，非解析器缺陷）。** 使用默认 HTTP client 时，若响应的 `Content-Encoding` 以两行头到达且首行值恰为 `gzip`，Go 的 `net/http` transport 会在管线看到它之前就解压，因为 transport 用 `Header.Get`（只看首个值）而非全部值判断。当 body 并非合法 gzip 时，观测结果是 200 + 空 body，且**没有**任何上游字节释放给客户端。这是 `net/http` 的行为，不是解析器缺陷，也不会造成未检视透传：管线自己的「读全部值」分类器不受影响，且由 `TestClassifyContentEncodingMultiValued` 锁定，transport 的提前解压不会释放任何管线本会原样转发的字节。
 
 ## 📌 具名路由例外清单
 

@@ -87,8 +87,14 @@ A **placeholder** is the fake string that replaces a real secret on the way out.
 
 ### Streaming
 
-- **Outbound**: the full body is read, then redacted. No buffering problem.
-- **Inbound**: a **fixed-length sliding window** (equal to the longest placeholder length) matches a placeholder split across SSE chunk boundaries. Without it, `__PII_ema` in one chunk and `il_3f9a2b__` in the next never match. No need to buffer the whole stream, and the added latency is negligible.
+- **Outbound**: the full body is read, then redacted. There is no streaming-rewrite problem on this side. A request that arrives with a non-identity `Content-Encoding` is rejected with **415** in `Forwarder.ServeHTTP` before the body is read and before the upstream is dialed, so a client-compressed body can never skip redaction (see `security.md`, invariant 8).
+- **Inbound, non-SSE**: the body is buffered whole and backfilled as one unit. A `gzip`/`deflate` `Content-Encoding` is decompressed before any status code is committed; an encoding the core cannot decode (`br`, `zstd`, ...) or a decode failure is answered **502**, never passed through.
+- **Inbound, SSE (`text/event-stream`)**: a placeholder can arrive split across several `data:` events, each a partial JSON delta. A raw sliding window over the byte stream cannot match it, because the placeholder is not contiguous (`__PII_ema` in one event, `il_3f9a2b__` in the next) and the intervening SSE/JSON framing changes the bytes. The response instead streams through an **SSE-aware backfiller** (`pkg/proxy/ssebackfill.go`):
+  - Every single-line `data:` payload's terminal string leaves are fed into a **per-path window** (a `BackfillWriter` sized to the longest placeholder), so one JSON leaf path accumulates across events and across framing.
+  - When a path's window empties at an event boundary the path is **decided**. If a replacement happened, the last contributing event is rewritten to the merged content and every earlier contributor to an empty string, so client-side delta concatenation yields the restored value exactly once. If nothing changed, every event keeps its original bytes.
+  - The rewrite is **in place** on the record's `data:` span, so SSE framing, event count, and all non-delta fields (`event:`, `id:`, `retry:`, comments, multi-line or colon-less `data:`) are preserved byte for byte. Records are never rebuilt from parsed fields, so the cross-record `id:` (last-event-id) stays correct.
+  - **Delivery stays incremental**: an event whose content is already decided is emitted within the same `Write`, and only events that contribute to a still-open path are held, so the client sees each event promptly instead of waiting for EOF (`TestPipelineSSEIncrementalDeliveryBeforeEOF`).
+  - **Memory is bounded**: held bytes are capped by `sseBackfillMaxHoldbackBytes` (256 KiB). Past the cap the oldest windows are flushed as literal text and their events released, so a pathological stream cannot grow the buffer without bound (`TestSSEBackfillerHoldbackBoundEnforcedFromConstant`).
 
 ### Detector strategy (V1)
 

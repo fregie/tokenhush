@@ -87,8 +87,14 @@ flowchart LR
 
 ### 流式
 
-- **出站**：完整读取 body，再脱敏。没有缓冲问题。
-- **入站**：用**固定长度滑动窗口**（长度等于最长占位符）匹配被 SSE 分块边界切开的占位符。没有它，前一块的 `__PII_ema` 和后一块的 `il_3f9a2b__` 就永远配不上。网关不必缓冲整条流，额外延迟可以忽略。
+- **出站**：完整读取 body，再脱敏。出站方向不存在流式改写难题。请求若带非 identity 的 `Content-Encoding`，会在 `Forwarder.ServeHTTP` 中、读取 body 之前、拨号上游之前即以 **415** 拒绝，故客户端压缩体绕不过脱敏（见 `security.zh-CN.md` 不变量 8）。
+- **入站、非 SSE**：body 整体缓冲后一次性回填。`gzip`/`deflate` 的 `Content-Encoding` 会在提交任何状态码之前解压；核心无法解码的编码（`br`、`zstd` 等）或解压失败一律应答 **502**，绝不透传。
+- **入站、SSE（`text/event-stream`）**：占位符可能被拆到多个 `data:` 事件里，每个只是一段部分 JSON delta。原始字节流上的定长滑动窗口配不上它，因为占位符并不连续（前一事件 `__PII_ema`、后一事件 `il_3f9a2b__`），且中间的 SSE/JSON 分帧会改变字节。响应改为流经一个 **SSE 感知回填器**（`pkg/proxy/ssebackfill.go`）：
+  - 每个单行 `data:` 载荷的终端字符串叶子被喂入一个**按路径的窗口**（`BackfillWriter`，按最长占位符定长），因此同一个 JSON 叶子路径可跨事件、跨分帧累积。
+  - 当某路径的窗口在事件边界清空时，该路径即被**决出**。若发生了替换，最后一个贡献事件改写为合并后的内容、更早的贡献事件改写为空串，于是客户端把 delta 依次拼接后恰好得到一次还原值；若未发生替换，每个事件保留原始字节。
+  - 改写**就地**作用于该记录的 `data:` 区间，故 SSE 分帧、事件数、以及所有非 delta 字段（`event:`、`id:`、`retry:`、注释、多行或无冒号 `data:`）都逐字节保留。事件绝不从解析出的字段重建，因此跨记录的 `id:`（last-event-id）保持正确。
+  - **投递保持增量**：内容已决出的事件在同一次 `Write` 中即写出，只有对某个仍打开路径有贡献的事件才会被保留，所以客户端能及时看到每个事件，而不必等 EOF（`TestPipelineSSEIncrementalDeliveryBeforeEOF`）。
+  - **内存有界**：保留字节由 `sseBackfillMaxHoldbackBytes`（256 KiB）封顶。超过上限后最旧的窗口按字面文本刷出、其事件被释放，故病态流不会让缓冲无界增长（`TestSSEBackfillerHoldbackBoundEnforcedFromConstant`）。
 
 ### 检测器策略（V1）
 
