@@ -27,7 +27,7 @@ CGO_ENABLED=0 go build -o bin/tokenhush ./cmd/tokenhush
 go install github.com/fregie/tokenhush/cmd/tokenhush@latest
 ```
 
-包管理器（brew / scoop / install.sh）见 [README.md](../README.md#quick-start-5-minutes)。
+安装渠道（brew / scoop / install.sh / install.ps1）见 [README.md](../README.md#quick-start-5-minutes)。
 
 推荐用一个临时目录当数据根，既不污染真实配置，也让下面的清理一步到位。注意二进制要放在
 `TOKENHUSH_HOME` **之外**（`TOKENHUSH_HOME` 会拒绝位于可执行文件目录内的路径）：

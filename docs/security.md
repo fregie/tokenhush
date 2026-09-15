@@ -59,7 +59,7 @@ The V1 strategy is **deterministic, high-precision-first detectors** (known key 
 
 - **Dependency audit**: the core allows permissive licenses only (MIT/Apache/BSD); **GPL/AGPL are forbidden**.
 - **Release**: signed builds + checksums + SBOM; CI scans dependencies and secrets.
-- **Updates**: Homebrew / Scoop / `curl|sh` signed distribution.
+- **Updates**: Homebrew / Scoop / signed `install.sh` and `install.ps1` distribution.
 
 ## 🔁 Network egress
 

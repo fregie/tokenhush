@@ -77,11 +77,13 @@ Not sure whether you need step 3?
 |---|---|
 | macOS | `brew install --cask fregie/tap/tokenhush` |
 | Linux | `curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh \| bash` |
-| Windows | `scoop bucket add fregie https://github.com/fregie/scoop-bucket && scoop install tokenhush` |
+| Windows | `irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1 \| iex` |
+
+Prefer a package manager? Windows also has a Scoop bucket: `scoop bucket add fregie https://github.com/fregie/scoop-bucket && scoop install tokenhush`.
 
 No package manager? `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` needs Go 1.25+.
 
-If macOS Gatekeeper blocks the first launch, right-click the binary and choose **Open**. On Windows, a downloaded `.zip` may trigger SmartScreen — click **More info**, then **Run anyway**. For service wrappers, release artifacts, and the full first-run notes, see the [Deployment Guide](docs/deployment.md).
+If macOS Gatekeeper blocks the first launch, right-click the binary and choose **Open**. On Windows, the unsigned `tokenhush.exe` may trigger SmartScreen — click **More info**, then **Run anyway**. For service wrappers, release artifacts, and the full first-run notes, see the [Deployment Guide](docs/deployment.md).
 
 ### 2. Start the gateway
 

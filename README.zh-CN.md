@@ -77,11 +77,13 @@ flowchart LR
 |---|---|
 | macOS | `brew install --cask fregie/tap/tokenhush` |
 | Linux | `curl -fsSL https://raw.githubusercontent.com/fregie/tokenhush/main/install.sh \| bash` |
-| Windows | `scoop bucket add fregie https://github.com/fregie/scoop-bucket && scoop install tokenhush` |
+| Windows | `irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1 \| iex` |
+
+偏好包管理器？Windows 也有 Scoop bucket：`scoop bucket add fregie https://github.com/fregie/scoop-bucket && scoop install tokenhush`。
 
 不用包管理器也行：`go install github.com/fregie/tokenhush/cmd/tokenhush@latest`（需要 Go 1.25+）。
 
-macOS 首次启动若被 Gatekeeper 拦下，右键点按二进制选 **打开**。Windows 上手动下载的 `.zip` 可能触发 SmartScreen，点 **更多信息 → 仍要运行**。服务包装、发行产物和完整的首次运行提示见[部署指南](docs/deployment.zh-CN.md)。
+macOS 首次启动若被 Gatekeeper 拦下，右键点按二进制选 **打开**。Windows 上未签名的 `tokenhush.exe` 可能触发 SmartScreen，点 **更多信息 → 仍要运行**。服务包装、发行产物和完整的首次运行提示见[部署指南](docs/deployment.zh-CN.md)。
 
 ### 2. 启动网关
 

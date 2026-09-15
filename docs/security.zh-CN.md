@@ -61,7 +61,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 - **依赖审计**：核心只允许宽松许可证（MIT/Apache/BSD）；**禁止 GPL/AGPL**。
 - **发行**：签名构建 + 校验和 + SBOM；CI 扫描依赖与密钥。
-- **更新**：Homebrew / Scoop / `curl|sh` 签名分发。
+- **更新**：Homebrew / Scoop / 签名的 `install.sh` 与 `install.ps1` 分发。
 
 ## 🔁 网络外发
 
