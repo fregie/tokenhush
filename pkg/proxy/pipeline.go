@@ -2,8 +2,12 @@ package proxy
 
 import (
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -440,18 +444,24 @@ type responseMode int
 
 const (
 	// modeBuffered holds the whole body so it can be inspected, transformed and
-	// backfilled before anything is written to the client.
+	// backfilled before anything is written to the client. It is used for an
+	// identity body and for a decodable (gzip/deflate) body, which is
+	// decompressed here before any status code is committed.
 	modeBuffered responseMode = iota
-	// modeStreaming passes an SSE body through an incremental backfill writer.
+	// modeStreaming passes an identity-encoded SSE body through an incremental
+	// backfill writer.
 	modeStreaming
-	// modeOpaque passes a content-encoded body through unchanged, because
-	// scanning or rewriting compressed bytes would corrupt them.
-	modeOpaque
+	// modeDiscard drops every upstream byte after a fail-closed decision. The
+	// error status has already been committed, so nothing else may be sent.
+	modeDiscard
 )
 
 // pipelineResponseWriter buffers a non-streaming response so the pipeline can
-// process it before the client sees a byte, and streams an SSE response through
-// a protocol.BackfillWriter.
+// process it before the client sees a byte, and streams an identity SSE
+// response through a protocol.BackfillWriter. A content-encoded response is
+// never passed through uninspected: a decodable body is buffered and
+// decompressed before commit, and an unsupported body is answered 502 with the
+// upstream bytes discarded.
 type pipelineResponseWriter struct {
 	pipeline *Pipeline
 	dst      http.ResponseWriter
@@ -461,6 +471,10 @@ type pipelineResponseWriter struct {
 	backfill *protocol.BackfillWriter
 	mode     responseMode
 	decided  bool
+	// encodings holds the ordered, lower-cased Content-Encoding tokens of a
+	// decodable response (for example ["deflate"], or ["gzip","deflate"] for a
+	// doubly-encoded body). It is empty for an identity body.
+	encodings []string
 }
 
 // Header implements http.ResponseWriter; it returns the real header map so the
@@ -472,26 +486,46 @@ func (w *pipelineResponseWriter) Header() http.Header {
 	return w.header
 }
 
-// WriteHeader implements http.ResponseWriter. For a buffered body it only
-// records the status; the header and status are written by finish after the
-// body is transformed. An SSE body and an opaque body commit immediately.
+// WriteHeader implements http.ResponseWriter. The decision is driven by the
+// Content-Encoding state:
+//
+//   - identity — buffered, or streamed when the Content-Type is SSE.
+//   - decodable — buffered; the body is decompressed in finishBuffered before
+//     any status code is committed, so a decode failure can still become a 502.
+//     WriteHeader only records the status here.
+//   - decodable + text/event-stream — fail closed (decision D5: the pipeline
+//     does not implement streaming decompression).
+//   - unsupported — fail closed immediately; the upstream body is discarded.
+//
+// Reachability: after the outbound Accept-Encoding strip, the Go transport
+// transparently decompresses a gzip response and removes its Content-Encoding,
+// so the decodable branch is reached mainly for `deflate` or a custom
+// WithHTTPClient. It is kept as defence and is never assumed unreachable.
 func (w *pipelineResponseWriter) WriteHeader(status int) {
 	if w.decided {
 		return
 	}
 	w.decided = true
 	w.status = status
-	switch {
-	case !identityContentEncoding(w.Header()):
-		w.mode = modeOpaque
-		w.dst.WriteHeader(status)
-	case isEventStream(w.Header().Get("Content-Type")):
-		w.mode = modeStreaming
-		w.Header().Del("Content-Length")
-		w.dst.WriteHeader(status)
-		w.backfill = protocol.NewBackfillWriter(w.dst, w.pipeline.engine.MaxPlaceholderLen(), w.pipeline.engine.BackfillFunc())
-	default:
+	switch classifyContentEncoding(w.Header()) {
+	case encodingUnsupported:
+		w.failClosed()
+	case encodingDecodable:
+		if isEventStream(w.Header().Get("Content-Type")) {
+			w.failClosed()
+			return
+		}
 		w.mode = modeBuffered
+		w.encodings = contentEncodingTokens(w.Header())
+	default:
+		if isEventStream(w.Header().Get("Content-Type")) {
+			w.mode = modeStreaming
+			w.Header().Del("Content-Length")
+			w.dst.WriteHeader(status)
+			w.backfill = protocol.NewBackfillWriter(w.dst, w.pipeline.engine.MaxPlaceholderLen(), w.pipeline.engine.BackfillFunc())
+		} else {
+			w.mode = modeBuffered
+		}
 	}
 }
 
@@ -503,8 +537,10 @@ func (w *pipelineResponseWriter) Write(p []byte) (int, error) {
 	switch w.mode {
 	case modeStreaming:
 		return w.backfill.Write(p)
-	case modeOpaque:
-		return w.dst.Write(p)
+	case modeDiscard:
+		// The fail-closed status is already committed; drop the bytes but
+		// report them consumed so the upstream copy terminates normally.
+		return len(p), nil
 	default:
 		return w.buf.Write(p)
 	}
@@ -513,9 +549,9 @@ func (w *pipelineResponseWriter) Write(p []byte) (int, error) {
 // Flush implements http.Flusher for streaming bodies so SSE frames are
 // delivered immediately. A buffered body cannot be flushed early: the
 // transform needs the complete body, and flushing would commit the status
-// before the pipeline has inspected it.
+// before the pipeline has inspected it. A discarded body has nothing to flush.
 func (w *pipelineResponseWriter) Flush() {
-	if w.mode != modeStreaming && w.mode != modeOpaque {
+	if w.mode != modeStreaming {
 		return
 	}
 	if flusher, ok := w.dst.(http.Flusher); ok {
@@ -524,15 +560,15 @@ func (w *pipelineResponseWriter) Flush() {
 }
 
 // finish completes the response after next returns: flush the streaming
-// backfill writer, or transform and write the buffered body. It is a no-op for
-// an opaque body.
+// backfill writer, transform and write the buffered body, or do nothing for a
+// discarded body whose error status is already committed.
 func (w *pipelineResponseWriter) finish() {
 	switch w.mode {
 	case modeStreaming:
 		if w.backfill != nil {
 			_ = w.backfill.Flush()
 		}
-	case modeOpaque:
+	case modeDiscard:
 		return
 	default:
 		w.finishBuffered()
@@ -540,28 +576,57 @@ func (w *pipelineResponseWriter) finish() {
 }
 
 // finishBuffered runs the inbound pipeline over the buffered body and writes
-// the header, status and transformed body. A Block becomes 403 and any other
-// failure becomes 502; neither leaks body content.
+// the header, status and transformed body. A decodable body is decompressed
+// first, before any status code is committed, so a decode failure can still
+// become a 502. A Block becomes 403 and any other failure becomes 502; neither
+// leaks body content, and every error path drops Content-Encoding.
 func (w *pipelineResponseWriter) finishBuffered() {
 	if !w.decided {
 		w.decided = true
 		w.status = http.StatusOK
 	}
-	body, err := w.pipeline.transformResponse(w.buf.Bytes(), w.pipeline.tool)
+	if w.mode == modeDiscard {
+		return
+	}
+	body := w.buf.Bytes()
+	if len(w.encodings) > 0 {
+		decoded, err := decodeContentEncoding(body, w.encodings)
+		if err != nil {
+			w.writeError(err)
+			return
+		}
+		body = decoded
+	}
+	body, err := w.pipeline.transformResponse(body, w.pipeline.tool)
 	if err != nil {
 		w.writeError(err)
 		return
 	}
 	w.Header().Del("Content-Length")
 	w.Header().Del("Transfer-Encoding")
+	w.Header().Del("Content-Encoding")
 	w.dst.WriteHeader(w.status)
 	_, _ = w.dst.Write(body)
+}
+
+// failClosed commits a 502 and switches to modeDiscard so no upstream byte
+// reaches the client. It is used for an unsupported Content-Encoding and for a
+// decodable encoding on an SSE response (decision D5). Content-Encoding is
+// removed so the client never sees an encoding claim that no longer matches
+// the body.
+func (w *pipelineResponseWriter) failClosed() {
+	w.mode = modeDiscard
+	w.Header().Del("Content-Length")
+	w.Header().Del("Transfer-Encoding")
+	w.Header().Del("Content-Encoding")
+	http.Error(w.dst, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
 }
 
 // writeError answers a buffered response failure before any body byte is sent.
 func (w *pipelineResponseWriter) writeError(err error) {
 	w.Header().Del("Content-Length")
 	w.Header().Del("Transfer-Encoding")
+	w.Header().Del("Content-Encoding")
 	var blocked *BlockedError
 	if errors.As(err, &blocked) {
 		http.Error(w.dst, "blocked by content policy", http.StatusForbidden)
@@ -580,10 +645,106 @@ func isEventStream(contentType string) bool {
 	return strings.EqualFold(strings.TrimSpace(mediaType), "text/event-stream")
 }
 
-// identityContentEncoding reports whether a response body is uncompressed.
-// Any other encoding is opaque: the pipeline must not scan or rewrite
-// compressed bytes.
-func identityContentEncoding(header http.Header) bool {
-	encoding := strings.TrimSpace(header.Get("Content-Encoding"))
-	return encoding == "" || strings.EqualFold(encoding, "identity")
+// contentEncoding classifies a message's Content-Encoding into the three
+// states the pipeline handles: identity, decodable, or unsupported.
+type contentEncoding int
+
+const (
+	// encodingIdentity means the body is uncompressed: no Content-Encoding, or
+	// only `identity` tokens (any case).
+	encodingIdentity contentEncoding = iota
+	// encodingDecodable means every coding is `gzip` or `deflate`, so the core
+	// can decompress the body and inspect it.
+	encodingDecodable
+	// encodingUnsupported means at least one coding (for example `br` or
+	// `zstd`) cannot be decoded, so the body must fail closed.
+	encodingUnsupported
+)
+
+// classifyContentEncoding classifies all Content-Encoding header lines. It
+// iterates header.Values (not Header.Get, which returns only the first line)
+// and splits each line on commas, so `Content-Encoding: gzip, br` and a second
+// header line are both seen. Empty/whitespace lines are ignored.
+func classifyContentEncoding(header http.Header) contentEncoding {
+	tokens := contentEncodingTokens(header)
+	if len(tokens) == 0 {
+		return encodingIdentity
+	}
+	allIdentity := true
+	allDecodable := true
+	for _, token := range tokens {
+		if token != "identity" {
+			allIdentity = false
+		}
+		if token != "gzip" && token != "deflate" {
+			allDecodable = false
+		}
+	}
+	switch {
+	case allIdentity:
+		return encodingIdentity
+	case allDecodable:
+		return encodingDecodable
+	default:
+		return encodingUnsupported
+	}
+}
+
+// contentEncodingTokens returns the lower-cased, comma-split codings from every
+// Content-Encoding header line, in order, with empty parts dropped.
+func contentEncodingTokens(header http.Header) []string {
+	values := header.Values("Content-Encoding")
+	tokens := make([]string, 0, len(values))
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			if token := strings.ToLower(strings.TrimSpace(part)); token != "" {
+				tokens = append(tokens, token)
+			}
+		}
+	}
+	return tokens
+}
+
+// decodeContentEncoding decompresses body according to tokens, which are the
+// Content-Encoding codings in the order they were applied. Decoding therefore
+// walks them in reverse: the last coding applied is the first removed. Every
+// token must be gzip or deflate (enforced by classifyContentEncoding).
+func decodeContentEncoding(body []byte, tokens []string) ([]byte, error) {
+	decoded := body
+	for i := len(tokens) - 1; i >= 0; i-- {
+		out, err := decodeOneEncoding(decoded, tokens[i])
+		if err != nil {
+			return nil, err
+		}
+		decoded = out
+	}
+	return decoded, nil
+}
+
+// decodeOneEncoding decodes a single gzip or deflate layer. `deflate` is
+// first tried as a zlib stream (RFC 1950, what Go's compress/zlib writes) and
+// then as raw DEFLATE (RFC 1951), because both framings are seen in the wild.
+func decodeOneEncoding(body []byte, encoding string) ([]byte, error) {
+	switch encoding {
+	case "gzip":
+		zr, err := gzip.NewReader(bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("proxy: gzip decode: %w", err)
+		}
+		defer func() { _ = zr.Close() }()
+		return io.ReadAll(zr)
+	case "deflate":
+		if zr, err := zlib.NewReader(bytes.NewReader(body)); err == nil {
+			out, readErr := io.ReadAll(zr)
+			_ = zr.Close()
+			if readErr == nil {
+				return out, nil
+			}
+		}
+		fr := flate.NewReader(bytes.NewReader(body))
+		defer func() { _ = fr.Close() }()
+		return io.ReadAll(fr)
+	default:
+		return nil, fmt.Errorf("proxy: unsupported content encoding %q", encoding)
+	}
 }

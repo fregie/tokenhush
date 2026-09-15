@@ -24,6 +24,7 @@ package proxy
 import (
 	"bytes"
 	"compress/gzip"
+	"compress/zlib"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,6 +56,29 @@ func w45Gzip(t *testing.T, plain []byte) []byte {
 	out := buf.Bytes()
 	if len(out) < 2 || out[0] != 0x1f || out[1] != 0x8b {
 		t.Fatalf("gzip fixture is not gzip-framed (magic % x)", out)
+	}
+	return out
+}
+
+// w45Zlib encodes plain as a genuine zlib (RFC 1950) stream and asserts the
+// result is zlib-framed (CMF=0x78 with a valid FCHECK), so a mis-built fixture
+// can never make the decodable assertion vacuous. `deflate` is used instead of
+// gzip because Go's transport never auto-decompresses deflate, so a deflate
+// response reaches the pipeline still encoded and genuinely enters the
+// decodable branch.
+func w45Zlib(t *testing.T, plain []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zlib.NewWriter(&buf)
+	if _, err := zw.Write(plain); err != nil {
+		t.Fatalf("zlib write: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("zlib close: %v", err)
+	}
+	out := buf.Bytes()
+	if len(out) < 2 || out[0] != 0x78 || (int(out[0])<<8|int(out[1]))%31 != 0 {
+		t.Fatalf("zlib fixture is not zlib-framed (header % x)", out[:2])
 	}
 	return out
 }
@@ -383,5 +407,49 @@ func TestPipelineUndecodableEncodingFailsClosed(t *testing.T) {
 	}
 	if bytes.Contains(body, upstreamBody) {
 		t.Errorf("fail-closed response leaked upstream bytes: %q", body)
+	}
+}
+
+// TestPipelineDecodableResponseInspected is the failure-first coverage of T3's
+// decodable response branch. The upstream answers Content-Encoding: deflate,
+// which Go's transport never auto-decompresses (unlike gzip), so the response
+// reaches the pipeline still encoded and must be decoded, inspected and
+// blocked. Before T3 a non-identity body was passed through opaquely, so the
+// ResponseContent Block inspector never ran and the client saw 200.
+func TestPipelineDecodableResponseInspected(t *testing.T) {
+	engine := w45Engine(t)
+	placeholder := engine.Placeholder(w45Secret(), "api_key")
+	reg := w45Registry(t, w45ResponseBlocker{})
+	pipe := w45Pipeline(t, PipelineConfig{Registry: reg, Engine: engine})
+
+	plain := fmt.Appendf(nil, `{"echo":%q}`, placeholder)
+	zl := w45Zlib(t, plain)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "deflate")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(zl)
+	}))
+	t.Cleanup(upstream.Close)
+
+	srv := httptest.NewServer(pipe.ResponseMiddleware(w45Forwarder(t, upstream.URL, pipe)))
+	t.Cleanup(srv.Close)
+
+	resp, err := srv.Client().Post(srv.URL+"/v1/messages", "application/json", strings.NewReader(`{"input":"hi"}`))
+	if err != nil {
+		t.Fatalf("through proxy: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("deflate response was not inspected/blocked: status = %d, want 403; body %q", resp.StatusCode, body)
+	}
+	if enc := resp.Header.Get("Content-Encoding"); enc != "" {
+		t.Errorf("inspected response kept Content-Encoding = %q, want it removed", enc)
+	}
+	if bytes.Contains(body, zl) {
+		t.Errorf("response leaked the still-compressed upstream bytes: %q", body)
 	}
 }

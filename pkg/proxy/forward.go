@@ -142,6 +142,23 @@ func parseUpstream(raw string) (*url.URL, error) {
 // stripped in both directions, upstream status and end-to-end headers are
 // preserved, and transport failures map to 502/504 rather than hanging.
 func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Request-side fail-closed (decision D4, risk R3): a client that compresses
+	// its request body (Content-Encoding: gzip/deflate/br/...) would otherwise
+	// bypass redaction, because transformRequest leaf-walks plain JSON and
+	// cannot decode a compressed body. The V1 forwarder does not decompress
+	// untrusted request bodies, so it rejects them locally with 415 before any
+	// body read, transform or upstream dial.
+	//
+	// This is the only layer that can read the header: BodyTransform takes only
+	// []byte, so the check cannot live in transformRequest. A dedicated error
+	// type routed through the transform-failure chain would force a body read
+	// before the decision and tie a local guard to a mechanism meant for policy
+	// errors; a direct http.Error keeps the 415 unconditional and independent of
+	// whether a transform is installed.
+	if classifyContentEncoding(r.Header) != encodingIdentity {
+		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
+		return
+	}
 	body, err := readRequestBody(r)
 	if err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
