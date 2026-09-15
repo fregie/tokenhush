@@ -1,9 +1,9 @@
 # GoReleaser v2 configuration for the public Tokenhush core.
 #
 # Distribution matrix (docs/deployment.md §2): macOS via Homebrew cask, Windows via
-# Scoop, Linux via the curl|sh installer (install.sh) plus the raw binaries
-# attached to the GitHub release. Casks are macOS-only; Linux is never served
-# by a package manager in V1.
+# install.ps1 (Scoop as an alternative), Linux via the curl|sh installer (install.sh),
+# plus the raw binaries attached to the GitHub release. Casks are macOS-only; Linux
+# is never served by a package manager in V1.
 #
 # Release: `goreleaser release --clean` (tag-triggered in .github/workflows/
 # release.yml). Local dry render: `goreleaser release --snapshot --clean`.
@@ -82,8 +82,9 @@ homebrew_casks:
         xattr -dr com.apple.quarantine "$(which tokenhush)"
     skip_upload: auto
 
-# Windows channel (docs/deployment.md §2). Manifest lands in the root of the bucket
-# repo so `scoop bucket list` sees it.
+# Windows alternative channel (docs/deployment.md §2): install.ps1 is the primary
+# Windows path. Manifest lands in the root of the bucket repo so `scoop bucket list`
+# sees it.
 scoops:
   - name: tokenhush
     repository:
@@ -105,7 +106,8 @@ release:
     ---
 
     Install: `brew install --cask fregie/tap/tokenhush` (macOS),
-    `scoop install tokenhush` (Windows), or the `install.sh` script (Linux).
+    `irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1 | iex`
+    (Windows, or `scoop install tokenhush`), or the `install.sh` script (Linux).
 
 changelog:
   sort: asc

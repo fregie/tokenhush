@@ -2,8 +2,9 @@
 # install.sh - install the Tokenhush CLI from a GitHub release.
 #
 # Linux is served by this script plus the raw release binaries (docs/deployment.md §2);
-# macOS users should prefer `brew install --cask fregie/tap/tokenhush` and
-# Windows users `scoop install tokenhush`. The script downloads the release
+# macOS users should prefer `brew install --cask fregie/tap/tokenhush` and Windows
+# users should run install.ps1 (`irm .../install.ps1 | iex`; Scoop remains an
+# alternative). The script downloads the release
 # archive for the detected OS/arch, verifies it against the release
 # `checksums.txt` (sha256) and only then installs the binary.
 #
@@ -35,7 +36,7 @@ DRY_RUN=0
 TMP_DIR=""
 
 usage() {
-  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 die() {
@@ -86,8 +87,8 @@ detect_os() {
     Linux)  echo "linux" ;;
     Darwin) echo "darwin" ;;
     MINGW*|MSYS*|CYGWIN*)
-      die "Windows is not supported by this script; use 'scoop install tokenhush' instead" ;;
-    *) die "unsupported operating system: ${uname_s}; use 'brew install --cask fregie/tap/tokenhush' on macOS or 'scoop install tokenhush' on Windows, or build from source" ;;
+      die "Windows is not supported by this script; use install.ps1 instead (irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1 | iex)" ;;
+    *) die "unsupported operating system: ${uname_s}; use 'brew install --cask fregie/tap/tokenhush' on macOS, install.ps1 on Windows, or build from source" ;;
   esac
 }
 
