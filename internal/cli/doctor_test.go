@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,6 +37,14 @@ func (s doctorTestStore) Backend() string {
 type doctorNopCloser struct{}
 
 func (doctorNopCloser) Close() error { return nil }
+
+// doctorDegradedCloser is a proxy.Listeners stand-in that reports the v4-only
+// degrade posture doctor must surface as a warning.
+type doctorDegradedCloser struct{ err error }
+
+func (doctorDegradedCloser) Close() error   { return nil }
+func (doctorDegradedCloser) Degraded() bool { return true }
+func (c doctorDegradedCloser) V6Err() error { return c.err }
 
 // realDoctorListen is the production proxy.Listen adapter used by tests that
 // want real dual-stack binds.
@@ -213,6 +222,46 @@ func TestDoctorPlaintextFallbackFailsLoudly(t *testing.T) {
 		check.Status, check.Message, check.Fix, report.Exit)
 }
 
+// TestDoctorDegradedLoopbackWarns locks the honest-degradation rule: a v4-only
+// bind is reported as a warning (never a failure) and the port check stops
+// claiming [::1].
+func TestDoctorDegradedLoopbackWarns(t *testing.T) {
+	sentinel := errors.New("listen tcp6 [::1]:8787: bind: cannot assign requested address")
+	degraded := func(d *doctorDeps) {
+		d.listen = func(string, int) (io.Closer, error) {
+			return doctorDegradedCloser{err: sentinel}, nil
+		}
+	}
+
+	code, stdout, stderr := runDoctorCommand(t, []string{"--json"}, degraded)
+	if code != ExitOK {
+		t.Fatalf("degraded loopback exit = %d, want %d (a warning is not a failure)\nstderr:\n%s", code, ExitOK, stderr)
+	}
+	report := parseDoctorJSON(t, stdout)
+	if !report.OK || report.Status != doctorWarn {
+		t.Errorf("report ok/status = %v/%q, want true/warn", report.OK, report.Status)
+	}
+	loopback := doctorFindCheck(t, report, doctorCheckLoopback)
+	if loopback.Status != doctorWarn {
+		t.Errorf("loopback check = %+v, want warn", loopback)
+	}
+	if !strings.Contains(loopback.Message, "IPv6 loopback ([::1]) unavailable") || !strings.Contains(loopback.Message, sentinel.Error()) {
+		t.Errorf("loopback message = %q, want the degrade reason carrying the v6 error", loopback.Message)
+	}
+	portCheck := doctorFindCheck(t, report, doctorCheckPort)
+	if portCheck.Status != doctorOK || !strings.Contains(portCheck.Message, "127.0.0.1:8787 available") {
+		t.Errorf("port check = %+v, want ok with a v4-only message", portCheck)
+	}
+	if strings.Contains(portCheck.Message, "[::1]") {
+		t.Errorf("port check must not claim [::1] when degraded: %q", portCheck.Message)
+	}
+
+	code, human, _ := runDoctorCommand(t, nil, degraded)
+	if code != ExitOK || !strings.Contains(human, "[warn] loopback") {
+		t.Errorf("human exit = %d, want 0 with a [warn] loopback line:\n%s", code, human)
+	}
+}
+
 func TestDoctorNoSecretBackend(t *testing.T) {
 	code, stdout, _ := runDoctorCommand(t, nil, func(d *doctorDeps) {
 		d.openStore = func() (platform.SecretStore, error) { return nil, platform.ErrNoSecretBackend }
@@ -316,8 +365,11 @@ func TestDoctorBusyPort(t *testing.T) {
 	if !strings.Contains(stdout, "already in use") || !strings.Contains(stdout, "[fail] port") {
 		t.Errorf("stdout missing the busy-port failure:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "[ok]   loopback") {
-		t.Errorf("ephemeral dual-stack bind must still pass:\n%s", stdout)
+	if strings.Contains(stdout, "[fail] loopback") {
+		t.Errorf("ephemeral loopback bind must pass or warn, never fail:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "loopback") {
+		t.Errorf("stdout missing the loopback check:\n%s", stdout)
 	}
 
 	// A malformed run.json must not turn the failure into a false "session".
@@ -348,6 +400,11 @@ func TestDoctorBusyPort(t *testing.T) {
 }
 
 func TestDoctorRealDualStackBind(t *testing.T) {
+	probe, probeErr := net.Listen("tcp6", "[::1]:0")
+	if probeErr == nil {
+		_ = probe.Close()
+	}
+
 	ls, err := proxy.Listen("127.0.0.1", 0)
 	if err != nil {
 		t.Skipf("loopback unavailable: %v", err)
@@ -360,6 +417,26 @@ func TestDoctorRealDualStackBind(t *testing.T) {
 	})
 	if code != ExitOK {
 		t.Fatalf("exit = %d, want %d\nstdout:\n%s", code, ExitOK, stdout)
+	}
+	if !strings.Contains(stdout, "[ok]   port") {
+		t.Errorf("stdout missing an ok port check:\n%s", stdout)
+	}
+	if probeErr != nil {
+		// No usable ::1: the v4-only degrade is a warning, never a failure, and
+		// the port check must not claim [::1].
+		if !strings.Contains(stdout, "[warn] loopback") {
+			t.Errorf("stdout missing the degraded-loopback warning:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "[fail]") {
+			t.Errorf("IPv6-less runner must not produce a failure:\n%s", stdout)
+		}
+		if !strings.Contains(stdout, "127.0.0.1:"+strconv.Itoa(freePort)+" available") {
+			t.Errorf("stdout missing the v4-only port availability:\n%s", stdout)
+		}
+		if strings.Contains(stdout, "[::1]:"+strconv.Itoa(freePort)) {
+			t.Errorf("degraded port check must not claim [::1]:\n%s", stdout)
+		}
+		return
 	}
 	for _, want := range []string{
 		"[ok]   loopback",

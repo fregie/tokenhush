@@ -13,10 +13,10 @@ Tokenhush is one static binary: no runtime dependencies, no daemon, no root cert
 | Operating system | macOS, Linux, Windows |
 | Architecture | amd64 or arm64 |
 | Go (source builds only) | Go 1.25 or newer |
-| Network | Loopback only. The gateway binds `127.0.0.1` and `[::1]`. |
+| Network | Loopback only. The gateway binds `127.0.0.1`, plus `[::1]` when the host has an IPv6 loopback. |
 | Disk | Room for runtime session files (the core stores no request or response content) |
 
-Release binaries are pure Go (`CGO_ENABLED=0`), so no C toolchain is needed. The gateway refuses `0.0.0.0` and empty hosts; it binds only `127.0.0.1`, `::1`, and `localhost`, because it is a local component, not a network service.
+Release binaries are pure Go (`CGO_ENABLED=0`), so no C toolchain is needed. The gateway refuses `0.0.0.0` and empty hosts; it binds loopback only (`127.0.0.1` always, plus `[::1]` when the host has an IPv6 loopback), because it is a local component, not a network service.
 
 ## 📦 2. Install
 
@@ -362,6 +362,7 @@ Start with `tokenhush doctor`. It reports the config path, directory permissions
 | `run` reports the port is already in use | Another process (possibly a previous `tokenhush run`) holds the port. Check `tokenhush status`, stop the other process, or start with `--port` |
 | `tokenhush` not found after install | `~/.local/bin` or `$(go env GOPATH)/bin` is not on `PATH`. Add it to your shell profile, then open a new shell |
 | Requests fail only inside a corporate network | An HTTP proxy is intercepting loopback traffic. Add `127.0.0.1,localhost,::1` to `NO_PROXY` (and `no_proxy`), or exclude it in your proxy settings |
+| Server has no IPv6 / `[::1]` bind notice | On a host without an IPv6 loopback, the gateway serves `127.0.0.1` only and logs `tokenhush: IPv6 loopback [::1] unavailable (<cause>); listening on 127.0.0.1 only`. This is expected, not an error. To also serve `[::1]`, enable the IPv6 loopback (Linux: `sysctl -w net.ipv6.conf.all.disable_ipv6=0`) |
 | macOS blocks the binary on first run | The release binaries are not notarized. Right-click the binary and choose Open, then confirm. Or run `xattr -dr com.apple.quarantine "$(command -v tokenhush)"` |
 | Windows SmartScreen blocks `tokenhush.exe` | Click More info, then Run anyway. Scoop installs do not trigger this prompt |
 | `status` fails with a control token error | No live session, or the token is stale. Start `tokenhush run` again; the token is regenerated per session |
@@ -370,7 +371,7 @@ Start with `tokenhush doctor`. It reports the config path, directory permissions
 
 These properties are load-bearing. Do not work around them.
 
-- **Loopback only.** The gateway binds `127.0.0.1` and `[::1]` and validates the `Host` header. It never binds `0.0.0.0`.
+- **Loopback only.** The gateway binds `127.0.0.1`, plus `[::1]` when the host has an IPv6 loopback, and validates the `Host` header. It never binds `0.0.0.0`.
 - **No root certificate, no MITM.** The public core installs no CA and intercepts no TLS. Requests reach the gateway as plain HTTP on localhost, so it can see and redact content.
 - **Never backfill outbound.** Placeholders are restored only on responses returning to the client. The gateway never rewrites a placeholder back to its secret in an outbound request, which blocks prompt-injection exfiltration.
 - **Fail-safe, not fail-open.** When a detector cannot decide, Tokenhush over-redacts or blocks and records an alert rather than silently emitting a secret.

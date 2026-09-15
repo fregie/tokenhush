@@ -11,7 +11,7 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 | Threat | Description | Mitigation |
 |---|---|---|
 | **Prompt injection to exfiltration** | An attacker tricks the model into emitting a placeholder; if the gateway backfills on the outbound direction, the secret leaks | **Hard invariant: never backfill outbound** (see Hard invariants) |
-| **Local malicious process/web page reaches the gateway** | Any local process or browser page can `fetch` `127.0.0.1:8787` | Dual-stack loopback (127.0.0.1 + `[::1]`); `Host` header validation; the control plane additionally requires a bearer token generated per `run`, stored `0600` on disk, and same-origin validation for requests carrying `Origin` |
+| **Local malicious process/web page reaches the gateway** | Any local process or browser page can `fetch` `127.0.0.1:8787` | Loopback-only bind (`127.0.0.1`, plus `[::1]` when the host has an IPv6 loopback); `Host` header validation; the control plane additionally requires a bearer token generated per `run`, stored `0600` on disk, and same-origin validation for requests carrying `Origin` |
 | **DNS rebinding** | A malicious domain resolves to 127.0.0.1 to bypass same-origin | `Host`/`Origin` header validation |
 | **Placeholder collision** | Two secrets map to the same placeholder, causing a wrong backfill | HMAC-deterministic mapping + high-entropy suffix |
 | **Plaintext read from memory** | Debug or dump by another process under the same user | Sandbox/hardened runtime; no plaintext written to disk |
@@ -25,7 +25,7 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 1. **Never backfill placeholders outbound.** Backfill happens only on responses returned to the client.
 2. **Do not store request/response plaintext by default.** The core stores no request or response content. The redaction log line printed to the console is a transient local diagnostic: only a masked form, the detector type, and the byte length, never the full value, and it is never persisted. It is on by default and can be disabled with `--log-redactions=false`.
 3. **No root certificate is installed and no MITM is performed by default.** MITM is an explicit opt-in in later stages and is not implemented in the public core.
-4. **The local service binds dual-stack loopback only (127.0.0.1 + `[::1]`).**
+4. **The local service binds loopback only: `127.0.0.1` always, plus `[::1]` when the host has an IPv6 loopback. On a host without an IPv6 loopback it serves `127.0.0.1` only and logs a notice.**
 5. **Fail-safe on detection failure, not fail-open.** When the gateway cannot tell whether content is sensitive, it prefers over-redaction, or allows with a warning, and never silently emits plaintext. The policy is configurable (see below).
 6. **Vendor-bound egress is exactly two switchable, command-scoped categories.** The only requests that leave the machine for the vendor are update check and rule sync, both disclosed in the machine-readable [`egress.yaml`](../egress.yaml) and both switchable. Neither is performed by the gateway's data plane: a proxied request still egresses only to the configured upstream, placeholders are never backfilled outbound, and the audit seam carries metadata only.
 

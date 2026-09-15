@@ -24,12 +24,18 @@ func ResolveConfig(cfg *config.Config, path string) (*config.Config, error) {
 }
 
 // serveUntilDone starts one Serve goroutine per loopback listener and blocks
-// until ctx is cancelled or a listener fails. It then shuts the server down
-// with a bounded deadline and drains both goroutines, so no request is still
-// writing when Run removes the session files.
+// until ctx is cancelled or a listener fails. The v4-only degrade yields a
+// single listener, so the drain count is derived from the slice, never a fixed
+// two. It then shuts the server down with a bounded deadline and drains every
+// goroutine, so no request is still writing when Run removes the session files.
 func serveUntilDone(ctx context.Context, srv *http.Server, ls *proxy.Listeners) error {
-	errCh := make(chan error, 2)
-	for _, listener := range []net.Listener{ls.V4(), ls.V6()} {
+	listeners := []net.Listener{ls.V4()}
+	if v6 := ls.V6(); v6 != nil {
+		listeners = append(listeners, v6)
+	}
+
+	errCh := make(chan error, len(listeners))
+	for _, listener := range listeners {
 		go func(l net.Listener) { errCh <- srv.Serve(l) }(listener)
 	}
 
@@ -49,7 +55,7 @@ func serveUntilDone(ctx context.Context, srv *http.Server, ls *proxy.Listeners) 
 	if err := srv.Shutdown(shutdownCtx); err != nil && runErr == nil {
 		runErr = err
 	}
-	for served < 2 {
+	for served < len(listeners) {
 		err := <-errCh
 		served++
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && runErr == nil {

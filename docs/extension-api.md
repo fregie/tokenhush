@@ -126,7 +126,7 @@ Supporting types (illustrative): `Request` (method/path/headers/parsed JSON), `R
 
 ## 🏗️ Assembly layer (`pkg/gateway`)
 
-The core CLI (`internal/cli`) and the private Pro daemon assemble through one shared layer. `pkg/gateway` owns the dual-stack loopback listener lifecycle, the per-session control token and `run.json`, the Host-allowlist and per-request stats middleware chain, the data plane, and the bounded graceful shutdown. Callers keep their build-specific concepts (audit store, control session, entitlement, web UI) behind the lifecycle hooks in `Options`.
+The core CLI (`internal/cli`) and the private Pro daemon assemble through one shared layer. `pkg/gateway` owns the loopback listener lifecycle (`127.0.0.1`, plus `[::1]` when the host has an IPv6 loopback), the per-session control token and `run.json`, the Host-allowlist and per-request stats middleware chain, the data plane, and the bounded graceful shutdown. Callers keep their build-specific concepts (audit store, control session, entitlement, web UI) behind the lifecycle hooks in `Options`.
 
 The exported contract is frozen by ADR-0012 in the private Pro repository; `pkg/gateway/testdata/options_contract.txt` plus `TestOptionsContractDoc` pin the exported struct fields against accidental drift. The package is experimental until v1.0.
 

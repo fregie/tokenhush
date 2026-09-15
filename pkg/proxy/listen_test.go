@@ -136,11 +136,10 @@ func TestListenDualStack(t *testing.T) {
 	})
 
 	t.Run("real_loopback_accepts_both_families", func(t *testing.T) {
-		probe, err := net.Listen("tcp6", "[::1]:0")
-		if err != nil {
-			t.Skipf("runner has no usable IPv6 loopback: %v", err)
+		probe, probeErr := net.Listen("tcp6", "[::1]:0")
+		if probeErr == nil {
+			_ = probe.Close()
 		}
-		_ = probe.Close()
 
 		ls, err := Listen("127.0.0.1", 0)
 		if err != nil {
@@ -152,11 +151,42 @@ func TestListenDualStack(t *testing.T) {
 		if port <= 0 {
 			t.Fatalf("Port() = %d, want a positive ephemeral port", port)
 		}
+		suffix := ":" + strconv.Itoa(port)
+
+		if probeErr != nil {
+			// No usable ::1 on this runner: the v4 listener must still come up,
+			// explicitly degraded to a single address.
+			if !ls.Degraded() {
+				t.Fatalf("Degraded() = false, want true without a usable IPv6 loopback")
+			}
+			if ls.V6() != nil {
+				t.Fatalf("V6() = %v, want nil when degraded", ls.V6())
+			}
+			addrs := ls.Addrs()
+			if len(addrs) != 1 {
+				t.Fatalf("Addrs() = %v, want exactly 1 address", addrs)
+			}
+			if got, want := addrs[0].String(), "127.0.0.1"+suffix; got != want {
+				t.Errorf("Addrs()[0] = %q, want %q", got, want)
+			}
+			if err := ls.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			rebound, err := net.Listen("tcp4", "127.0.0.1"+suffix)
+			if err != nil {
+				t.Fatalf("port %d not released after Close: %v", port, err)
+			}
+			_ = rebound.Close()
+			return
+		}
+
+		if ls.Degraded() {
+			t.Fatalf("Degraded() = true, want false with a usable IPv6 loopback")
+		}
 		addrs := ls.Addrs()
 		if len(addrs) != 2 {
 			t.Fatalf("Addrs() = %v, want 2 addresses", addrs)
 		}
-		suffix := ":" + strconv.Itoa(port)
 		if got := addrs[0].String(); got != "127.0.0.1"+suffix {
 			t.Errorf("Addrs()[0] = %q, want %q", got, "127.0.0.1"+suffix)
 		}
@@ -360,4 +390,58 @@ func TestListenPortCollision(t *testing.T) {
 			t.Fatalf("v4 listener leaked after v6 bind failure")
 		}
 	})
+}
+
+// TestListenIPv6Degrade locks the explicit degrade path: when the host
+// has no usable IPv6 loopback the v4 listener is kept and the failure surfaces
+// through Degraded/V6Err instead of being silently dropped.
+func TestListenIPv6Degrade(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "address_not_available", err: syscall.EADDRNOTAVAIL},
+		{name: "family_not_supported", err: syscall.EAFNOSUPPORT},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v4 := &fakeListener{addr: &net.TCPAddr{IP: net.ParseIP(loopbackV4), Port: 41236}}
+			ls, err := listenWith("127.0.0.1", 41236, func(network, address string) (net.Listener, error) {
+				if network == "tcp4" {
+					return v4, nil
+				}
+				return nil, &net.OpError{Op: "listen", Net: "tcp6", Err: tc.err}
+			})
+			if err != nil {
+				t.Fatalf("listenWith: %v, want degraded success", err)
+			}
+			if !ls.Degraded() {
+				t.Fatalf("Degraded() = false, want true")
+			}
+			if ls.V6() != nil {
+				t.Fatalf("V6() = %v, want nil when degraded", ls.V6())
+			}
+			if !errors.Is(ls.V6Err(), tc.err) {
+				t.Errorf("V6Err() = %v, want %v", ls.V6Err(), tc.err)
+			}
+			addrs := ls.Addrs()
+			if len(addrs) != 1 {
+				t.Fatalf("Addrs() = %v, want exactly 1 address", addrs)
+			}
+			if got, want := addrs[0].String(), "127.0.0.1:41236"; got != want {
+				t.Errorf("Addrs()[0] = %q, want %q", got, want)
+			}
+			if got := ls.Port(); got != 41236 {
+				t.Errorf("Port() = %d, want 41236", got)
+			}
+			if v4.closed {
+				t.Fatalf("v4 listener closed while v6 was only degraded")
+			}
+			if err := ls.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			if !v4.closed {
+				t.Fatalf("v4 listener leaked after Close")
+			}
+		})
+	}
 }

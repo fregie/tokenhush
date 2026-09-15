@@ -36,7 +36,7 @@ Tokenhush adds one checkpoint in front of the tool. It reads each request, repla
 
 - **Every field, not just the top level.** Tokenhush walks the whole request body, so nested JSON is covered, and it handles streaming responses as they arrive. It catches known key shapes (`sk-`, `AKIA`, `ghp_`, …), random-looking high-entropy strings, JWTs, PEM private keys, card numbers, and email addresses.
 - **The same placeholder every time.** A secret turns into a token such as `__PII_email_9f2c8a4b6d1e__`. The mapping lives in memory, for this session only. A restart drops it, so you may occasionally see a placeholder in output — that's expected and safe, not a leak.
-- **Stays on your machine.** The gateway listens on `127.0.0.1` and `[::1]` only, checks the Host header, checks Origin for browser-style requests, and locks the control API behind a per-run token stored with `0600` permissions. If something goes wrong, it stops instead of forwarding.
+- **Stays on your machine.** The gateway listens on loopback only: `127.0.0.1` always, plus `[::1]` when the host has an IPv6 loopback. It checks the Host header, checks Origin for browser-style requests, and locks the control API behind a per-run token stored with `0600` permissions. If something goes wrong, it stops instead of forwarding.
 - **Setup helpers included.** `tokenhush env <tool>` prints a ready-to-paste snippet for 14 tools. `tokenhush doctor` checks your setup and exits `0` (all good), `1` (a check failed), or `2` (a usage error).
 - **Small, portable, extensible.** Pure Go, built with `CGO_ENABLED=0` for macOS, Linux, and Windows on amd64 and arm64. Cross-layer interfaces (`Router`, `CostSink`) and content plugins (`Inspector` / `Transformer`) let you extend the pipeline; V1 supports compile-time plugins only.
 
@@ -245,7 +245,7 @@ The only traffic it can send to the vendor is the two switchable, command-scoped
 
 ## Project status
 
-The V1 core first shipped as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)); the current line is **`v0.3.0`**. It keeps `tokenhush run` (foreground gateway on dual-stack loopback), `status`, `env <tool>` (14 tools), `doctor`, and `version`, and moves the shared assembly layer into the exported `pkg/gateway` package.
+The V1 core first shipped as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)); the current line is **`v0.3.0`**. It keeps `tokenhush run` (foreground gateway on loopback, dual-stack when the host has an IPv6 loopback), `status`, `env <tool>` (14 tools), `doctor`, and `version`, and moves the shared assembly layer into the exported `pkg/gateway` package.
 
 The config is validated on load: an upgrade that adds a key won't break an older file, and one that removes a key fails fast with an "unknown field" error. The code is pure Go with `CGO_ENABLED=0`, and CI runs unit tests plus an end-to-end smoke test on Linux, macOS, and Windows.
 

@@ -62,7 +62,7 @@ tokenhush/
 1. Never backfill placeholders outbound. Backfill goes only to the client. This is the core anti-prompt-injection invariant.
 2. No normalization at the protocol layer: use protocol-agnostic JSON leaf traversal (recursive string-leaf detection and replacement). Do not build an IR per API.
 3. V1 detectors use deterministic rules only (prefix / high-entropy / JWT / private-key header / Luhn / email). Do not introduce NER or local small models.
-4. Local services bind dual-stack loopback only (127.0.0.1 + [::1]) and validate the `Host` header (anti DNS rebinding). The control plane additionally requires a bearer token and an Origin check.
+4. Local services bind loopback only (127.0.0.1 always; [::1] as well when the host has an IPv6 loopback) and validate the `Host` header (anti DNS rebinding). The control plane additionally requires a bearer token and an Origin check.
 5. The core exposes only a metadata-only audit seam (provider / endpoint / time / byte counts / redaction counts / types); it stores no audit data. The concrete store and any content-logging option live in the private Pro layer.
 6. Pro capability never enters this repository. Do not write complete `if license { ... }` implementations or Pro algorithms here, and never merge Pro implementation branches into this repository.
 7. Dependency licenses: core dependencies must be permissive only (MIT / Apache-2.0 / BSD). GPL and AGPL are forbidden, because they would contaminate the closed Pro layer.

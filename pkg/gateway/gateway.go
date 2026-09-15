@@ -1,8 +1,9 @@
 // Package gateway is the shared request-path assembly layer for the core CLI
 // and the private Pro daemon.
 //
-// It owns the pieces both builds used to duplicate: the dual-stack loopback
-// listener lifecycle, the per-session control token and run.json, the
+// It owns the pieces both builds used to duplicate: the loopback listener
+// lifecycle (dual-stack, degrading to IPv4-only when the host has no usable
+// IPv6 loopback), the per-session control token and run.json, the
 // Host-allowlist and per-request stats middleware chain, the data plane, and
 // the bounded graceful shutdown. Callers keep their build-specific concepts
 // (audit store, control session, entitlement, web UI) behind the lifecycle
@@ -123,8 +124,10 @@ type Options struct {
 //
 // Setup runs first and before any platform.* call. The listener is bound
 // before the token and run.json are written, so a busy port fails fast and
-// leaves no stale session state. Teardown is called exactly once on every
-// path, including a Setup failure; the session files are removed after it.
+// leaves no stale session state. When the host has no usable IPv6 loopback the
+// listener comes up IPv4-only and Run prints an explicit degrade line to
+// Stdout instead of failing. Teardown is called exactly once on every path,
+// including a Setup failure; the session files are removed after it.
 //
 // The returned error wraps pkg/proxy's typed listener errors (for example
 // ErrAddrInUse), so callers can classify with errors.Is.
@@ -199,6 +202,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 
 	fmt.Fprintf(stdout, "tokenhush: gateway listening on http://127.0.0.1:%d\n", port)
+	if listeners.Degraded() {
+		fmt.Fprintf(stdout, "tokenhush: IPv6 loopback [::1] unavailable (%v); listening on 127.0.0.1 only\n", listeners.V6Err())
+	}
 	fmt.Fprintf(stdout, "tokenhush: control token file: %s\n", controlTokenPath(dataDir))
 	if opts.Ready != nil {
 		opts.Ready(RunInfo{Addrs: addrs, Port: port})

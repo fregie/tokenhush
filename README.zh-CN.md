@@ -36,7 +36,7 @@ Tokenhush 在这些工具前面加一道检查点：每条请求进来，把像�
 
 - **每个字段都扫，不只扫表层。** Tokenhush 会把整个请求体逐层走一遍，嵌套 JSON 也不放过；流式响应边到边处理。它能认出常见密钥前缀（`sk-`、`AKIA`、`ghp_` 等）、看起来随机的高熵字符串、JWT、PEM 私钥、卡号、邮箱。
 - **同一个密钥，永远是同一个占位符。** 密钥会变成 `__PII_email_9f2c8a4b6d1e__` 这样的令牌。映射只存在内存里，仅在本次会话有效；重启就没了。所以偶尔在输出里看到占位符是正常现象，也是安全降级，不是泄露。
-- **只在本机。** 网关只监听 `127.0.0.1` 和 `[::1]`，校验 Host，浏览器类请求还查 Origin；控制 API 用每次 `run` 随机生成的令牌保护，令牌以 `0600` 权限落盘。一旦出错，它选择停下，而不是继续转发。
+- **只在本机。** 网关仅监听环回：始终绑 `127.0.0.1`，主机有 IPv6 环回时同时绑 `[::1]`。它校验 Host，浏览器类请求还查 Origin；控制 API 用每次 `run` 随机生成的令牌保护，令牌以 `0600` 权限落盘。一旦出错，它选择停下，而不是继续转发。
 - **自带配置助手。** `tokenhush env <工具>` 会为 14 个工具打印可直接粘贴的片段。`tokenhush doctor` 做体检，退出码一看就懂：`0` 全通过，`1` 有检查失败，`2` 用法错误。
 - **小、能跑、可扩展。** 纯 Go，用 `CGO_ENABLED=0` 构建，覆盖 macOS、Linux、Windows 的 amd64 与 arm64。跨层接口（`Router`、`CostSink`）和内容插件（`Inspector` / `Transformer`）可以扩展流水线；V1 只支持编译期插件。
 
@@ -245,7 +245,7 @@ Tokenhush 只绑环回地址，强制 Host 白名单，不保存任何请求或�
 
 ## 项目状态
 
-V1 核心首发为 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）；当前线为 **`v0.3.0`**，保留 `tokenhush run`（双栈环回的前台网关）、`status`、`env <tool>`（14 个工具）、`doctor` 和 `version`，并把共享装配层移进导出的 `pkg/gateway` 包。
+V1 核心首发为 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）；当前线为 **`v0.3.0`**，保留 `tokenhush run`（仅绑环回、主机有 IPv6 环回时为双栈的前台网关）、`status`、`env <tool>`（14 个工具）、`doctor` 和 `version`，并把共享装配层移进导出的 `pkg/gateway` 包。
 
 配置在加载时校验：加键的升级不会弄坏旧文件，删键的升级会立刻以 "unknown field" 报错。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS、Windows 上跑单元测试和端到端冒烟测试。
 

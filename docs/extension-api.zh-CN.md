@@ -126,7 +126,7 @@ func Gate(doc *Document, caps Capabilities) (*Document, error)
 
 ## 🏗️ 装配层（`pkg/gateway`）
 
-核心 CLI（`internal/cli`）与私有 Pro daemon 通过同一装配层落地。`pkg/gateway` 负责：双栈环回监听器的生命周期、每会话控制 token 与 `run.json`、Host 允许列表与按请求统计的中间件链、数据面，以及有界的优雅关闭。各构建的特有概念（审计存储、控制会话、entitlement、Web UI）留在 `Options` 的生命周期钩子之后。
+核心 CLI（`internal/cli`）与私有 Pro daemon 通过同一装配层落地。`pkg/gateway` 负责：环回监听器的生命周期（`127.0.0.1`；主机有 IPv6 环回时同时绑 `[::1]`）、每会话控制 token 与 `run.json`、Host 允许列表与按请求统计的中间件链、数据面，以及有界的优雅关闭。各构建的特有概念（审计存储、控制会话、entitlement、Web UI）留在 `Options` 的生命周期钩子之后。
 
 导出的契约由私有 Pro 仓库的 ADR-0012 冻结；`pkg/gateway/testdata/options_contract.txt` 与 `TestOptionsContractDoc` 一起钉住导出结构体字段，防止意外漂移。该包在 v1.0 前属实验性。
 

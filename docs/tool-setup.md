@@ -215,7 +215,7 @@ upstreams:             # host or path prefix -> upstream base URL
 
 Key points:
 
-- `listen.host` takes loopback only; the gateway **never** binds `0.0.0.0` or an empty host, and binds dual-stack loopback (`127.0.0.1` and `[::1]`).
+- `listen.host` takes loopback only; the gateway **never** binds `0.0.0.0` or an empty host. It binds `127.0.0.1` always and `[::1]` as well when the host has an IPv6 loopback; on a host without one it serves `127.0.0.1` only and logs a notice.
 - Six deterministic, high-precision detectors: key prefixes, high-entropy strings, JWT, PEM private-key headers, Luhn card numbers, email. A match becomes a stable placeholder like `__PII_email_9f2c8a4b6d1e__`, so upstream never sees the raw value.
 - `prefixes` → detector id `prefix`; `private_keys` → `private_key` (see `pkg/config` comments).
 - `allowlist` holds literals never redacted.

@@ -345,20 +345,38 @@ func doctorSecretStore(deps doctorDeps) DoctorCheck {
 	return DoctorCheck{Name: doctorCheckSecrets, Status: doctorOK, Message: msg}
 }
 
+// loopbackDegrader is implemented by proxy.Listeners so doctor can report a
+// v4-only bind as a warning without typing the seam on the concrete type.
+type loopbackDegrader interface {
+	Degraded() bool
+	V6Err() error
+}
+
 // doctorListeners probes the loopback stack and the configured port. The
-// ephemeral bind proves both families (127.0.0.1 and ::1) can be bound at all,
-// mirroring how `run` binds them; the configured-port bind classifies a busy
-// port as expected when run.json names the same port.
+// ephemeral bind proves 127.0.0.1 can be bound at all and reports a v4-only
+// degrade (no usable ::1) as a warning, mirroring how `run` binds; the
+// configured-port bind classifies a busy port as expected when run.json names
+// the same port.
 func doctorListeners(deps doctorDeps, host string, port int) []DoctorCheck {
 	checks := make([]DoctorCheck, 0, 2)
-	if err := doctorProbeListen(deps, host, 0); err != nil {
+
+	loopback, err := doctorProbeListen(deps, host, 0)
+	switch {
+	case err != nil:
 		checks = append(checks, DoctorCheck{
 			Name:    doctorCheckLoopback,
 			Status:  doctorFail,
-			Message: fmt.Sprintf("cannot bind both loopback families: %v", err),
-			Fix:     "enable the IPv6 loopback interface (::1) and rerun",
+			Message: fmt.Sprintf("cannot bind 127.0.0.1 loopback: %v", err),
+			Fix:     "check firewall or sandbox permissions for loopback TCP",
 		})
-	} else {
+	case loopback.degraded:
+		checks = append(checks, DoctorCheck{
+			Name:    doctorCheckLoopback,
+			Status:  doctorWarn,
+			Message: fmt.Sprintf("127.0.0.1 bindable; IPv6 loopback ([::1]) unavailable: %v", loopback.v6err),
+			Fix:     "optional: enable IPv6 loopback (sysctl -w net.ipv6.conf.all.disable_ipv6=0) to also serve [::1]",
+		})
+	default:
 		checks = append(checks, DoctorCheck{
 			Name:    doctorCheckLoopback,
 			Status:  doctorOK,
@@ -366,7 +384,14 @@ func doctorListeners(deps doctorDeps, host string, port int) []DoctorCheck {
 		})
 	}
 
-	switch err := doctorProbeListen(deps, host, port); {
+	portPosture, err := doctorProbeListen(deps, host, port)
+	switch {
+	case err == nil && portPosture.degraded:
+		checks = append(checks, DoctorCheck{
+			Name:    doctorCheckPort,
+			Status:  doctorOK,
+			Message: fmt.Sprintf("127.0.0.1:%d available", port),
+		})
 	case err == nil:
 		checks = append(checks, DoctorCheck{
 			Name:    doctorCheckPort,
@@ -397,16 +422,27 @@ func doctorListeners(deps doctorDeps, host string, port int) []DoctorCheck {
 	return checks
 }
 
+// loopbackPosture is the observed result of a loopback probe: whether the bind
+// was v4-only (degraded) and the [::1] failure behind it.
+type loopbackPosture struct {
+	degraded bool
+	v6err    error
+}
+
 // doctorProbeListen binds and immediately releases host:port through the
-// injected listener seam. A successful bind reports both families because
-// proxy.Listen is dual-stack by construction.
-func doctorProbeListen(deps doctorDeps, host string, port int) error {
+// injected listener seam and reports the loopback posture. A v4-only bind is
+// reported as degraded; a closer that does not expose the posture counts as
+// not degraded.
+func doctorProbeListen(deps doctorDeps, host string, port int) (loopbackPosture, error) {
 	closer, err := deps.listen(host, port)
 	if err != nil {
-		return err
+		return loopbackPosture{}, err
 	}
-	_ = closer.Close()
-	return nil
+	defer func() { _ = closer.Close() }()
+	if degrader, ok := closer.(loopbackDegrader); ok && degrader.Degraded() {
+		return loopbackPosture{degraded: true, v6err: degrader.V6Err()}, nil
+	}
+	return loopbackPosture{}, nil
 }
 
 // doctorSessionOnPort reports whether <dataDir>/run.json advertises port. The
