@@ -75,6 +75,9 @@ func (w *BackfillWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Buffered reports how many bytes are retained in the window.
+func (w *BackfillWriter) Buffered() int { return len(w.buf) }
+
 // Flush marks the stream complete: a trailing candidate that never received a
 // closing suffix is emitted as raw bytes (an incomplete prefix is not a
 // placeholder). After Flush the writer still accepts more bytes, which are
@@ -198,6 +201,18 @@ type SSEEvent struct {
 	Data     string
 	ID       string
 	Retry    int
+
+	// DataSingle reports this record has exactly one canonical `data:` line
+	// whose value is Raw[DataOffset:DataOffset+DataLen] (contiguous,
+	// replaceable). Zero or multiple data: lines, or a colon-less `data` line,
+	// yield false.
+	DataSingle bool
+	DataOffset int
+	DataLen    int
+	// HasID reports an id: line appeared in this record (metadata only; records
+	// are never rebuilt from fields, so the cross-record ID persistence stays
+	// safe).
+	HasID bool
 }
 
 // SSEDecoder incrementally parses a Server-Sent Events stream. Feed chunks as
@@ -221,6 +236,16 @@ type SSEDecoder struct {
 	id       string
 	retry    int
 	closed   bool
+
+	// Per-record data: accounting for SSEEvent.DataSingle. dataCount counts
+	// every data: line in the record, dataFormOK is false when any of them had
+	// no colon, and dataOff/dataLen locate the value of the single data: line.
+	dataCount  int
+	dataFormOK bool
+	dataOff    int
+	dataLen    int
+	// hasID is the per-record counterpart of id: unlike id it does not persist.
+	hasID bool
 }
 
 // NewSSEDecoder returns a decoder with no stream state.
@@ -273,8 +298,9 @@ func (d *SSEDecoder) consume(final bool) []SSEEvent {
 			}
 		}
 		line := buf[start:i]
+		lineRawOff := len(d.raw)
 		d.raw = append(d.raw, buf[start:i+n]...)
-		d.addLine(string(line))
+		d.addLine(string(line), lineRawOff)
 		i += n
 		start = i
 		if len(line) == 0 {
@@ -289,8 +315,9 @@ func (d *SSEDecoder) consume(final bool) []SSEEvent {
 	}
 	if final && start < len(buf) {
 		line := buf[start:]
+		lineRawOff := len(d.raw)
 		d.raw = append(d.raw, line...)
-		d.addLine(string(line))
+		d.addLine(string(line), lineRawOff)
 		start = len(buf)
 	}
 	d.pending = append(d.pending[:0], buf[start:]...)
@@ -298,7 +325,9 @@ func (d *SSEDecoder) consume(final bool) []SSEEvent {
 }
 
 // addLine folds one parsed line into the record under construction.
-func (d *SSEDecoder) addLine(line string) {
+// lineRawOff is the line's byte offset within the record's Raw, so a data
+// line's value can be located for in-place rewriting.
+func (d *SSEDecoder) addLine(line string, lineRawOff int) {
 	if line == "" {
 		return
 	}
@@ -314,12 +343,27 @@ func (d *SSEDecoder) addLine(line string) {
 	case "event":
 		d.event = value
 	case "data":
+		if d.dataCount == 0 {
+			d.dataFormOK = true
+		}
+		d.dataCount++
+		if !found {
+			d.dataFormOK = false
+		} else {
+			leadingSpace := len(line) > len(field)+1 && line[len(field)+1] == ' '
+			d.dataOff = lineRawOff + len(field) + 1
+			if leadingSpace {
+				d.dataOff++
+			}
+			d.dataLen = len(value)
+		}
 		d.data = append(d.data, value)
 		d.hasData = true
 	case "id":
 		// A NUL byte in the value makes the field invalid per the SSE spec.
 		if !strings.ContainsRune(value, 0) {
 			d.id = value
+			d.hasID = true
 		}
 	case "retry":
 		if allDigits(value) {
@@ -341,9 +385,15 @@ func (d *SSEDecoder) dispatch() SSEEvent {
 		Data:     strings.Join(d.data, "\n"),
 		ID:       d.id,
 		Retry:    d.retry,
+		HasID:    d.hasID,
 	}
 	if ev.Event == "" && d.hasData {
 		ev.Event = "message"
+	}
+	ev.DataSingle = d.dataCount == 1 && d.dataFormOK
+	if ev.DataSingle {
+		ev.DataOffset = d.dataOff
+		ev.DataLen = d.dataLen
 	}
 	d.raw = nil
 	d.comments = nil
@@ -351,6 +401,11 @@ func (d *SSEDecoder) dispatch() SSEEvent {
 	d.hasData = false
 	d.event = ""
 	d.retry = 0
+	d.dataCount = 0
+	d.dataFormOK = false
+	d.dataOff = 0
+	d.dataLen = 0
+	d.hasID = false
 	return ev
 }
 
