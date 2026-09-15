@@ -164,7 +164,7 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	copyEndToEndHeaders(outReq.Header, r.Header)
+	copyRequestHeaders(outReq.Header, r.Header)
 	outReq.ContentLength = int64(len(body))
 
 	resp, err := f.client.Do(outReq)
@@ -276,6 +276,31 @@ func copyEndToEndHeaders(dst, src http.Header) {
 		}
 		dst[key] = append([]string(nil), values...)
 	}
+}
+
+// copyRequestHeaders copies the client's end-to-end request headers to the
+// outbound request and then force-strips Accept-Encoding so the upstream is
+// asked for identity.
+//
+// Why: forwarding the client's Accept-Encoding (for example "gzip, deflate,
+// br") lets the upstream answer with Content-Encoding: gzip. The pipeline
+// cannot inspect a compressed body, so it marks the response modeOpaque and
+// silently skips backfill and non-streaming policy checks (defect R2).
+// Removing the header leaves the outbound request without Accept-Encoding, so
+// the default transport self-injects "gzip" and transparently decompresses the
+// response, also dropping the response Content-Encoding and Content-Length
+// before the pipeline ever sees it. The pipeline therefore always sees plain,
+// inspectable bytes.
+//
+// This also explains T3's reachability: after this strip the transport has
+// already decompressed gzip responses, so the core's own decodable branch
+// stays reachable only for `deflate` or a custom WithHTTPClient that disables
+// transparent decompression. DisableCompression is deliberately left unset so
+// the default transport keeps that behaviour; hop-by-hop and Connection-listed
+// headers are still filtered by copyEndToEndHeaders.
+func copyRequestHeaders(dst, src http.Header) {
+	copyEndToEndHeaders(dst, src)
+	dst.Del("Accept-Encoding")
 }
 
 // streamBody copies the upstream body to the client, flushing after every

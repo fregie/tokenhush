@@ -261,7 +261,9 @@ func TestPipelineStripAcceptEncodingOutbound(t *testing.T) {
 
 	var mu sync.Mutex
 	var seen string
+	var hits atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		mu.Lock()
 		seen = r.Header.Get("Accept-Encoding")
 		mu.Unlock()
@@ -284,6 +286,14 @@ func TestPipelineStripAcceptEncodingOutbound(t *testing.T) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	_, _ = io.ReadAll(resp.Body)
+
+	// Vacuity guard: the assertions below are only meaningful if the upstream
+	// was actually dialed. Without this, a forwarder that never dispatched the
+	// request (recorded header empty) would satisfy "contains neither deflate
+	// nor br" trivially.
+	if hits.Load() < 1 {
+		t.Fatalf("upstream never received the request; Accept-Encoding assertions would be vacuous")
+	}
 
 	mu.Lock()
 	got := seen
