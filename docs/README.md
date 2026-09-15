@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md)
 
-> Status: V1 (2026-09). Start here; each link goes to one focused document. Paths and claims match the `v0.3.0` release line and `main`.
+> Status: V1 (2026-09). Start here; each link goes to one focused document. Paths and claims match the `v0.4.0` release line and `main`.
 
 Tokenhush is a local base-URL gateway. Point your AI coding tools at `http://127.0.0.1:8787`; it redacts secrets and sensitive data before forwarding requests upstream. It all runs on your machine. The public core never installs a root certificate or performs MITM.
 

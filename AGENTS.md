@@ -1,7 +1,7 @@
 # AGENTS.md: tokenhush (public core)
 
-> Status: V1 implemented; the current release line is `v0.3.0` (`run` / `status` / `env` / `doctor` / `version`). Since `v0.2.0` the core keeps only the audit seam, because the concrete audit store moved to the private Pro layer; `v0.3.0` moves the shared assembly layer into the exported `pkg/gateway` package. Cross-platform (macOS / Linux / Windows).
-> Last updated: 2026-09-12
+> Status: V1 implemented; the current release line is `v0.4.0` (`run` / `status` / `env` / `doctor` / `privacy` / `update` / `rules` / `version`). Since `v0.2.0` the core keeps only the audit seam, because the concrete audit store moved to the private Pro layer; `v0.3.0` moved the shared assembly layer into the exported `pkg/gateway` package; `v0.4.0` added the signed self-update engine, signed rule sync, and the machine-readable egress disclosure. Cross-platform (macOS / Linux / Windows).
+> Last updated: 2026-09-15
 
 ## What this is
 

@@ -247,7 +247,7 @@ The only traffic it can send to the vendor is the two switchable, command-scoped
 
 ## Project status
 
-The V1 core first shipped as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)); the current line is **`v0.3.0`**. It keeps `tokenhush run` (foreground gateway on loopback, dual-stack when the host has an IPv6 loopback), `status`, `env <tool>` (14 tools), `doctor`, and `version`, and moves the shared assembly layer into the exported `pkg/gateway` package.
+The V1 core first shipped as **`v0.1.0`** ([GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)); the current line is **`v0.4.0`**. It keeps `tokenhush run` (foreground gateway on loopback, dual-stack when the host has an IPv6 loopback), `status`, `env <tool>` (14 tools), `doctor`, and `version`, moves the shared assembly layer into the exported `pkg/gateway` package, and adds the signed self-update engine (`update`), signed rule sync (`rules`), and the machine-readable egress disclosure (`privacy`).
 
 The config is validated on load: an upgrade that adds a key won't break an older file, and one that removes a key fails fast with an "unknown field" error. The code is pure Go with `CGO_ENABLED=0`, and CI runs unit tests plus an end-to-end smoke test on Linux, macOS, and Windows.
 

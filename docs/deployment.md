@@ -124,7 +124,7 @@ tokenhush version
 `version` prints the version and build information, and takes no flags.
 
 > [!NOTE]
-> The macOS Homebrew and Windows install.ps1/Scoop channels are still under manual verification for the `v0.3.0` line. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
+> The macOS Homebrew and Windows install.ps1/Scoop channels are still under manual verification for the `v0.4.0` line. If a channel install fails, build from source as above; `main` carries the same V1 implementation.
 
 ## 🚀 3. First run
 
@@ -368,7 +368,7 @@ Full annotated defaults and every supported key live in [tool-setup.md](tool-set
 | Linux (install.sh) | Re-run the install command; it resolves the latest release |
 | Source | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: the core config has no `audit:` key, so a file that still contains one fails to load — delete that block before restarting. The audit block lives in the private Pro layer. The `v0.3.0` upgrade needs no config change: it moves the shared assembly layer into the exported `pkg/gateway` package. Restart the gateway after upgrading so the new binary serves traffic.
+Config keys are validated on load, so an upgrade that adds a key does not break an older file, and one that removes a key fails fast with an "unknown field" error. The `v0.2.0` upgrade is a concrete case: the core config has no `audit:` key, so a file that still contains one fails to load — delete that block before restarting. The audit block lives in the private Pro layer. The `v0.3.0` upgrade needs no config change: it moves the shared assembly layer into the exported `pkg/gateway` package. The `v0.4.0` upgrade needs no config change either: it adds the signed self-update engine (`tokenhush update`), signed rule sync (`tokenhush rules`), and the machine-readable egress disclosure (`tokenhush privacy`). Restart the gateway after upgrading so the new binary serves traffic.
 
 ## 🗑️ 8. Uninstall
 

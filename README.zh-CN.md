@@ -247,7 +247,7 @@ Tokenhush 只绑环回地址，强制 Host 白名单，不保存任何请求或�
 
 ## 项目状态
 
-V1 核心首发为 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）；当前线为 **`v0.3.0`**，保留 `tokenhush run`（仅绑环回、主机有 IPv6 环回时为双栈的前台网关）、`status`、`env <tool>`（14 个工具）、`doctor` 和 `version`，并把共享装配层移进导出的 `pkg/gateway` 包。
+V1 核心首发为 **`v0.1.0`**（[GitHub Release](https://github.com/fregie/tokenhush/releases/tag/v0.1.0)）；当前线为 **`v0.4.0`**，保留 `tokenhush run`（仅绑环回、主机有 IPv6 环回时为双栈的前台网关）、`status`、`env <tool>`（14 个工具）、`doctor` 和 `version`，把共享装配层移进导出的 `pkg/gateway` 包，并加入签名自更新引擎（`update`）、签名规则同步（`rules`）与机器可读的外发披露（`privacy`）。
 
 配置在加载时校验：加键的升级不会弄坏旧文件，删键的升级会立刻以 "unknown field" 报错。代码是纯 Go 且 `CGO_ENABLED=0`，CI 在 Linux、macOS、Windows 上跑单元测试和端到端冒烟测试。
 

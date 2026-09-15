@@ -2,7 +2,7 @@
 
 **English** | [中文](architecture.zh-CN.md)
 
-> Status: V1 is implemented; the current release line is `v0.3.0` (2026-09). This document describes the shipped core architecture and the open-core boundary.
+> Status: V1 is implemented; the current release line is `v0.4.0` (2026-09). This document describes the shipped core architecture and the open-core boundary.
 
 Tokenhush is a local base-URL gateway between your AI coding tool and the model provider. Before a request leaves the machine, it finds sensitive content and replaces it.
 

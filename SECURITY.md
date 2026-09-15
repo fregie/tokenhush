@@ -10,9 +10,9 @@ Security fixes land on the latest release line and on `main`, and ship in the ne
 
 | Version | Supported |
 |---|---|
-| `v0.3.x` (current release line) | Yes |
+| `v0.4.x` (current release line) | Yes |
 | `main` | Development branch; fixes land here first |
-| Older than `v0.3.0` | No |
+| Older than `v0.4.0` | No |
 
 Pre-1.0, only the newest release line receives security fixes. If you run an older build, upgrade first unless the report is about the upgrade path itself.
 

@@ -124,7 +124,7 @@ tokenhush version
 `version` 打印版本和构建信息，不接受任何标志。
 
 > [!NOTE]
-> macOS Homebrew 和 Windows install.ps1/Scoop 渠道在 `v0.3.0` 线下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
+> macOS Homebrew 和 Windows install.ps1/Scoop 渠道在 `v0.4.0` 线下仍在手动验证。渠道装不上就按上文从源码构建；`main` 携带相同的 V1 实现。
 
 ## 🚀 3. 首次运行
 
@@ -368,7 +368,7 @@ Tokenhush 从配置目录读 `tokenhush.yaml`，或从 `--config` 指定的路�
 | Linux（install.sh） | 重新运行安装命令；它会解析最新发行版 |
 | 源码 | `go install github.com/fregie/tokenhush/cmd/tokenhush@latest` |
 
-配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：核心配置没有 `audit:` 键，仍带该键的文件会加载失败——重启前请删掉该块。审计块位于私有 Pro 层。`v0.3.0` 升级无需修改配置：它把共享装配层移入导出的 `pkg/gateway` 包。升级后重启网关，让新二进制接管流量。
+配置键在加载时校验：新增键的升级不会弄坏旧文件，删键的升级会以 "unknown field" 错误立刻失败。`v0.2.0` 就是例子：核心配置没有 `audit:` 键，仍带该键的文件会加载失败——重启前请删掉该块。审计块位于私有 Pro 层。`v0.3.0` 升级无需修改配置：它把共享装配层移入导出的 `pkg/gateway` 包。`v0.4.0` 升级同样无需修改配置：它加入签名自更新引擎（`tokenhush update`）、签名规则同步（`tokenhush rules`）与机器可读的外发披露（`tokenhush privacy`）。升级后重启网关，让新二进制接管流量。
 
 ## 🗑️ 8. 卸载
 
