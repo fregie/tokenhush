@@ -77,7 +77,8 @@ func TestMutationChannelPatterns(t *testing.T) {
 		{name: "cli_line_continuation", class: MutationChannelCLI,
 			text: "tokenhush \\\n allowlist add entry-value"},
 
-		// Class 2 — direct connection to the bound control port.
+		// Class 2 — a reach for the control plane: the bound port WITH control
+		// evidence (a control endpoint path, or a control request line).
 		{name: "port_curl_v4", class: MutationChannelControlPort,
 			text: "curl -sS http://127.0.0.1:8787/allowlist -X POST"},
 		{name: "port_curl_localhost", class: MutationChannelControlPort,
@@ -88,12 +89,16 @@ func TestMutationChannelPatterns(t *testing.T) {
 			text: "127.0.0.1:8787/allowlist?x=1"},
 		{name: "port_bare_localhost_path", class: MutationChannelControlPort,
 			text: "localhost:8787/allowlist"},
-		{name: "port_http_no_path", class: MutationChannelControlPort,
-			text: "curl http://127.0.0.1:8787"},
+		{name: "port_post_allowlist", class: MutationChannelControlPort,
+			text: "curl -X POST http://127.0.0.1:8787/allowlist"},
 		{name: "port_http_client_status", class: MutationChannelControlPort,
 			text: "curl http://127.0.0.1:8787/status"},
+		{name: "port_get_status", class: MutationChannelControlPort,
+			text: "GET http://127.0.0.1:8787/status"},
 		{name: "port_request_line", class: MutationChannelControlPort,
 			text: "POST /allowlist HTTP/1.1\r\nHost: 127.0.0.1:8787\r\nContent-Type: application/json"},
+		{name: "port_request_line_bare_verb", class: MutationChannelControlPort,
+			text: "DELETE /allowlist"},
 		{name: "port_netcat_space_separated", class: MutationChannelControlPort,
 			text: "printf 'DELETE /allowlist HTTP/1.1\r\n\r\n' | nc 127.0.0.1 8787"},
 		{name: "port_invoke_webrequest", class: MutationChannelControlPort,
@@ -152,6 +157,15 @@ func TestMutationChannelPatterns(t *testing.T) {
 		{name: "neg_right_port_wrong_host", text: "curl http://example.com:8787/allowlist"},
 		{name: "neg_port_in_prose", text: "the control port is 8787"},
 		{name: "neg_port_in_config", text: "set the listen port to 8787 in tokenhush.yaml"},
+		// A data-plane path on the real control port is legitimate traffic: the
+		// port alone is never evidence of the control channel.
+		{name: "neg_data_plane_chat_completions", text: "curl http://127.0.0.1:8787/v1/chat/completions"},
+		{name: "neg_data_plane_messages", text: "http://127.0.0.1:8787/v1/messages"},
+		{name: "neg_data_plane_anthropic_messages", text: "curl -X POST http://localhost:8787/v1/messages -d @req.json"},
+		{name: "neg_http_client_port_no_path", text: "curl http://127.0.0.1:8787"},
+		{name: "neg_bare_hostport_no_path", text: "127.0.0.1:8787"},
+		{name: "neg_control_path_other_port", text: "curl http://127.0.0.1:8786/allowlist"},
+		{name: "neg_control_path_other_port_status", text: "GET http://127.0.0.1:8786/status"},
 		{name: "neg_unrelated_path_write", text: "echo hi > /home/u/Documents/notes.json"},
 		{name: "neg_unrelated_path_read", text: "cat /home/u/Documents/notes.json"},
 		{name: "neg_read_only_allowlist_file", text: "cat /home/u/.local/share/tokenhush/allowlist.json"},

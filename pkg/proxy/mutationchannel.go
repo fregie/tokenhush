@@ -13,8 +13,8 @@ import (
 //
 //   - cli-command: the tokenhush / tokenhush-pro executable with the
 //     `allowlist` subcommand, in the common shell wrappings;
-//   - control-port: a direct connection to the bound control port by its
-//     loopback address, in an HTTP-ish context;
+//   - control-port: a reach for the bound control plane by its loopback
+//     address or control request line, carrying a control endpoint path;
 //   - file-write: a write to the persisted allowlist file
 //     (<DataDir>/allowlist.json), by its runtime path or its frozen basename.
 //
@@ -251,14 +251,27 @@ func matchCLIAllowlistCommand(text string, _ MutationChannelContext) bool {
 
 // Class 2 — the control port.
 //
-// A loopback host spelled with the real bound port, either bare in front of
-// the control path (host:port/allowlist) or in an HTTP-ish context: preceded
-// by a URL scheme, or accompanied anywhere in the text by an HTTP client or
-// verb (http://, curl, wget, nc, POST, DELETE, ...). A different port, a
-// non-loopback host, or the number in prose never matches.
+// A loopback host with the real bound port is control evidence only when the
+// same text also carries evidence of the control channel, never on the bare
+// port alone: a data-plane path on the same port (for example
+// http://127.0.0.1:8787/v1/chat/completions) is legitimate traffic and must not
+// be refused. Two kinds of evidence count:
+//
+//   - a control endpoint path adjacent to the host:port (host:port/allowlist or
+//     host:port/status), or a control path plus an HTTP client/verb anywhere in
+//     the text (POST /allowlist with Host: 127.0.0.1:8787);
+//   - a control request line against the control path (see
+//     matchControlPortRequestLine), which also covers a bare `DELETE /allowlist`
+//     with no host spelled at all.
+//
+// The port stays dynamic (the real bound port from the installed context), so a
+// different port, a non-loopback host, or the number in prose never matches.
 var (
 	mutationChannelLoopbackHosts = []string{"127.0.0.1", "localhost", "[::1]"}
-	mutationChannelControlPath   = "/allowlist"
+	// mutationChannelControlPaths are the control-plane endpoint paths. Both are
+	// required for the class to recognise the channel: /allowlist changes the
+	// allowlist, /status reads the control plane's own state.
+	mutationChannelControlPaths = []string{"/allowlist", "/status"}
 	// mutationChannelHTTPSignals are distinctive, case-insensitive substrings
 	// that put a host:port occurrence in an HTTP request context.
 	mutationChannelHTTPSignals = []string{
@@ -268,20 +281,28 @@ var (
 	// mutationChannelHTTPVerbs are matched as standalone tokens so a verb
 	// inside another word (input, compute, ...) is not a signal.
 	mutationChannelHTTPVerbs = []string{"nc", "post", "delete", "put", "patch"}
+	// mutationChannelRequestVerbs are the write verbs a control request line can
+	// open with (DELETE /allowlist, POST /allowlist, ...). GET is deliberately
+	// absent: a status read is only control evidence together with the port.
+	mutationChannelRequestVerbs = []string{"post", "delete", "put", "patch"}
 )
 
 var mutationChannelPortPatterns = []mutationChannelPattern{
 	{ID: "control-port/host-port", Class: MutationChannelControlPort, match: matchControlPortHostPort},
 	{ID: "control-port/netcat-host-port", Class: MutationChannelControlPort, match: matchControlPortNetcat},
+	{ID: "control-port/control-request-line", Class: MutationChannelControlPort, match: matchControlPortRequestLine},
 }
 
-// matchControlPortHostPort reports whether text carries a loopback host with
-// the bound control port in an HTTP-ish context.
+// matchControlPortHostPort reports whether text carries a loopback host with the
+// bound control port AND evidence of the control channel. The port alone is not
+// evidence: an HTTP-ish context around a bare port (a URL scheme, curl/wget/nc)
+// used to be enough, which refused legitimate data-plane calls to the same port.
 func matchControlPortHostPort(text string, ctx MutationChannelContext) bool {
 	if ctx.ControlPort <= 0 || ctx.ControlPort > 65535 {
 		return false
 	}
-	signal, signalKnown := false, false
+	var signal bool
+	var signalKnown bool
 	for _, host := range mutationChannelLoopbackHosts {
 		for i := 0; ; {
 			j := indexFoldFrom(text, host, i)
@@ -297,16 +318,49 @@ func matchControlPortHostPort(text string, ctx MutationChannelContext) bool {
 			if !ok {
 				continue
 			}
+			// The direct spelling: a control endpoint immediately after the
+			// host:port (host:port/allowlist, host:port/status).
 			if hasControlPathAt(text, end) {
 				return true
 			}
-			if j >= 3 && text[j-3:j] == "://" {
-				return true
+			// Otherwise the text must carry a control path and an HTTP client
+			// or verb (a request line the Host header points at this port). A
+			// data-plane path on the same port has no control path and stays
+			// unmatched.
+			if !hasControlPath(text) {
+				continue
 			}
 			if !signalKnown {
 				signal, signalKnown = hasHTTPClientSignal(text), true
 			}
 			if signal {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// matchControlPortRequestLine reports an HTTP request line whose target is a
+// control endpoint path (`DELETE /allowlist HTTP/1.1`). The control path is the
+// evidence: the allowlist endpoint exists only on the control plane, so a write
+// verb aimed at it is a control-channel attempt even when no host:port is
+// spelled (the Host header may carry the port separately, or be omitted).
+func matchControlPortRequestLine(text string, _ MutationChannelContext) bool {
+	for _, verb := range mutationChannelRequestVerbs {
+		for i := 0; ; {
+			j := indexFoldFrom(text, verb, i)
+			if j < 0 {
+				break
+			}
+			i = j + 1
+			if j > 0 && !isCommandStartBoundary(text[j-1]) {
+				continue
+			}
+			if end := j + len(verb); end < len(text) && !isCommandTerminator(text[end]) {
+				continue
+			}
+			if hasControlPathAt(text, skipCommandSpace(text, j+len(verb))) {
 				return true
 			}
 		}
@@ -613,18 +667,53 @@ func hasHTTPClientSignal(text string) bool {
 	return false
 }
 
-// hasControlPathAt reports whether text from index i spells the control
-// endpoint path, terminated by a path, query, fragment or shell boundary.
+// hasControlPathAt reports whether text from index i spells a control endpoint
+// path, terminated by a path, query, fragment or shell boundary.
 func hasControlPathAt(text string, i int) bool {
-	if !hasFoldAt(text, i, mutationChannelControlPath) {
-		return false
+	for _, path := range mutationChannelControlPaths {
+		if !hasFoldAt(text, i, path) {
+			continue
+		}
+		end := i + len(path)
+		if end == len(text) {
+			return true
+		}
+		switch text[end] {
+		case '/', '?', '#', '"', '\'', '`', ' ', '\t', '\r', '\n', ';', '&', '|', '>', '<', ')', ']', '}', ',':
+			return true
+		}
 	}
-	end := i + len(mutationChannelControlPath)
-	if end == len(text) {
-		return true
+	return false
+}
+
+// hasControlPath reports whether text contains a control endpoint path at a path
+// boundary, anywhere. It is the non-adjacent half of the control evidence: a
+// host:port occurrence counts only together with such a path (and an HTTP client
+// or verb), so a data-plane path on the same port never matches.
+func hasControlPath(text string) bool {
+	for _, path := range mutationChannelControlPaths {
+		for i := 0; ; {
+			j := indexFoldFrom(text, path, i)
+			if j < 0 {
+				break
+			}
+			i = j + 1
+			if j > 0 && !isPathStartBoundary(text[j-1]) {
+				continue
+			}
+			if hasControlPathAt(text, j) {
+				return true
+			}
+		}
 	}
-	switch text[end] {
-	case '/', '?', '#', '"', '\'', '`', ' ', '\t', '\r', '\n', ';', '&', '|', '>', '<', ')', ']', '}', ',':
+	return false
+}
+
+// isPathStartBoundary reports whether b can precede a URL path token: whitespace,
+// an opening quote, a grouping/assignment operator or a URL separator.
+func isPathStartBoundary(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '"', '\'', '`', '(', '=', ':':
 		return true
 	}
 	return false
