@@ -121,6 +121,16 @@ type Pipeline struct {
 	// policy block. It is an atomic pointer so a reporter installed before Run
 	// is read race-free by every request goroutine. See SetRedactionReporter.
 	reporter atomic.Pointer[RedactionReporter]
+
+	// responseWalkFailures counts client-bound response bodies the
+	// response-path walker could not parse: the buffered skip in
+	// transformResponse plus the SSE emit-time desync guard in
+	// ssebackfill_rewrite.go. It is a metadata-only signal (no content); each
+	// increment also emits one RedactionEvent via noteResponseWalkFailure.
+	// Both sites deliberately keep forwarding byte-identically instead of
+	// failing closed — see transformResponse for the asymmetry with the
+	// request path.
+	responseWalkFailures atomic.Uint64
 }
 
 // NewPipeline builds the pipeline. It fails when cfg.Engine is nil, because no
@@ -149,6 +159,20 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 		exclusions:            cfg.Exclusions,
 		controlToken:          cfg.ControlToken,
 	}, nil
+}
+
+// ResponseWalkFailures reports how many client-bound response bodies the
+// response-path walker could not parse since the pipeline was built: the
+// buffered response skip plus the SSE emit-time desync guard. Each failure
+// also emits one metadata-only RedactionEvent (see
+// RedactionActionResponseWalkFailed and RedactionActionSSEWalkFailed). The
+// count carries no content and is safe to expose (for example on a status
+// endpoint). A nil receiver returns 0.
+func (p *Pipeline) ResponseWalkFailures() uint64 {
+	if p == nil {
+		return 0
+	}
+	return p.responseWalkFailures.Load()
 }
 
 // BlockedError reports that a content policy decision rejected the request or
@@ -314,6 +338,17 @@ func redactionSpans(walked []protocol.Leaf, findings []extension.Finding) map[in
 // inspect -> policy -> ResponseContent transformers -> core backfill last. A
 // non-JSON response skips inspection and transformers but still gets backfill,
 // because a placeholder can appear in a plain-text error or non-JSON body.
+//
+// The response path deliberately does NOT fail closed when the walker cannot
+// parse the body, unlike the request path (W1.3: a body declaring JSON reports
+// ErrUnwalkableBody and the HTTP layer answers 400). Response and SSE are both
+// client-bound (inbound) directions, so an unparseable body cannot exfiltrate
+// anything to the upstream, and failing closed would break legitimate
+// plain-text error bodies and `data: [DONE]`/ping SSE streams. The skipped
+// walk is instead made observable: it increments ResponseWalkFailures and
+// emits one metadata-only RedactionActionResponseWalkFailed event (never any
+// bytes, keys or paths — see RedactionEvent). Observability replaces the
+// silence; the bytes forwarded are unchanged.
 func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 	if p == nil {
 		return nil, ErrNilPipeline
@@ -336,6 +371,8 @@ func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		p.noteResponseWalkFailure(RedactionActionResponseWalkFailed)
 	}
 	return p.backfill(body), nil
 }
@@ -603,6 +640,13 @@ func (w *pipelineResponseWriter) WriteHeader(status int) {
 			w.Header().Del("Content-Length")
 			w.dst.WriteHeader(status)
 			w.backfill = newSSEBackfiller(w.dst, w.pipeline.engine.MaxPlaceholderLen(), w.pipeline.engine.BackfillFunc())
+			// Wire the emit-time desync guard so an unparseable payload is
+			// counted and reported instead of silent; the fallback (write the
+			// original event verbatim) is unchanged. Response/SSE is
+			// deliberately not fail-closed — see transformResponse.
+			w.backfill.setWalkFailureObserver(func(error) {
+				w.pipeline.noteResponseWalkFailure(RedactionActionSSEWalkFailed)
+			})
 		} else {
 			w.mode = modeBuffered
 		}

@@ -78,6 +78,11 @@ type sseBackfiller struct {
 	touched   []*pathState
 	heldBytes int
 	err       error
+	// onWalkFailure, when set, observes a payload the emit-time walker cannot
+	// parse (the desync guard in emit). It receives the walker error, never
+	// payload bytes, and the fallback — write the original event verbatim — is
+	// unchanged. Nil is a no-op; see setWalkFailureObserver.
+	onWalkFailure func(error)
 }
 
 // newSSEBackfiller returns a backfiller writing rewritten SSE bytes to dst.
@@ -92,6 +97,18 @@ func newSSEBackfiller(dst io.Writer, maxPlaceholderLen int, replace protocol.Rep
 		held:    make(map[int]*heldEvent),
 		paths:   make(map[string]*pathState),
 	}
+}
+
+// setWalkFailureObserver installs the optional observer for payloads the
+// emit-time walker cannot parse. It exists so the pipeline can count and report
+// the otherwise-silent fallback without widening newSSEBackfiller's signature
+// (tests construct backfillers directly). A nil backfiller or a nil fn are
+// no-ops; fn receives the walker error, never the payload.
+func (b *sseBackfiller) setWalkFailureObserver(fn func(error)) {
+	if b == nil {
+		return
+	}
+	b.onWalkFailure = fn
 }
 
 // Write feeds p to the SSE decoder and processes every completed record. It

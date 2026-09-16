@@ -12,22 +12,42 @@ const (
 	RedactionActionRedact = "redact"
 	// RedactionActionBlock marks content the policy rejected before egress.
 	RedactionActionBlock = "block"
+	// RedactionActionResponseWalkFailed marks a client-bound buffered response
+	// body the response-path walker could not parse. Nothing is blocked: the
+	// body is still forwarded (and backfilled). See transformResponse.
+	RedactionActionResponseWalkFailed = "response_walk_failed"
+	// RedactionActionSSEWalkFailed marks an SSE payload whose emit-time walk
+	// failed (the desync guard in ssebackfill_rewrite.go). Nothing is blocked:
+	// the original event bytes are written verbatim.
+	RedactionActionSSEWalkFailed = "sse_walk_failed"
 )
 
-// RedactionDirectionRequest is the only direction the pipeline reports: it
-// redacts on the outbound request path. Inbound data is only backfilled.
-const RedactionDirectionRequest = "request"
+// Redaction directions for RedactionEvent.Direction.
+const (
+	// RedactionDirectionRequest is the outbound direction: the pipeline
+	// redacts and blocks there.
+	RedactionDirectionRequest = "request"
+	// RedactionDirectionResponse is the client-bound direction. Inbound data is
+	// only backfilled, so no redact or block event uses it; it reports the
+	// response/SSE bodies the walker could not parse (observability only — an
+	// unparseable body is still forwarded byte-identically).
+	RedactionDirectionResponse = "response"
+)
 
 // RedactionEvent describes one content decision for a human log. It carries no
 // content beyond a masked preview, and deliberately has no JSON path: object
 // keys are attacker-controlled and are not redacted, so logging a path could
-// leak un-redacted content.
+// leak un-redacted content. The two walk-failure actions report even less: a
+// skipped body must never surface its bytes, keys or paths, so Type, Length
+// and Masked stay empty for them.
 type RedactionEvent struct {
-	// Action is RedactionActionRedact or RedactionActionBlock.
+	// Action is RedactionActionRedact, RedactionActionBlock,
+	// RedactionActionResponseWalkFailed or RedactionActionSSEWalkFailed.
 	Action string
-	// Direction is RedactionDirectionRequest.
+	// Direction is RedactionDirectionRequest or RedactionDirectionResponse.
 	Direction string
-	// Phase is the content phase label (for example "request_content").
+	// Phase is the content phase label (for example "request_content" or
+	// "response_content").
 	Phase string
 	// Type is the detector type (for example "api_key").
 	Type string
@@ -37,10 +57,11 @@ type RedactionEvent struct {
 	Masked string
 }
 
-// RedactionReporter receives one event per replaced span (Redact) or per
-// blocked finding (Block). The pipeline invokes it from request goroutines, so
-// an implementation must be safe for concurrent use and must not block or call
-// back into the pipeline.
+// RedactionReporter receives one event per replaced span (Redact), per blocked
+// finding (Block), and per response/SSE body the walker could not parse (the
+// two walk-failure actions). The pipeline invokes it from request goroutines,
+// so an implementation must be safe for concurrent use and must not block or
+// call back into the pipeline.
 type RedactionReporter func(RedactionEvent)
 
 // SetRedactionReporter installs the reporter that observes redaction and block
@@ -114,4 +135,23 @@ func (p *Pipeline) reportBlock(decision extension.Decision) {
 			Type:      f.Type,
 		})
 	}
+}
+
+// noteResponseWalkFailure records one client-bound body the response-path
+// walker could not parse: it increments ResponseWalkFailures and emits one
+// metadata-only event. The response path deliberately does not fail closed
+// (see transformResponse), so this counter and event are the only signal that
+// a body was skipped — and they carry no body bytes, keys or paths, because
+// object keys are attacker-controlled and un-redacted. action distinguishes
+// the buffered path from the SSE desync guard.
+func (p *Pipeline) noteResponseWalkFailure(action string) {
+	if p == nil {
+		return
+	}
+	p.responseWalkFailures.Add(1)
+	p.report(RedactionEvent{
+		Action:    action,
+		Direction: RedactionDirectionResponse,
+		Phase:     extension.ResponseContent.String(),
+	})
 }

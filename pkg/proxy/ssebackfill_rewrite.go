@@ -7,7 +7,8 @@ import "github.com/fregie/tokenhush/pkg/protocol"
 // leafRewriter driven by the path->final-content map; any error or a no-op
 // rewrite falls back to the original bytes verbatim, so a desync can never
 // produce a half-spliced record. A raw (non-JSON) event's payload is replaced
-// directly, without JSON quoting.
+// directly, without JSON quoting. An emit-time walk failure is reported to the
+// observer set via setWalkFailureObserver before the fallback is written.
 func (b *sseBackfiller) emit(he *heldEvent) error {
 	if he.kind == kindRaw {
 		if he.rawEdit == nil {
@@ -19,7 +20,20 @@ func (b *sseBackfiller) emit(he *heldEvent) error {
 		return b.write(he.raw)
 	}
 	src := he.raw[he.dataOff : he.dataOff+he.dataLen]
-	leaves, _ := protocol.Walk(src)
+	leaves, walkErr := protocol.Walk(src)
+	if walkErr != nil {
+		// Desync guard: the payload was already walked when it was fed, so a
+		// failure here means the held edits and the raw bytes disagree. Report
+		// it (observable instead of silent, metadata only) and fall back to
+		// the original bytes verbatim. Non-JSON payloads never reach this
+		// branch: processEvent routes them through kindRaw, the documented
+		// `data: [DONE]`/ping passthrough — the client-bound direction is
+		// deliberately not fail-closed (see transformResponse).
+		if b.onWalkFailure != nil {
+			b.onWalkFailure(walkErr)
+		}
+		return b.write(he.raw)
+	}
 	rw := &leafRewriter{walked: leaves, edit: mapEdit(he.jsonEdits)}
 	out, changed, err := rw.rewrite(src, "")
 	if err == nil && changed {
