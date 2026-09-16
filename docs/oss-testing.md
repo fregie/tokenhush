@@ -198,7 +198,8 @@ raw-key grep exit=1
   或在 `tokenhush.yaml` 改 `listen.port`，再 `tokenhush doctor --config <file>`。
 - **`doctor` 报 `secret-store ... plaintext`（fail）**：说明回退到了明文文件后端，核心会显式失败而不是静默降级。
   启用系统钥匙串（macOS Keychain / Windows Credential Manager / gnome-keyring 或 KWallet）后重试。
-  非明文回退（如 `file-encrypted`）是 `ok`，会在消息里标注"degraded fallback"。
+  非明文回退（`file-encrypted`）报 `ok`，但会标注 `key source machine-bound` 与降级标记：它的密钥经 HKDF 由 best-effort 机器标识派生，是**对随意读文件的纵深防御，不是 OS 信任边界**；同机同用户、可派生该标识的攻击者仍能解开它。只有 `key source os-bound`（系统钥匙串 / systemd-creds）才表示密钥由操作系统保管。`tokenhush doctor` 报 `backend …; key source <kind>`（`os-bound` / `machine-bound` / `none`），后两者各自附带专用标记（machine-bound 降级 / 明文），因此"`ok`"不等于"密钥受 OS 保护"。
+  这一项描述的是**核心自己**的密钥库。审计库与它的 vault 属于私有 Pro 层、使用 Pro 自己的数据根（见 Pro 仓库文档），两者是不同的根，因此上面的核心数据根清单不包含审计库，并不构成冲突。
 - **工具装了但没走网关**：`doctor` 会对检测到的工具给出 `warn` 与 fix 行，照它给的 `tokenhush env <tool>` 配置即可。
 - **输出里偶尔看到 `__PII_...__`**：映射只在内存、随会话生命周期存在；重启网关后旧占位符无法还原，这是**安全降级**，不是泄露。
 - **本地代理拦截了回环请求**：若设置了 `HTTP(S)_PROXY`，把 `127.0.0.1,localhost,::1` 加进 `NO_PROXY`（`doctor` 的 `proxy-env` 会提示）。
