@@ -22,7 +22,10 @@ import (
 // detector subset. The subset is therefore applied by post-filtering findings
 // by Type: everything outside this set is dropped before the block decision,
 // and keys are never rewritten (a key is either "no finding" or a fail-closed
-// block).
+// block). One case is exempt from that filter: an aggregate Block is returned
+// before it, because Decision.Findings then carries only the block-forcing
+// findings and filtering them by credential type would fail open (see
+// keyFindings).
 //
 // Known limitation (open; W1.5 owns the documentation, not this code): the
 // high_entropy detector excludes pure-hex runs at the value domain too
@@ -52,10 +55,21 @@ func keyGuardType(findingType string) bool {
 var walkRequestKeys = protocol.WalkKeys
 
 // keyFindings scans the object keys of body and returns the findings that must
-// block the request: the key-position findings whose Type is in the frozen key
-// set. A nil result means "no key blocks the request" and the caller keeps the
-// value decision. Keys are never rewritten, so the block is the only outcome
-// besides "no finding".
+// block the request. Two outcomes block: an aggregate Block over the key
+// document, and — when the key document did not aggregate to Block — the
+// key-position findings whose Type is in the frozen key set. A nil result means
+// "no key blocks the request" and the caller keeps the value decision. Keys are
+// never rewritten, so a block is the only outcome besides "no finding".
+//
+// An aggregate Block is returned unchanged, before the type filter, because
+// Decision.Findings carries only the findings whose Action equals the aggregate
+// action. When a FailClosed inspector fails, the policy emits a block-forcing
+// plugin_failure finding and every credential-type finding (all Action Redact)
+// is absent from Decision.Findings; filtering that slice by type would drop the
+// failure and fail open — the request would be forwarded even though a critical
+// inspector had no verdict on its keys. Mirroring the value path, a detector
+// failure at the key position must block, and it is not gated on a credential
+// match.
 //
 // The synthetic document reuses contentDocument, giving each key the leaf shape
 // the detectors expect (Path, Content, Len) without adding extension API:
@@ -83,6 +97,9 @@ func (p *Pipeline) keyFindings(body []byte) ([]extension.Finding, error) {
 	decision, err := p.policy.Evaluate(contentDocument(extension.RequestContent, p.tool, leaves))
 	if err != nil {
 		return nil, fmt.Errorf("proxy: evaluate request keys: %w", err)
+	}
+	if decision.Action == extension.Block {
+		return decision.Findings, nil
 	}
 	var findings []extension.Finding
 	for _, f := range decision.Findings {

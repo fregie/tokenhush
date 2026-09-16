@@ -496,3 +496,129 @@ func TestPipelineWalkKeysFailureFailsClosed(t *testing.T) {
 	}
 	t.Logf("documented fail-closed decision: %v", err)
 }
+
+// kgFailOnContentInspector is a FailClosed-capable Inspector that panics as
+// soon as it is shown any content leaf. It models a detector that fails only
+// for some inputs, and that is what keeps the pinning test below non-vacuous:
+// a body whose only strings are object keys has no value leaves, so the value
+// evaluation succeeds while the key evaluation fails. The aggregate Block is
+// therefore observable only through the key scan.
+type kgFailOnContentInspector struct{}
+
+func (kgFailOnContentInspector) ID() string { return "kg-fail-on-content" }
+
+func (kgFailOnContentInspector) Capabilities() extension.Capabilities {
+	return extension.Capabilities{
+		Phases:      []extension.Phase{extension.RequestContent},
+		ReadContent: true,
+	}
+}
+
+func (kgFailOnContentInspector) Inspect(doc *extension.Document) ([]extension.Finding, error) {
+	if len(doc.Leaves) > 0 {
+		panic("kg-fail-on-content: intentional detector failure")
+	}
+	return nil, nil
+}
+
+// kgFindingTypes lists the finding types in order, for test logs only.
+func kgFindingTypes(findings []extension.Finding) []string {
+	types := make([]string, 0, len(findings))
+	for _, f := range findings {
+		types = append(types, f.Type)
+	}
+	return types
+}
+
+// TestPipelineKeysFailClosedOnDetectorFailure pins the aggregate-Block rule of
+// the key scan. extension.Policy.evaluate copies only the findings whose
+// Action equals the aggregate action into Decision.Findings, so when a
+// FailClosed inspector fails, a block-forcing plugin_failure finding hides
+// every credential-type finding (all Action Redact). Filtering that slice by
+// type would drop the failure and fail open; the key scan must honour the
+// aggregate Block before the type filter, mirroring the value path.
+func TestPipelineKeysFailClosedOnDetectorFailure(t *testing.T) {
+	engine := w45Engine(t)
+	key := kgPrefixKey()
+
+	newPipeline := func(t *testing.T, failures map[string]extension.FailurePolicy) *Pipeline {
+		t.Helper()
+		reg := w45Registry(t, kgFailOnContentInspector{}, redact.NewPrefixDetector())
+		policy := extension.NewPolicy(reg, extension.PolicyConfig{Failures: failures})
+		return w45Pipeline(t, PipelineConfig{Registry: reg, Policy: policy, Engine: engine, Tool: "w1.2-detector-failure"})
+	}
+
+	t.Run("aggregate_block_at_the_key_position_blocks", func(t *testing.T) {
+		pipe := newPipeline(t, map[string]extension.FailurePolicy{"kg-fail-on-content": extension.FailClosed})
+		// The value is a number, so the value document has no string leaf and
+		// its evaluation succeeds: only the key scan observes the failure.
+		body := kgJSON(t, map[string]any{key: 1})
+		got, err := pipe.RequestTransform()(body)
+		if err == nil {
+			t.Fatalf("aggregate Block at the key position was masked; forwarded: %s", got)
+		}
+		var blocked *BlockedError
+		if !errors.As(err, &blocked) {
+			t.Fatalf("error = %T %v, want *BlockedError", err, err)
+		}
+		if blocked.Phase != extension.RequestContent {
+			t.Errorf("phase = %v, want %v", blocked.Phase, extension.RequestContent)
+		}
+		if got != nil {
+			t.Errorf("blocked transform produced a body: %q", got)
+		}
+		if len(blocked.Findings) == 0 {
+			t.Error("blocked with no findings")
+		}
+		t.Logf("blocked on detector failure: findings=%d types=%v", len(blocked.Findings), kgFindingTypes(blocked.Findings))
+	})
+
+	// FailClosed means the request must not proceed without the inspector's
+	// verdict on the keys, so the block is not gated on a credential match.
+	t.Run("aggregate_block_blocks_even_a_safe_key", func(t *testing.T) {
+		pipe := newPipeline(t, map[string]extension.FailurePolicy{"kg-fail-on-content": extension.FailClosed})
+		body := kgJSON(t, map[string]any{"model": 1})
+		got, err := pipe.RequestTransform()(body)
+		if err == nil {
+			t.Fatalf("a FailClosed detector failure did not block: %s", got)
+		}
+		var blocked *BlockedError
+		if !errors.As(err, &blocked) {
+			t.Fatalf("error = %T %v, want *BlockedError", err, err)
+		}
+		if got != nil {
+			t.Errorf("blocked transform produced a body: %q", got)
+		}
+	})
+
+	// Mirror: with no failing inspector the ordinary path is unchanged — a
+	// credential key blocks through the frozen type filter.
+	t.Run("credential_key_still_blocks_without_a_failing_inspector", func(t *testing.T) {
+		pipe := newPipeline(t, nil)
+		body := kgJSON(t, map[string]any{key: 1})
+		got, err := pipe.RequestTransform()(body)
+		if err == nil {
+			t.Fatalf("credential key did not block via the type filter: %s", got)
+		}
+		var blocked *BlockedError
+		if !errors.As(err, &blocked) {
+			t.Fatalf("error = %T %v, want *BlockedError", err, err)
+		}
+		if got != nil {
+			t.Errorf("blocked transform produced a body: %q", got)
+		}
+	})
+
+	// Mirror: and a safe key still passes byte-identically.
+	t.Run("safe_key_still_passes_without_a_failing_inspector", func(t *testing.T) {
+		pipe := newPipeline(t, nil)
+		body := []byte(`{"model":"claude-test"}`)
+		got, err := pipe.RequestTransform()(body)
+		if err != nil {
+			t.Fatalf("safe key was blocked: %v", err)
+		}
+		if !bytes.Equal(got, body) {
+			t.Errorf("body changed:\n got: %s\nwant: %s", got, body)
+		}
+	})
+}
