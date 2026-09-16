@@ -38,6 +38,16 @@ func (p *Pipeline) EgressBlocks() uint64 {
 	return p.egressBlocks.Load()
 }
 
+// egressRecheckDisabled is a test-only switch: when true, egressRecheck
+// returns immediately, so a benchmark can measure the request transform
+// without the outbound re-check and have the checked path compared against it
+// with benchstat (see BenchmarkEgressRecheck). It is unexported and only ever
+// set by tests; production always runs with the default false, which is the
+// fully-checked path. It is deliberately not a configuration key: the
+// re-check has no user-facing off switch (a config knob that disables it would
+// be a default-insecure control).
+var egressRecheckDisabled = false
+
 // egressRecheck runs the W2.3 outbound re-check over body, the bytes the
 // request transform is about to return, and returns nil when nothing was found.
 // It is the single named entry point W2.5 times and bounds.
@@ -61,6 +71,9 @@ func (p *Pipeline) EgressBlocks() uint64 {
 // passthrough boundary, narrowed by W1.3, and the re-check adds no coverage for
 // it.
 func (p *Pipeline) egressRecheck(body []byte) error {
+	if egressRecheckDisabled {
+		return nil
+	}
 	if p == nil || p.engine == nil || len(body) == 0 {
 		return nil
 	}
