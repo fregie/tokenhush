@@ -1,15 +1,15 @@
-# Known structural-identifier exemptions for the high_entropy detector.
+# Known structural exemptions for the high_entropy detector.
 #
 # This file is the documentation artifact: the security documentation cites the
 # grammars below, and KnownStructuralIdentifierExemptions in pkg/redact mirrors
 # them. A test asserts the accessor and this file stay byte-for-byte equal, so
 # neither side can drift from the other.
 #
-# The exemption is a precision measure (provider tool-call, tool-use,
-# completion, message and response ids are structural, not secrets), not a
-# closed guarantee. An entry here marks an explicit skip; a secret that fits one
-# of the grammars is not redacted by high_entropy, and the residual risk is
-# recorded in the last line rather than implied away.
+# The exemptions are precision measures (provider ids, data-URI payloads,
+# payload-length base64 runs and hash-addressed artifact paths are structural,
+# not secrets), not a closed guarantee. An entry here marks an explicit skip; a
+# secret that fits one of the grammars is not redacted by high_entropy, and the
+# residual risk is recorded in the last line rather than implied away.
 #
 # One grammar per line. Blank lines and lines starting with '#' are comments.
 call_ + 16 or more of [A-Za-z0-9_-] (OpenAI tool-call id)
@@ -17,4 +17,7 @@ toolu_ + 16 or more of [A-Za-z0-9_-] (Anthropic tool-use id)
 chatcmpl- + 16 or more of [A-Za-z0-9] (OpenAI chat-completion id)
 msg_ + 16 or more of [A-Za-z0-9] (Anthropic message id)
 resp_ + 16 or more of [A-Za-z0-9] (OpenAI response id)
+data: + <mime>[;param];base64, + a run of 28 or more of [A-Za-z0-9+/=_-] immediately after the marker (data-URI payload: an image or attachment body, not a credential)
+a base64-alphabet run of 256 or more of [A-Za-z0-9+/=_-] (opaque payload; real credentials are short, while multimodal and attachment bodies are long)
+an absolute path starting with / and using path characters, containing a hex segment of 32 or more of [0-9a-fA-F] (hash-addressed artifact path)
 a secret that fits one of the grammars above is not redacted by high_entropy; a known secret inside such a run is still refused by the outbound re-check, an unknown one is the recorded residual risk

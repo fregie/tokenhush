@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"math"
 	"regexp"
+	"strconv"
 
 	"github.com/fregie/tokenhush/pkg/extension"
 )
@@ -40,6 +41,41 @@ var structuralIdentifierPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^(?:chatcmpl-|msg_|resp_)[A-Za-z0-9]{16,}$`),
 }
 
+// structuralPayloadMinRun is the base64-alphabet run length at or above which
+// a run is treated as an opaque payload rather than a credential. Real
+// credentials are short: even the longest common key forms are well under 256
+// bytes, while multimodal image/attachment bodies and file artifacts routinely
+// exceed it. Redacting a body the model must perceive directly (a vision
+// request, an inline attachment) is a capability loss, not a privacy win, so
+// the length itself is the discriminator. This is a frozen constant: changing
+// it changes the exemption surface and must be a deliberate, documented
+// decision, not silent drift.
+const structuralPayloadMinRun = 256
+
+// structuralPayloadMinHexRun is the hex-segment length at or above which a hex
+// run inside an absolute path marks the path as hash-addressed (a
+// content-addressed or hash-named artifact). It feeds the quantifier of
+// hashedArtifactPathPattern, so the constant and the grammar cannot diverge.
+const structuralPayloadMinHexRun = 32
+
+// dataURIMarker is the `;base64,` delimiter that closes a data-URI header
+// (`data:<mime>[;param];base64,`). A candidate run whose bytes immediately
+// follow this marker is a data-URI payload: it is the image/attachment body
+// itself, not a credential, so it is skipped whole.
+var dataURIMarker = []byte(";base64,")
+
+// hashedArtifactPathPattern recognises an absolute path carrying a long hex
+// segment (for example /tmp/build/<40hex>/out.bin or
+// /repo/.git/objects/ab/<38hex>): it starts with '/', uses only path
+// characters, and contains at least structuralPayloadMinHexRun consecutive hex
+// digits. Only the hash-bearing shape is exempt; an absolute path without such
+// a segment stays a normal candidate. The run comes from
+// entropyCandidatePattern, so its bytes are already limited to the
+// base64/url-safe alphabet, and requiring a 32-hex segment makes an accidental
+// match on random base64 astronomically unlikely (32 hex characters ≈ 2^-64).
+var hashedArtifactPathPattern = regexp.MustCompile(
+	`^/[A-Za-z0-9._/-]*[0-9a-fA-F]{` + strconv.Itoa(structuralPayloadMinHexRun) + `,}[A-Za-z0-9._/-]*$`)
+
 // isStructuralIdentifier reports whether candidate matches one of the
 // structural-identifier exemption grammars in full.
 func isStructuralIdentifier(candidate []byte) bool {
@@ -51,24 +87,71 @@ func isStructuralIdentifier(candidate []byte) bool {
 	return false
 }
 
+// isExemptRun reports whether the candidate run content[start:end] is skipped
+// as an enumerated high_entropy structural exemption. It is the single
+// predicate shared by the detector (findHighEntropy) and by the outbound
+// re-check's closure (StructuralIdentifierContains), so every class the
+// detector skips is also one the closure refuses to trust a known secret
+// inside — the two cannot drift apart.
+//
+// The classes, all enumerated in knownStructuralIdentifierExemptions:
+//
+//   - provider structural identifiers (isStructuralIdentifier);
+//   - a data-URI base64 payload: the run immediately after `;base64,`;
+//   - any base64-alphabet run at or above structuralPayloadMinRun, treated as
+//     an opaque payload because real credentials are short;
+//   - an absolute path carrying a hex segment of structuralPayloadMinHexRun or
+//     more (a hash-addressed artifact path).
+//
+// A run is exempt only when the WHOLE candidate run matches a class, never a
+// substring, so a secret that merely resembles one of these shapes is covered
+// by the same closure the structural-identifier class already relies on: a
+// known secret inside an exempted run is refused at egress.
+func isExemptRun(content []byte, start, end int) bool {
+	run := content[start:end]
+	if isStructuralIdentifier(run) {
+		return true
+	}
+	if isDataURIPayload(content, start) {
+		return true
+	}
+	if len(run) >= structuralPayloadMinRun {
+		return true
+	}
+	return hashedArtifactPathPattern.Match(run)
+}
+
+// isDataURIPayload reports whether the run starting at start immediately
+// follows the `;base64,` marker of a data URI. Only the delimiter is
+// inspected, so the predicate needs the surrounding content, not just the run.
+func isDataURIPayload(content []byte, start int) bool {
+	if start < len(dataURIMarker) {
+		return false
+	}
+	return bytes.Equal(content[start-len(dataURIMarker):start], dataURIMarker)
+}
+
 // StructuralIdentifierContains reports whether needle occurs inside a
-// structural-identifier exemption run of content — that is, inside a maximal
-// candidate run whose bytes match one of the exemption grammars in full.
+// high_entropy structural-exemption run of content — that is, inside a maximal
+// candidate run that isExemptRun skips. It covers every exemption class, not
+// just the provider-identifier grammar: data-URI payloads, payload-length
+// base64 runs and hash-addressed artifact paths are all blanket skips, so a
+// known secret inside any of them must not be trusted either.
 //
 // It exists so the outbound re-check can refuse a secret the engine knows when
-// the only reason it survived redaction is this exemption: the exemption is
+// the only reason it survived redaction is an exemption: the exemption is
 // "this run is not a secret", so a known secret inside such a run is not
 // trusted and must block at egress. The check is deliberately fail-closed and
 // narrower than findHighEntropy's other skip rules: it fires only for the
-// structural-identifier grammar, leaving the pre-existing pure-hex exclusion
-// (a recorded limitation) byte-for-byte unchanged.
+// enumerated exemption classes, leaving the pre-existing pure-hex exclusion (a
+// recorded limitation) byte-for-byte unchanged.
 func StructuralIdentifierContains(content, needle []byte) bool {
 	if len(needle) == 0 {
 		return false
 	}
 	for _, m := range entropyCandidatePattern.FindAllIndex(content, -1) {
 		run := content[m[0]:m[1]]
-		if isStructuralIdentifier(run) && bytes.Contains(run, needle) {
+		if isExemptRun(content, m[0], m[1]) && bytes.Contains(run, needle) {
 			return true
 		}
 	}
@@ -76,12 +159,13 @@ func StructuralIdentifierContains(content, needle []byte) bool {
 }
 
 // findHighEntropy returns candidate runs whose Shannon entropy is at least
-// highEntropyMinBitsPerChar. Three exclusion rules keep precision high:
+// highEntropyMinBitsPerChar. Four exclusion rules keep precision high:
 //
 //   - pure-hex runs (plus dashes) are skipped: git SHAs, UUIDs and digests are
 //     common in developer traffic and not credentials (frozen);
-//   - structural-identifier runs are skipped: provider tool-call, tool-use,
-//     completion, message and response ids are structural, not secrets;
+//   - isExemptRun's enumerated structural exemptions are skipped whole:
+//     provider ids, data-URI payloads, payload-length base64 runs and
+//     hash-addressed artifact paths;
 //   - a run must contain a digit or one of "+/_=", which removes ordinary long
 //     identifiers and natural-language words while keeping random tokens.
 func findHighEntropy(content []byte) []span {
@@ -92,7 +176,7 @@ func findHighEntropy(content []byte) []span {
 		if hexOnlyPattern.Match(candidate) {
 			continue
 		}
-		if isStructuralIdentifier(candidate) {
+		if isExemptRun(content, m[0], m[1]) {
 			continue
 		}
 		if !hasDigitOrEntropyPunctuation(candidate) {
