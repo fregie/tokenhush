@@ -74,6 +74,8 @@ Detection runs at two independent positions in a walked JSON document:
 - **String values** (the original scope). Every string leaf is inspected, and a finding is replaced with a placeholder.
 - **Object keys** (added later). A JSON object's member names are inspected as an **independent key-position mechanism**: `protocol.WalkKeys`, a separate API that returns key spans and JSON Pointer paths. At key positions the participating detector set is exactly **`prefix` (api_key), `high_entropy`, `jwt`, `private_key`**. `luhn` (credit_card) and `email` are deliberately excluded there, to avoid false positives on 16-digit numeric keys and email-shaped keys. A credential-shaped key **fails the request closed** (the request is blocked with zero upstream bytes), and keys are **never rewritten**; a detector that fails closed at a key position also blocks.
 
+Both domains share the detector rules, including `high_entropy`'s **structural-identifier exemption**: provider-assigned opaque ids (`call_…`, `toolu_…`, `chatcmpl-…`, `msg_…`, `resp_…`) are not treated as secrets. The exempted grammars are enumerated in `KnownStructuralIdentifierExemptions()` (mirrored in `pkg/redact/testdata/known_structural_exemptions.txt`); the residual risk is recorded under "Known limitations" below.
+
 Object keys are **not** `Leaf`s and never enter the document model defined by `pkg/extension`. The key scan is a separate, additive API (`protocol.WalkKeys`, added without changing `Walk` or `Leaf`), so the "leaf = value" contract documented in `architecture.md` is **unchanged**.
 
 **Decision record.** Adding a separate `WalkKeys` API, instead of extending `protocol.Walk`'s `Leaf` contract with key positions, is a deliberate decision (the O3 decision in the hardening plan). Extending `Leaf` was rejected because it would change `pkg/extension`'s V1-stable public surface and break the "leaf = value" contract (`architecture.md`). The key-position mechanism is pinned by `pkg/protocol` tests and by `pkg/proxy`'s key tests; the cross-repo assembly contract for the surrounding hardening work is frozen in the private Pro repository's ADR-0012 amendment A2.
@@ -85,12 +87,12 @@ The allowlist is the one runtime affordance that can stop a specific value from 
 **The change channel.** Three ways to change the allowlist, all of which the guard aims at:
 
 - the `tokenhush allowlist` CLI (`tokenhush allowlist list|add|remove`);
-- the loopback control plane (`GET`/`POST`/`DELETE /allowlist` on the control port);
+- the loopback control plane (`/allowlist` and `/status` on the control port);
 - a direct write to `<DataDir>/allowlist.json`.
 
-**What the guard does.** Mutation-channel detection runs on the response side, over model-originated tool-call arguments. The pattern set is explicit, enumerable and auditable (`MutationChannelPatternInventory()` in `pkg/proxy`).
+**What the guard does.** Mutation-channel detection runs on the response side, over model-originated tool-call arguments. The pattern set is explicit, enumerable and auditable (`MutationChannelPatternInventory()` in `pkg/proxy`). The control-port class requires evidence of the control channel, never the bare port: a loopback host with the bound control port **plus** a control endpoint path or a control request line. A data-plane path on the same port (for example `http://127.0.0.1:8787/v1/chat/completions`) is legitimate traffic and is not refused.
 
-- On the buffered path it inspects each tool call's `arguments` string, including its nested leaves, and on a match rewrites **only that tool call's** arguments to an explicit refusal notice. Other tool calls in the same response are untouched, and no response-wide `403` is returned.
+- On the buffered path it inspects each tool call's `arguments` string, including its nested leaves, and on a match rewrites **only that tool call's** whole arguments value to a structured JSON refusal (`{"error":"<notice>","refused":true,"channel":"<class>"}`), so a client that parses `arguments` as JSON succeeds and the model can adapt. Other tool calls in the same response are untouched, and no response-wide `403` is returned.
 - On the streaming (SSE) path it accumulates a tool call's streamed arguments **per path, bounded by `SSEGuardCap` (64 KiB)**, then applies the same per-tool-call refusal; fragments that arrive after a hit are dropped. The cap is deliberately smaller than the backfill holdback (`sseBackfillMaxHoldbackBytes`, 256 KiB) so the decision is reachable.
 - The guard is gated by `self_protection.enabled` and `self_protection.modes`; `enabled: false` is an explicit opt-out.
 
@@ -105,7 +107,7 @@ This narrow pair is the only exception to the general backfill behaviour; every 
 
 ### Known limits and uncovered classes (aggregate)
 
-This is the single aggregate list for the hardening work's known boundaries. None of it is closed; the register throughout is **high-confidence interception**. The machine-readable sources are `KnownUncoveredMutationChannels()` and `MutationChannelPatternInventory()` in `pkg/proxy` (mirrored in `pkg/proxy/testdata/known_uncovered_mutations.txt`), and `KnownUncoveredEncodings()` in `pkg/redact` (mirrored in `pkg/redact/testdata/known_uncovered_encodings.txt`). The detector-focused boundaries recorded under "Known limitations" below stay in force as well.
+This is the single aggregate list for the hardening work's known boundaries. None of it is closed; the register throughout is **high-confidence interception**. The machine-readable sources are `KnownUncoveredMutationChannels()` and `MutationChannelPatternInventory()` in `pkg/proxy` (mirrored in `pkg/proxy/testdata/known_uncovered_mutations.txt`), and `KnownUncoveredEncodings()` and `KnownStructuralIdentifierExemptions()` in `pkg/redact` (mirrored in `pkg/redact/testdata/known_uncovered_encodings.txt` and `pkg/redact/testdata/known_structural_exemptions.txt`). The detector-focused boundaries recorded under "Known limitations" below stay in force as well.
 
 **Mutation-channel self-protection**
 
@@ -133,11 +135,16 @@ This is the single aggregate list for the hardening work's known boundaries. Non
 13. **The response and SSE path is deliberately not fail-closed.** An unparseable response body is forwarded byte for byte and backfill still runs; the skip is counted (`Pipeline.ResponseWalkFailures()`) and reported as a metadata-only event, but it is not blocked.
 14. **An over-cap legal tool call is refused.** When a streamed tool call's arguments reach `SSEGuardCap` (64 KiB) without a decision, the tool call is refused fail-closed and counted (`stream_guard_fail_closed`). This is an accepted cost, never a pass.
 
+**Detector precision exemptions**
+
+15. **The `high_entropy` structural-identifier exemption is a skip, not a verdict.** A secret that fits one of the exempted grammars (`call_…`, `toolu_…`, `chatcmpl-…`, `msg_…`, `resp_…`) is not redacted. If the engine already knows the secret, the outbound re-check still refuses the request (403, zero upstream bytes; `StructuralIdentifierContains`); an **unknown** secret in that shape is the recorded residual risk. The grammars are enumerated in `KnownStructuralIdentifierExemptions()`. `high_entropy`'s pure-hex exclusion is unchanged (item 12).
+
 ## ⚠️ Known limitations
 
 Stated plainly, so nothing here reads as a closed guarantee. The honest register throughout is **high-confidence interception**.
 
 - **`high_entropy`'s pure-hex exclusion also applies in the key domain.** The detector already declines to flag a run made only of hex characters (to avoid false positives on hashes and IDs). The same exclusion applies at object-key positions, so a secret that is pure hex and placed in an object key is **not** blocked. This is the same exclusion as in the value domain, not a new gap; it is pinned by `TestPipelinePureHexKeysNotBlocked`.
+- **`high_entropy`'s structural-identifier exemption is a documented skip.** Well-formed provider ids (`call_…`, `toolu_…`, `chatcmpl-…`, `msg_…`, `resp_…`) are not treated as secrets at either position. A secret the engine already knows inside such a run is still refused by the outbound re-check (`StructuralIdentifierContains`, 403, zero upstream bytes, pinned by `TestHighEntropyStructuralExemptionEgressBypassBlocked`); a secret the engine does **not** already know in that shape is the recorded residual risk. The grammars are enumerated in `KnownStructuralIdentifierExemptions()` and mirrored in `pkg/redact/testdata/known_structural_exemptions.txt`. No coverage guarantee is claimed.
 - **Encoded-form coverage is a fixed decoder enumeration, not a closure.** Secrets transformed by an encoding (hex, base64, gzip, …) before they leave are a known area of residual risk. The forms that are covered, and the classes known **not** to be covered, are published as `KnownUncoveredEncodings()` in `pkg/redact` and mirrored in `pkg/redact/testdata/known_uncovered_encodings.txt`; the aggregate list under "Known limits and uncovered classes" above enumerates the classes. No coverage guarantee is claimed.
 - **Response/SSE observability is metadata-only.** The response-path walk-failure counter and its events carry metadata only (direction, phase, action; no body, keys or paths) by design, and an unparseable response body is deliberately not blocked (see "Failure policy, per path").
 
