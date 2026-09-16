@@ -132,6 +132,38 @@ func w63WantArgs(t *testing.T, got []byte, want ...string) {
 	}
 }
 
+// w63Refusal returns the exact structured refusal the guard delivers as a
+// refused tool call's arguments value for the given channel class. The notice
+// text is the `error` field value, verbatim.
+func w63Refusal(class string) string {
+	return string(mutationChannelRefusalArguments(class))
+}
+
+// w63AssertRefusal parses a delivered arguments value and pins the frozen JSON
+// envelope: the verbatim notice in `error`, refused == true, and the matched
+// channel class. Parsing here is the point of the envelope — a client that does
+// JSON.parse(arguments) must succeed.
+func w63AssertRefusal(t *testing.T, args, wantChannel string) {
+	t.Helper()
+	var got struct {
+		Error   string `json:"error"`
+		Refused bool   `json:"refused"`
+		Channel string `json:"channel"`
+	}
+	if err := json.Unmarshal([]byte(args), &got); err != nil {
+		t.Fatalf("refusal arguments are not valid JSON (%v): %q", err, args)
+	}
+	if got.Error != mutationChannelRefusalNotice {
+		t.Fatalf("error = %q, want the verbatim refusal notice", got.Error)
+	}
+	if !got.Refused {
+		t.Fatalf("refused = false, want true: %q", args)
+	}
+	if got.Channel != wantChannel {
+		t.Fatalf("channel = %q, want %q", got.Channel, wantChannel)
+	}
+}
+
 // TestToolCallGuardEncodedOrdinals pins the B1 defect: consumeEncoded must
 // advance encodedIdx by the Encoded leaves it swallows, exactly as
 // mutationChannelGuardTargets numbers them, or a later encoded arguments target
@@ -156,7 +188,7 @@ func TestToolCallGuardEncodedOrdinals(t *testing.T) {
 		if bytes.Contains(out, []byte("evil2")) {
 			t.Fatalf("the second (sibling) tool call leaked: %s", out)
 		}
-		w63WantArgs(t, out, mutationChannelRefusalNotice, mutationChannelRefusalNotice)
+		w63WantArgs(t, out, w63Refusal(MutationChannelCLI), w63Refusal(MutationChannelCLI))
 	})
 
 	t.Run("non_arguments_encoded_leaf_is_never_mis_rewritten", func(t *testing.T) {
@@ -181,7 +213,7 @@ func TestToolCallGuardEncodedOrdinals(t *testing.T) {
 		if bytes.Contains(out, []byte("evil1")) || bytes.Contains(out, []byte("evil2")) {
 			t.Fatalf("an offending arguments call leaked: %s", out)
 		}
-		w63WantArgs(t, out, mutationChannelRefusalNotice, mutationChannelRefusalNotice)
+		w63WantArgs(t, out, w63Refusal(MutationChannelCLI), w63Refusal(MutationChannelCLI))
 	})
 }
 
@@ -202,7 +234,9 @@ func TestToolCallBlockedWithNotice(t *testing.T) {
 		if bytes.Contains(out, []byte("tokenhush allowlist add evil.example")) {
 			t.Fatalf("the offending command survived: %s", out)
 		}
-		w63WantArgs(t, out, mutationChannelRefusalNotice)
+		args := w63Arguments(t, out)
+		w63AssertRefusal(t, args[0], MutationChannelCLI)
+		w63WantArgs(t, out, w63Refusal(MutationChannelCLI))
 	})
 
 	t.Run("non_json_arguments_terminal_leaf_replaced", func(t *testing.T) {
@@ -217,7 +251,7 @@ func TestToolCallBlockedWithNotice(t *testing.T) {
 		if bytes.Contains(out, []byte(arguments)) {
 			t.Fatalf("the non-JSON command survived: %s", out)
 		}
-		w63WantArgs(t, out, mutationChannelRefusalNotice)
+		w63WantArgs(t, out, w63Refusal(MutationChannelCLI))
 	})
 
 	t.Run("multi_tool_call_only_the_offending_item_changes", func(t *testing.T) {
@@ -234,7 +268,7 @@ func TestToolCallBlockedWithNotice(t *testing.T) {
 		t.Logf("W63_ORIGINAL=%s", body)
 		t.Logf("W63_GUARDED=%s", out)
 		// Per-item golden: only item 0 changed; items 1 and 2 are unchanged.
-		w63WantArgs(t, out, mutationChannelRefusalNotice, safeList, safeRead)
+		w63WantArgs(t, out, w63Refusal(MutationChannelCLI), safeList, safeRead)
 		for _, safe := range []string{safeList, safeRead} {
 			quoted, qerr := json.Marshal(safe)
 			if qerr != nil {
@@ -269,8 +303,8 @@ func TestToolCallBlockedWithNotice(t *testing.T) {
 			t.Fatalf("guarded body is not valid JSON: %v (%s)", err, out)
 		}
 		got := w63Arguments(t, out)
-		if len(got) != 1 || got[0] != mutationChannelRefusalNotice {
-			t.Fatalf("arguments = %q, want the notice", got)
+		if len(got) != 1 || got[0] != w63Refusal(MutationChannelCLI) {
+			t.Fatalf("arguments = %q, want the structured refusal", got)
 		}
 	})
 
@@ -290,7 +324,7 @@ func TestToolCallBlockedWithNotice(t *testing.T) {
 		}
 		t.Logf("W63_SPLIT_ORIGINAL=%s", body)
 		t.Logf("W63_SPLIT_GUARDED=%s", out)
-		w63WantArgs(t, out, mutationChannelRefusalNotice, mutationChannelRefusalNotice)
+		w63WantArgs(t, out, w63Refusal(MutationChannelCLI), w63Refusal(MutationChannelCLI))
 		if bytes.Contains(out, []byte("evil.example")) {
 			t.Fatalf("a fragment of the split command survived: %s", out)
 		}
@@ -386,7 +420,7 @@ func TestToolCallBlockedWithNotice(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want 200 (the response must not be blocked as a whole): %s", resp.StatusCode, clientBody)
 		}
-		w63WantArgs(t, clientBody, mutationChannelRefusalNotice, `{"cmd":"ls"}`)
+		w63WantArgs(t, clientBody, w63Refusal(MutationChannelCLI), `{"cmd":"ls"}`)
 	})
 
 	t.Run("reporter_hook_emits_one_metadata_only_event", func(t *testing.T) {

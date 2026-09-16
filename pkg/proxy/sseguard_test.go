@@ -51,7 +51,10 @@ func w64ArgumentsStream(t *testing.T, fragments []string) []byte {
 
 // w64Arguments replays a client's SSE decoding over out and concatenates every
 // `arguments` delta — exactly what an OpenAI client does to assemble the tool
-// call — and reports how many events carried an arguments leaf.
+// call — and reports how many events carried an arguments field. It reads the
+// decoded field whatever its leaf shape: a streamed terminal fragment, or a
+// whole valid-JSON value (the structured refusal envelope is valid JSON, so its
+// leaf is Encoded and a leaf-walk helper would skip it).
 func w64Arguments(t *testing.T, out []byte) (string, int) {
 	t.Helper()
 	dec := protocol.NewSSEDecoder()
@@ -63,16 +66,28 @@ func w64Arguments(t *testing.T, out []byte) (string, int) {
 			continue
 		}
 		payload := ev.Raw[ev.DataOffset : ev.DataOffset+ev.DataLen]
-		leaves, err := protocol.Walk(payload)
-		if err != nil {
+		var doc struct {
+			Choices []struct {
+				Delta struct {
+					ToolCalls []struct {
+						Function struct {
+							Arguments *string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(payload, &doc); err != nil {
 			continue
 		}
-		for _, leaf := range leaves {
-			if leaf.Encoded || !isMutationChannelArgumentsPath(leaf.Path) {
-				continue
+		for _, ch := range doc.Choices {
+			for _, tc := range ch.Delta.ToolCalls {
+				if tc.Function.Arguments == nil {
+					continue
+				}
+				args.WriteString(*tc.Function.Arguments)
+				count++
 			}
-			args.WriteString(leaf.Content)
-			count++
 		}
 	}
 	return args.String(), count
@@ -122,7 +137,7 @@ func w64BigLegalArguments() []string {
 
 // TestSSEToolCallGuard is the W6.4 acceptance test.
 func TestSSEToolCallGuard(t *testing.T) {
-	notice := mutationChannelRefusalNotice
+	notice := w63Refusal(MutationChannelCLI)
 
 	t.Run("cap_is_frozen_at_or_below_the_holdback", func(t *testing.T) {
 		// The cap must be explicitly defined, positive, and never above the
@@ -252,7 +267,7 @@ func TestSSEToolCallGuard(t *testing.T) {
 		if args != notice || n != len(fragments) {
 			t.Fatalf("assembled arguments = %q (%d events), want the notice (%d events)", args, n, len(fragments))
 		}
-		if got := strings.Count(string(out), notice); got != 1 {
+		if got := strings.Count(string(out), mutationChannelRefusalNotice); got != 1 {
 			t.Fatalf("refusal notice appears %d times, want exactly 1", got)
 		}
 		if got := pipe.StreamGuardRefusals(); got != 1 {
@@ -287,8 +302,8 @@ func TestSSEToolCallGuard(t *testing.T) {
 			}
 		}
 		args, _ := w64Arguments(t, out)
-		if args != mutationChannelRefusalNotice {
-			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		if args != w63Refusal(MutationChannelCLI) {
+			t.Fatalf("assembled arguments = %q, want the structured refusal", args)
 		}
 		if len(*refusals) == 0 {
 			t.Fatalf("no refusal was recorded for the split command")
@@ -323,8 +338,8 @@ func TestSSEToolCallGuard(t *testing.T) {
 			t.Fatalf("the over-cap legal call was streamed as-is instead of refused: %q", out)
 		}
 		args, _ := w64Arguments(t, out)
-		if args != notice {
-			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		if args != w63Refusal("") {
+			t.Fatalf("assembled arguments = %q, want the fail-closed refusal envelope", args)
 		}
 		if got := pipe.StreamGuardRefusals(); got != 1 {
 			t.Fatalf("StreamGuardRefusals = %d, want 1", got)
@@ -356,8 +371,8 @@ func TestSSEToolCallGuard(t *testing.T) {
 			t.Fatalf("refusal = %+v, want reason %q with no matched class", got, sseGuardReasonCap)
 		}
 		args, _ := w64Arguments(t, dst.Bytes())
-		if args != mutationChannelRefusalNotice {
-			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		if args != w63Refusal("") {
+			t.Fatalf("assembled arguments = %q, want the fail-closed refusal envelope", args)
 		}
 		if bytes.Contains(dst.Bytes(), []byte("LEGAL-PARAM-PAYLOAD")) {
 			t.Fatalf("the over-cap legal payload survived: %q", dst.Bytes())
@@ -415,8 +430,8 @@ func TestSSEToolCallGuard(t *testing.T) {
 			t.Fatalf("refusal = %+v, want reason %q", got, sseGuardReasonUndecided)
 		}
 		args, _ := w64Arguments(t, dst.Bytes())
-		if args != mutationChannelRefusalNotice {
-			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		if args != w63Refusal("") {
+			t.Fatalf("assembled arguments = %q, want the fail-closed refusal envelope", args)
 		}
 	})
 
@@ -462,47 +477,10 @@ func TestSSEToolCallGuard(t *testing.T) {
 			t.Fatalf("refusal = %+v, want reason %q", got, sseGuardReasonUndecided)
 		}
 		args, _ := w64Arguments(t, dst.Bytes())
-		if args != mutationChannelRefusalNotice {
-			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		if args != w63Refusal("") {
+			t.Fatalf("assembled arguments = %q, want the fail-closed refusal envelope", args)
 		}
 	})
-}
-
-// w64FirstArguments assembles the `arguments` deltas of out the way a client
-// does, reading the decoded value of the arguments field whatever its leaf shape
-// (Encoded parent or terminal fragment). w64Arguments cannot serve the Encoded
-// shape: the parent's nested leaves are not arguments paths, so they are skipped.
-func w64FirstArguments(t *testing.T, out []byte) string {
-	t.Helper()
-	dec := protocol.NewSSEDecoder()
-	events := append(dec.Feed(out), dec.Close()...)
-	var args strings.Builder
-	for _, ev := range events {
-		if !ev.DataSingle {
-			continue
-		}
-		payload := ev.Raw[ev.DataOffset : ev.DataOffset+ev.DataLen]
-		var doc struct {
-			Choices []struct {
-				Delta struct {
-					ToolCalls []struct {
-						Function struct {
-							Arguments string `json:"arguments"`
-						} `json:"function"`
-					} `json:"tool_calls"`
-				} `json:"delta"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(payload, &doc); err != nil {
-			continue
-		}
-		for _, ch := range doc.Choices {
-			for _, tc := range ch.Delta.ToolCalls {
-				args.WriteString(tc.Function.Arguments)
-			}
-		}
-	}
-	return args.String()
 }
 
 // TestSSEToolCallGuardEncodedArguments is the M1 acceptance test: the mainstream
@@ -512,7 +490,7 @@ func w64FirstArguments(t *testing.T, out []byte) string {
 // with the buffered concatenation logic, and its whole value replaced, while a
 // legal valid-JSON arguments call still streams byte-identically.
 func TestSSEToolCallGuardEncodedArguments(t *testing.T) {
-	notice := mutationChannelRefusalNotice
+	notice := w63Refusal(MutationChannelCLI)
 
 	t.Run("whole_valid_json_arguments_in_one_event_is_refused", func(t *testing.T) {
 		pipe := w63Pipeline(t)
@@ -535,7 +513,7 @@ func TestSSEToolCallGuardEncodedArguments(t *testing.T) {
 		if bytes.Contains(out, []byte("evil.example")) {
 			t.Fatalf("the valid-JSON command leaked verbatim: %q", out)
 		}
-		if got := w64FirstArguments(t, out); got != notice {
+		if got, _ := w64Arguments(t, out); got != notice {
 			t.Fatalf("client-visible arguments = %q, want the refusal notice", got)
 		}
 		if got := pipe.StreamGuardRefusals(); got != 1 {
@@ -569,7 +547,7 @@ func TestSSEToolCallGuardEncodedArguments(t *testing.T) {
 		if bytes.Contains(out, []byte("evil.example")) {
 			t.Fatalf("the split valid-JSON command leaked: %q", out)
 		}
-		if got := w64FirstArguments(t, out); got != notice {
+		if got, _ := w64Arguments(t, out); got != notice {
 			t.Fatalf("client-visible arguments = %q, want the refusal notice", got)
 		}
 		if got := pipe.StreamGuardRefusals(); got != 1 {

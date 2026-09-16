@@ -1,22 +1,49 @@
 package proxy
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
 	"github.com/fregie/tokenhush/pkg/protocol"
 )
 
-// mutationChannelRefusalNotice is the fixed, model-visible replacement for a
-// tool call whose arguments reach the mutation channel. It is deliberately
-// plain prose: the model must be able to read that the call was refused and
-// why, and the client can show it to the user. It carries no secret, no
-// internal path and no data-directory detail beyond the channel names that are
+// mutationChannelRefusalNotice is the fixed, model-visible refusal text. It is
+// deliberately plain prose: the model must be able to read that the call was
+// refused and why, and the client can show it to the user. It carries no secret,
+// no internal path and no data-directory detail beyond the channel names that are
 // already public.
 //
 // W6.4 (the SSE path) reuses this exact string, so a refusal looks the same
 // whether the tool call arrived buffered or streamed.
+//
+// The notice is no longer delivered as the raw arguments value: clients parse
+// `arguments` as JSON and hard-fail on bare prose, which loses the tool call.
+// It is delivered verbatim as the `error` field of mutationChannelRefusalArguments
+// (see that function), so JSON.parse succeeds and the model sees a structured
+// refusal it can adapt to. The text below is byte-frozen as the field value.
 const mutationChannelRefusalNotice = "tokenhush refused this tool call: its arguments matched the self-protection guard for the allowlist change channel (the tokenhush allowlist CLI, the loopback control port, or the allowlist file). The allowlist can only be changed by the human operator through the authenticated control plane, so this call was not executed."
+
+// mutationChannelRefusalArguments builds the JSON object literal the guard
+// delivers in place of a refused tool call's whole arguments value:
+//
+//	{"error":"<verbatim notice>","refused":true,"channel":"<class>"}
+//
+// The shape is a deliberate, user-authorized change to the frozen refusal
+// delivery: the notice text itself stays byte-identical, but it now travels as a
+// valid JSON object string so a client that does `JSON.parse(arguments)` — as
+// OpenAI-shaped clients do — succeeds and can present the refusal instead of
+// losing the tool call to a parse error. class is the matched channel class (the
+// empty string for the two fail-closed paths, which match no pattern).
+func mutationChannelRefusalArguments(class string) []byte {
+	var buf bytes.Buffer
+	buf.WriteString(`{"error":`)
+	buf.Write(jsonQuote(mutationChannelRefusalNotice))
+	buf.WriteString(`,"refused":true,"channel":`)
+	buf.Write(jsonQuote(class))
+	buf.WriteByte('}')
+	return buf.Bytes()
+}
 
 // mutationChannelArgumentsField is the JSON object member whose string value
 // carries a tool call's arguments (OpenAI: .../tool_calls/N/function/arguments).
@@ -158,7 +185,7 @@ func (p *Pipeline) guardResponseToolCalls(body []byte, walked []protocol.Leaf) (
 				return content, false
 			}
 			p.noteBufferedGuardRefusal(class)
-			return []byte(mutationChannelRefusalNotice), true
+			return mutationChannelRefusalArguments(class), true
 		},
 		parentEdit: func(encodedIdx int, _ string, content []byte) ([]byte, bool) {
 			if _, ok := encodedTargets[encodedIdx]; !ok {
@@ -169,7 +196,7 @@ func (p *Pipeline) guardResponseToolCalls(body []byte, walked []protocol.Leaf) (
 				return nil, false
 			}
 			p.noteBufferedGuardRefusal(class)
-			return []byte(mutationChannelRefusalNotice), true
+			return mutationChannelRefusalArguments(class), true
 		},
 	}
 	out, changed, err := rewriter.rewrite(body, "")

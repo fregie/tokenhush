@@ -47,6 +47,10 @@ type pathState struct {
 	guardDecided bool
 	guardHit     bool
 	guardAccum   []byte
+	// guardClass is the channel class a match decided ("" when the refusal came
+	// from a fail-closed path), so releasePath can build the same structured
+	// refusal envelope the buffered path delivers.
+	guardClass string
 }
 
 // Write makes pathState the BackfillWriter destination; it never fails.
@@ -299,6 +303,7 @@ func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) er
 	p.guardAccum = append(p.guardAccum[:0], content[:n]...)
 	if class, matched := b.guardDetectEncoded(content); matched {
 		p.guardDecided, p.guardHit = true, true
+		p.guardClass = class
 		b.noteGuardRefusal(class, sseGuardReasonMatch)
 		return nil
 	}
@@ -367,7 +372,7 @@ func (b *sseBackfiller) releasePath(p *pathState) {
 		}
 		p.changed = true
 		p.merged.Reset()
-		p.merged.WriteString(mutationChannelRefusalNotice)
+		p.merged.Write(mutationChannelRefusalArguments(p.guardClass))
 	}
 	if p.changed {
 		last := p.run[len(p.run)-1]

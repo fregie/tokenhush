@@ -102,6 +102,7 @@ func (b *sseBackfiller) guardReset(p *pathState) {
 	p.guardAccum = p.guardAccum[:0]
 	p.guardDecided = false
 	p.guardHit = false
+	p.guardClass = ""
 }
 
 // guardConsume appends chunk to a guarded path's bounded accumulation and
@@ -129,6 +130,7 @@ func (b *sseBackfiller) guardConsume(p *pathState, chunk []byte) bool {
 	}
 	if class, matched := b.guardDetect(string(p.guardAccum)); matched {
 		p.guardDecided, p.guardHit = true, true
+		p.guardClass = class
 		b.noteGuardRefusal(class, sseGuardReasonMatch)
 		return true
 	}

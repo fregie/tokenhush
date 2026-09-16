@@ -111,7 +111,7 @@ func TestMutationChannelGuardAudit(t *testing.T) {
 		if err != nil {
 			t.Fatalf("transformResponse = %v, want nil", err)
 		}
-		w63WantArgs(t, out, mutationChannelRefusalNotice)
+		w63WantArgs(t, out, w63Refusal(MutationChannelCLI))
 
 		if got := pipe.SelfProtectionInterceptions(); got != 1 {
 			t.Fatalf("SelfProtectionInterceptions = %d, want 1", got)
@@ -175,8 +175,8 @@ func TestMutationChannelGuardAudit(t *testing.T) {
 			t.Fatalf("the over-cap legal call was streamed as-is: %q", rec.Body.Bytes())
 		}
 		args, _ := w64Arguments(t, rec.Body.Bytes())
-		if args != mutationChannelRefusalNotice {
-			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		if args != w63Refusal("") {
+			t.Fatalf("assembled arguments = %q, want the fail-closed refusal envelope", args)
 		}
 
 		if got := pipe.StreamGuardRefusals(); got != 1 {
