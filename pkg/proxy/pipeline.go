@@ -212,7 +212,7 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 	// empty is a complete no-op, preserving the pre-seam behaviour byte for
 	// byte.
 	if pipeline.selfProtectionEnabled {
-		pipeline.SetSelfProtectionExclusions(exclusionValues(cfg.Exclusions, cfg.ControlToken))
+		pipeline.SetSelfProtectionExclusions(exclusionValues(pipeline.exclusions, pipeline.controlToken))
 	}
 	return pipeline, nil
 }
