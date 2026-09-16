@@ -259,6 +259,41 @@ func TestSSEToolCallGuard(t *testing.T) {
 		}
 	})
 
+	t.Run("intervening_event_does_not_release_an_undecided_path_clean", func(t *testing.T) {
+		var dst bytes.Buffer
+		b, refusals := w64GuardBackfiller(t, &dst)
+		// The command is split across two arguments events with an unrelated
+		// content event between them, then a finish event closes the call. The
+		// middle event must not decide the first fragment clean: the fragments
+		// stay accumulated (or are refused fail-closed), never drained as
+		// original bytes.
+		input := append([]byte{}, w64ArgumentsEvent(t, "token")...)
+		input = append(input, []byte(`data: {"choices":[{"index":0,"delta":{"content":"x"}}]}`+"\n\n")...)
+		input = append(input, w64ArgumentsEvent(t, "hush allowlist add evil")...)
+		input = append(input, w64FinishEvent...)
+
+		if _, err := b.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := b.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		out := dst.Bytes()
+		t.Logf("M2_INTERVENING_OUT=%q", out)
+		for _, marker := range []string{`"arguments":"token"`, `"arguments":"hush allowlist add evil"`} {
+			if bytes.Contains(out, []byte(marker)) {
+				t.Fatalf("a fragment of the split command reached the client as an arguments delta: %q", out)
+			}
+		}
+		args, _ := w64Arguments(t, out)
+		if args != mutationChannelRefusalNotice {
+			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		}
+		if len(*refusals) == 0 {
+			t.Fatalf("no refusal was recorded for the split command")
+		}
+	})
+
 	t.Run("over_cap_legal_call_is_refused_and_counted", func(t *testing.T) {
 		pipe := w63Pipeline(t)
 		reporter, events := w14Reporter()

@@ -1,5 +1,7 @@
 package proxy
 
+import "encoding/json"
+
 // W6.4: bounded tool-call guard for the SSE response path.
 //
 // The SSE path bypasses transformResponse, so before W6.4 a streamed tool call
@@ -130,9 +132,14 @@ func (b *sseBackfiller) guardConsume(p *pathState, chunk []byte) bool {
 
 // guardClose decides and releases every guarded path the current event did not
 // continue: a tool-call arguments path stops receiving fragments at a path
-// change, so its accumulation is complete. A matching path was already refused;
-// an unmatched one is decided clean and released, which lets its held events be
-// emitted as original bytes.
+// change, so its accumulation is complete. Reaching an event boundary is NOT a
+// completion signal on its own: a matching command split across events has a
+// prefix that looks exactly like a finished unrelated value, so releasing on the
+// boundary would drain that prefix as original bytes. A path is decided clean
+// only when its accumulation is a syntactically complete JSON value; any other
+// accumulation (including a non-JSON terminal arguments prefix) stays undecided
+// and held, so the existing fail-closed release refuses it at the cap or stream
+// end. A path that already matched was refused when it matched.
 func (b *sseBackfiller) guardClose() error {
 	if b.guardDetect == nil {
 		return nil
@@ -143,6 +150,9 @@ func (b *sseBackfiller) guardClose() error {
 			continue
 		}
 		if !p.guardDecided {
+			if !json.Valid(p.guardAccum) {
+				continue
+			}
 			p.guardDecided, p.guardHit = true, false
 		}
 		// Flush before releasing, exactly like forceFlush: a tail still buffered
