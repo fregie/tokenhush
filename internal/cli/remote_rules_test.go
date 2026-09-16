@@ -17,9 +17,13 @@ package cli
 //     attribution "custom:zz-remote-only" unambiguous (no merged-span
 //     tie-break can produce it).
 //   - "cfat-vendor-token" matches the real vendor shape cfat_[A-Za-z0-9]{40}.
-//     It is only the "a redaction did happen" witness: its replacement is not
-//     attributed to the pack, because built-in detectors are expected to match
-//     the same span.
+//     The built-in high_entropy detector matches it too (45 bytes, and "_"
+//     satisfies its punctuation gate), and the merged-span tie-break in
+//     pkg/redact picks the type that sorts first ascending, so
+//     "custom:cfat-vendor-token" WINS over "high_entropy" and the pack IS
+//     attributed. That is exactly why this token is NOT a discriminator: the
+//     pure-letter keyword token is the attribution vehicle, precisely because
+//     no built-in detector can match it.
 //
 // The redaction log is the CLI layer's only string channel and run.go installs
 // it only when RunDeps.Stderr is non-nil and DisableRedactionLog is false, so

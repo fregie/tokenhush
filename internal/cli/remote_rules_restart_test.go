@@ -86,7 +86,7 @@ func TestRemoteRulesApplyOnceRestartRequired(t *testing.T) {
 
 	var stderrB bytes.Buffer
 	upstreamB, baseB, stopB := startRulesDaemon(t, &stderrB)
-	defer func() { _ = stopB }()
+	defer func() { _ = stopB() }()
 
 	restarted := postKeywordToken(t, upstreamB, baseB)
 	if err := stopB(); err != nil {

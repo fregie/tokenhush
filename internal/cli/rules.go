@@ -75,12 +75,19 @@ func ruleWarn(w io.Writer) func(string) {
 }
 
 // activeRulesConfig reads the rule pack selected by `tokenhush rules sync` from
-// the local cache and returns it for the build pipeline. It performs no network
-// I/O; a missing or unusable cache falls back to the built-in defaults with a
-// warning on stderr. A nil Config means the built-in defaults.
+// the local cache and returns it for the build pipeline. The read is local-only:
+// startup performs no network I/O.
+//
+// No active pack is silent: a fresh install has no selected serial, so Active()
+// reports no remote rules and the built-in defaults apply without a warning —
+// startup must not nag on every launch. A pack that is present but unusable
+// (damaged bytes, bad signature, revoked serial, unsupported schema, …) falls
+// back to the built-in defaults with a warning on the diagnostics stream. A nil
+// *rules.Config means the built-in detectors only.
 func activeRulesConfig(stderr io.Writer) *rules.Config {
 	warn := ruleWarn(stderr)
-	client, err := newRulesClient(warn)
+	var emitted []string
+	client, err := newRulesClient(func(msg string) { emitted = append(emitted, msg) })
 	if err != nil {
 		warn(fmt.Sprintf("tokenhush: rules: %v; using built-in defaults", err))
 		return nil
@@ -90,10 +97,42 @@ func activeRulesConfig(stderr io.Writer) *rules.Config {
 		warn(fmt.Sprintf("tokenhush: rules: %v; using built-in defaults", err))
 		return nil
 	}
-	for _, w := range active.Warnings {
-		warn(w)
+	for _, line := range ruleWarningLines(emitted, active.Warnings) {
+		warn(line)
 	}
 	return active.Config
+}
+
+// ruleWarningLines merges the fallback messages a rules client emitted through
+// its Warn callback with the ones Active() returned, keeps first-seen order and
+// drops duplicates: pkg/rules reports a bad-pack fallback through both
+// channels, and the production newRulesClient wires the callback to the same
+// sink, so printing the raw union would print one line twice. Nothing is lost —
+// every message either channel reports still reaches the writer.
+func ruleWarningLines(emitted, fromActive []string) []string {
+	lines := make([]string, 0, len(emitted)+len(fromActive))
+	seen := make(map[string]struct{}, len(emitted)+len(fromActive))
+	for _, group := range [][]string{emitted, fromActive} {
+		for _, msg := range group {
+			line := ruleWarningLine(msg)
+			if _, dup := seen[line]; dup {
+				continue
+			}
+			seen[line] = struct{}{}
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// ruleWarningLine gives a fallback warning exactly one standard `tokenhush: `
+// diagnostic prefix. A message that already carries it is returned unchanged,
+// so no line is double-prefixed.
+func ruleWarningLine(msg string) string {
+	if strings.HasPrefix(msg, "tokenhush: ") {
+		return msg
+	}
+	return "tokenhush: " + msg
 }
 
 // rulesErrorSentinels enumerates the typed errors pkg/rules exports. A rule
