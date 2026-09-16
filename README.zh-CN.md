@@ -35,6 +35,8 @@ Tokenhush 在这些工具前面加一道检查点：每条请求进来，把像�
 ## ✨ 功能特性
 
 - **每个字段都扫，不只扫表层。** Tokenhush 会把整个请求体逐层走一遍，嵌套 JSON 也不放过；流式响应边到边处理。它能认出常见密钥前缀（`sk-`、`AKIA`、`ghp_` 等）、看起来随机的高熵字符串、JWT、PEM 私钥、卡号、邮箱。
+- **六个内置检测器，每个都能单独开关。** 六个默认全开，任何一个都能在 `detectors:` 里关掉：`prefixes`（常见厂商密钥形态，如 `sk-`、`AKIA`、`ghp_`、`glpat-`、`xox*`、`AIza`、`npm_`）、`high_entropy`（看起来随机的字符串）、`jwt`（JSON Web Token）、`private_keys`（PEM 私钥头）、`luhn`（卡号，过 Luhn 校验）、`email`（邮箱地址）。
+- **更多规则集，签名并验签。** `tokenhush rules sync` 可以从托管的规则服务拉取一份额外的规则包，而且它在设计上就是安全的：规则包用 Ed25519 签名，客户端在使用前会校验签名、时效、序列号（拒绝回滚）和签名撤销列表。一道“不削弱”底线会拒绝任何试图关闭内置检测器、删除必需类别或自动放行命中项的规则包：规则包永远无法削弱内置检测器。规则签名密钥仍是"规则包新增了什么"的信任根——边界见 [docs/plugins.md](docs/plugins.md)。它们在下次启动时生效（不做热加载），一旦有问题就带着告警退回内置默认规则。规则同步是 `tokenhush privacy` 列出的两个请求之一，只有你主动调用时才运行，`TOKENHUSH_NO_RULE_SYNC=1` 可以把它关掉。
 - **同一个密钥，永远是同一个占位符。** 密钥会变成 `__PII_email_9f2c8a4b6d1e__` 这样的令牌。映射只存在内存里，仅在本次会话有效；重启就没了。所以偶尔在输出里看到占位符是正常现象，也是安全降级，不是泄露。
 - **只在本机。** 网关仅监听环回：始终绑 `127.0.0.1`，主机有 IPv6 环回时同时绑 `[::1]`。它校验 Host，浏览器类请求还查 Origin；控制 API 用每次 `run` 随机生成的令牌保护，令牌以 `0600` 权限落盘。一旦出错，它选择停下，而不是继续转发。
 - **自带配置助手。** `tokenhush env <工具>` 会为 14 个工具打印可直接粘贴的片段。`tokenhush doctor` 做体检，退出码一看就懂：`0` 全通过，`1` 有检查失败，`2` 用法错误。
@@ -188,7 +190,7 @@ Tokenhush 每拦截一处，就会往 stderr 打印一行**打码**记录。所�
 | `tokenhush status` | 显示网关是否在运行。 | `--json` |
 | `tokenhush env <tool>` | 打印配置片段。工具：`claude`、`codex`、`aider`、`cline`、`roo`、`opencode`、`qwen`、`crush`、`zed`、`continue`、`openwebui`、`goose`、`openhands`、`kilo`。 | `--config PATH`、`--port N` |
 | `tokenhush doctor` | 诊断常见配置问题。全部通过退出 `0`，任一失败退出 `1`，用法错误退出 `2`。 | `--config PATH`、`--port N`、`--json` |
-| `tokenhush privacy` | 列出 Tokenhush 可能发往厂商的每类请求、服务端能看到什么、以及怎么逐项关闭。 | `--json` |
+| `tokenhush privacy` | 列出 Tokenhush 自身可能发往互联网的每类请求、服务端能看到什么、以及怎么逐项关闭。除此之外没有任何除业务流量外的上行流量。 | `--json` |
 | `tokenhush update` | 升级 Tokenhush。Homebrew 和 Scoop 安装交给各自的包管理器；自管安装会校验已签名版本并自更新。 | `--check` |
 | `tokenhush rules <sync\|rollback>` | 同步已签名的检测规则，或回滚到上一个已验签的规则包（没有就退回内置默认）。 | `sync --check` |
 | `tokenhush version` | 打印版本与构建信息。 | 无 |
