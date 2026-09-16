@@ -89,8 +89,10 @@ const MachineBoundWarningMarker = "tokenhush: WARNING: secret store uses a machi
 // implemented by the graded fallback chain (native keyring -> systemd-creds ->
 // encrypted file -> plaintext file) selected at OpenSecretStore time.
 //
-// The audit subsystem uses the namespace service "tokenhush/audit" with key
-// "hmac-key" (docs/security.md); V1 stores no provider keys.
+// The audit subsystem stores its keys under the namespace service
+// "tokenhush-pro/audit" with key "hmac-key" (docs/security.md); the legacy
+// "tokenhush/audit" coordinate is migrated forward at startup, so it is never
+// written to. V1 stores no provider keys.
 type SecretStore interface {
 	// Get returns the stored secret. A missing entry yields an error matching
 	// ErrNotFound.
