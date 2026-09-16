@@ -36,6 +36,17 @@ type pathState struct {
 	changed bool
 	active  bool
 	lastSeq int
+
+	// W6.4 tool-call guard state. It lives on the path — never in a side map —
+	// so forceFlush and Flush, which only walk b.paths, see it: an undecided
+	// guard path must never be released as original bytes. guardArmed marks a
+	// path whose final reference token is `arguments`; guardAccum is the
+	// bounded (SSEGuardCap) accumulation the match decision uses; guardDecided
+	// and guardHit record that decision. See sseguard.go.
+	guardArmed   bool
+	guardDecided bool
+	guardHit     bool
+	guardAccum   []byte
 }
 
 // Write makes pathState the BackfillWriter destination; it never fails.
@@ -83,6 +94,12 @@ type sseBackfiller struct {
 	// payload bytes, and the fallback — write the original event verbatim — is
 	// unchanged. Nil is a no-op; see setWalkFailureObserver.
 	onWalkFailure func(error)
+	// guardDetect and onGuardRefusal are the W6.4 tool-call guard: when
+	// guardDetect is set, every tool-call arguments path accumulates its
+	// fragments under SSEGuardCap and a refusal is reported through
+	// onGuardRefusal. Nil is a complete no-op; see setToolCallGuard.
+	guardDetect    func(text string) (class string, matched bool)
+	onGuardRefusal func(class, reason string)
 }
 
 // newSSEBackfiller returns a backfiller writing rewritten SSE bytes to dst.
@@ -216,12 +233,19 @@ func (b *sseBackfiller) feed(key string, kind pathKind, chunk []byte, seq int) e
 		p.run = p.run[:0]
 		p.merged.Reset()
 		p.changed = false
+		b.guardReset(p)
 	}
 	if p.lastSeq != seq {
 		p.lastSeq = seq
 		p.run = append(p.run, seq)
 		b.held[seq].openRefs++
 		b.touched = append(b.touched, p)
+	}
+	if b.guardConsume(p, chunk) {
+		// A refused tool call: this chunk still counts as a contributor (so the
+		// notice can replace the whole run and the events stay held) but none of
+		// its bytes may reach the output.
+		return nil
 	}
 	_, err := p.w.Write(chunk)
 	return err
@@ -231,7 +255,7 @@ func (b *sseBackfiller) feed(key string, kind pathKind, chunk []byte, seq int) e
 // the single point where the changed flag is decided: out != token, never
 // "replace was called".
 func (b *sseBackfiller) newPathState(key string, kind pathKind) *pathState {
-	p := &pathState{key: key, kind: kind, lastSeq: -1}
+	p := &pathState{key: key, kind: kind, lastSeq: -1, guardArmed: b.guardArms(kind, key)}
 	p.w = protocol.NewBackfillWriter(p, b.maxLen, func(tok string) string {
 		out := b.replace(tok)
 		if out != tok {
@@ -243,15 +267,21 @@ func (b *sseBackfiller) newPathState(key string, kind pathKind) *pathState {
 }
 
 // afterEvent performs every release at the event boundary: a path whose window
-// is empty is decided and released. It then enforces the holdback bound and
-// emits whatever is now drainable.
+// is empty and whose guard decision is made is decided and released. A guarded
+// path without a decision is held — it may still receive the fragment that makes
+// a command match — and is only resolved by a path change, the cap, or
+// forceFlush/Flush. It then enforces the holdback bound and emits whatever is
+// now drainable.
 func (b *sseBackfiller) afterEvent() error {
 	for _, p := range b.touched {
-		if p.active && p.w.Buffered() == 0 {
+		if p.active && p.w.Buffered() == 0 && p.guardReleasable() {
 			b.releasePath(p)
 		}
 	}
 	b.touched = b.touched[:0]
+	if err := b.guardClose(); err != nil {
+		return err
+	}
 	if b.heldBytes > sseBackfillMaxHoldbackBytes {
 		if err := b.forceFlush(); err != nil {
 			return err
@@ -266,6 +296,21 @@ func (b *sseBackfiller) afterEvent() error {
 // replacement exactly once. When nothing changed, no edit is recorded and every
 // contributing event keeps its original bytes.
 func (b *sseBackfiller) releasePath(p *pathState) {
+	// W6.4: a guarded path is written back with the refusal notice unless the
+	// guard decided it clean. A path released without a decision — forceFlush
+	// or stream end — is refused here, fail-closed, and counted. The refusal is
+	// expressed as a merged-content edit, never as a Write error, so the stream
+	// keeps flowing; giving the last contributing event the notice and every
+	// earlier one an empty string keeps the client's delta concatenation exact.
+	if p.guardArmed && (!p.guardDecided || p.guardHit) {
+		if !p.guardDecided {
+			p.guardDecided, p.guardHit = true, true
+			b.noteGuardRefusal("", sseGuardReasonUndecided)
+		}
+		p.changed = true
+		p.merged.Reset()
+		p.merged.WriteString(mutationChannelRefusalNotice)
+	}
 	if p.changed {
 		last := p.run[len(p.run)-1]
 		content := p.merged.String()

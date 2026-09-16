@@ -156,6 +156,16 @@ type Pipeline struct {
 	// signal (no content); each increment also emits one egress_blocked
 	// RedactionEvent via blockEgress. See egress.go.
 	egressBlocks atomic.Uint64
+
+	// streamGuardRefusals counts streamed tool calls the W6.4 SSE guard refused:
+	// a W6.2 pattern match after accumulation, the SSEGuardCap, or a release
+	// without a decision. streamGuardFailClosed counts the subset refused
+	// without a match (cap/undecided). Both are metadata-only — no content, no
+	// path — and are the counters W6.5 surfaces; each refusal also emits one
+	// RedactionActionMutationChannelBlocked event via noteStreamingGuardRefusal.
+	// See sseguard.go.
+	streamGuardRefusals   atomic.Uint64
+	streamGuardFailClosed atomic.Uint64
 }
 
 // NewPipeline builds the pipeline. It fails when cfg.Engine is nil, because no
@@ -725,6 +735,12 @@ func (w *pipelineResponseWriter) WriteHeader(status int) {
 			w.Header().Del("Content-Length")
 			w.dst.WriteHeader(status)
 			w.backfill = newSSEBackfiller(w.dst, w.pipeline.engine.MaxPlaceholderLen(), w.pipeline.engine.BackfillFunc())
+			// W6.4: arm the streaming tool-call guard when self-protection is
+			// on. DetectMutationChannel additionally honours the enabled mode
+			// list, so a class switched off stays a no-op.
+			if w.pipeline.selfProtectionEnabled {
+				w.backfill.setToolCallGuard(w.pipeline.DetectMutationChannel, w.pipeline.noteStreamingGuardRefusal)
+			}
 			// Wire the emit-time desync guard so an unparseable payload is
 			// counted and reported instead of silent; the fallback (write the
 			// original event verbatim) is unchanged. Response/SSE is
