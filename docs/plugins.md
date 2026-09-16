@@ -194,7 +194,7 @@ if err := reg.Register(myplugins.NewHeaderStamper()); err != nil {
 }
 ```
 
-The public core's `tokenhush run` registers only the built-in detectors. V1 has **no** runtime switch for external plugins: no `.so`, no WASM, no subprocess, no "plugin directory". Two options:
+The public core's `tokenhush run` registers only the built-in detectors (plus the synced remote-rule interpreter below, when a pack is active). V1 has **no** runtime switch for external plugins: no `.so`, no WASM, no subprocess, no "plugin directory". Two options:
 
 1. **Contribute it to the core.** Add it to the built-in set, so it ships and is reviewed with the core.
 2. **Build your own host program.** Write a separate `main` that imports this core, assembles the pipeline from exported `pkg/proxy` primitives, and passes in your registry. The private Pro build follows this pattern; its code never appears in the public repo.
@@ -238,6 +238,22 @@ func main() {
 ```
 
 > `pkg/proxy` exports `Listen`, `NewPipeline`, `NewResolver`, `NewForwarder`, `HostAllowlist`, `ControlAuth`, and `OriginPolicy`. The `run` wiring in `internal/cli` is the reference usage, though an external module can't import `internal/`.
+
+## 📦 The synced remote rule pack
+
+`tokenhush run` can register **one extra Inspector** beside the built-in detectors: the interpreter for the synced, signed remote rule pack written by `tokenhush rules sync`.
+
+- **Identity.** Plugin id `customrules` (`rules.DefaultPluginID`), priority 30 (`rules.DefaultPriority`), so it runs after the built-in detectors (priority 0). A finding carries `Type` `custom:<rule-id>` and `Meta["rule_id"]`, so a hit is auditable back to the rule that caused it.
+- **Failure policy.** While a pack is active the interpreter is registered **`FailClosed`**: a failed inspection rejects the request instead of dropping findings. With no active pack it is not registered at all, so no failure entry exists for it.
+- **Not a `detectors:` value.** `customrules` is **not** a member of the `detectors:` config option. It is not individually toggleable, and a remote pack cannot turn a built-in detector off: the non-weakening floor (`pkg/rules/floor.go`) rejects a pack that disables a built-in detector, removes a required category, or carries an `allow` action.
+- **Applied once at startup.** The active pack is read from the local cache when the process starts. There is no hot reload: running `rules sync` in a live session does not change the pipeline, and a synced pack takes effect only after a **restart**. Startup reads the local cache and does not contact the vendor (`TOKENHUSH_NO_RULE_SYNC` only makes `rules sync` refuse to send its request; it does not clear or disable an already-cached pack).
+
+**Publisher trust boundary.** The floor is deliberately narrow. It blocks disabling detectors, removing required categories, and auto-allow rules, but it does **not** make a signed pack harmless. A pack that already carries a valid signature can still:
+
+- cause a denial of service with broad `block` rules over response content. The interpreter declares `CanBlock` as soon as the pack holds a block-action rule or a blocklist entry, and the policy honors the resulting `Block`.
+- suppress its own matches with a global or per-rule `allowlist` (`pkg/rules/interpreter.go`), so a rule that looks present may never fire.
+
+A remote pack therefore extends detection **only as far as its publisher is trusted**. It cannot weaken the built-in detectors, but it can add blocks, noise, or self-suppressing rules. Treat the rule-signing key as the trust root. The schema and its limits (schema version 1, rule and match bounds) live in `pkg/rules/schema.go`; the `rules` command group is documented in [deployment.md](deployment.md).
 
 ## ✅ Registration-time rejections
 

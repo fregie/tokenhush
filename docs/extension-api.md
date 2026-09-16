@@ -218,6 +218,7 @@ type BuildOptions struct {
     Sink      audit.AuditSink // metadata-only audit rows
     Timeout   time.Duration   // <= 0 uses the default
     Tool      string          // labels the Document (for example "claude-code")
+    Rules *rules.Config       // synced signed rule pack; nil = the built-in detectors only
 }
 
 func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error)

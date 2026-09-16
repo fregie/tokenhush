@@ -216,6 +216,7 @@ type BuildOptions struct {
     Sink      audit.AuditSink // 仅元数据审计行
     Timeout   time.Duration   // <= 0 时用默认值
     Tool      string          // 标注 Document（例如 "claude-code"）
+    Rules *rules.Config       // 已同步的签名规则包；nil = 仅内置检测器
 }
 
 func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error)

@@ -194,7 +194,7 @@ if err := reg.Register(myplugins.NewHeaderStamper()); err != nil {
 }
 ```
 
-公开核心的 `tokenhush run` 只注册内置检测器。V1 **没有**加载外部插件的运行时开关：没有 `.so`，没有 WASM，没有子进程，也没有“插件目录”。两条路：
+公开核心的 `tokenhush run` 只注册内置检测器（另有下方已同步的远端规则解释器，在规则包生效时注册）。V1 **没有**加载外部插件的运行时开关：没有 `.so`，没有 WASM，没有子进程，也没有“插件目录”。两条路：
 
 1. **贡献给核心。** 加进内置集合，随核心一起发布并接受审查。
 2. **自己写宿主程序。** 另建一个 `main`，导入这个核心库，用导出的 `pkg/proxy` 原语组装流水线，再传入你的 registry。私有 Pro 构建就走这条路，代码从不出现在公开仓库。
@@ -238,6 +238,22 @@ func main() {
 ```
 
 > `pkg/proxy` 导出 `Listen`、`NewPipeline`、`NewResolver`、`NewForwarder`、`HostAllowlist`、`ControlAuth` 和 `OriginPolicy`。`internal/cli` 里的 `run` 接线是参考用法，不过外部模块无法导入 `internal/`。
+
+## 📦 已同步的签名规则包
+
+`tokenhush run` 会在内置检测器之外**多注册一个 Inspector**：由 `tokenhush rules sync` 写入的、已同步且已签名的远端规则包的解释器。
+
+- **身份。** 插件 id 为 `customrules`（`rules.DefaultPluginID`），优先级 30（`rules.DefaultPriority`），因此在内置检测器（优先级 0）之后运行。每个 finding 带 `Type` `custom:<rule-id>` 与 `Meta["rule_id"]`，命中可追溯到具体规则。
+- **失败策略。** 规则包生效期间，解释器以 **`FailClosed`** 注册：检视失败会拒绝请求，而不是丢弃 findings。没有生效的规则包时它根本不注册，因此也不存在对应的失败策略条目。
+- **不是 `detectors:` 的取值。** `customrules` **不是** `detectors:` 配置项的成员，不能单独开关；远端规则包也无法关闭任何内置检测器：非弱化底线（`pkg/rules/floor.go`）会拒绝禁用内置检测器、移除必需类别或携带 `allow` 动作的规则包。
+- **启动时应用一次。** 生效的规则包在进程启动时从本地缓存读取。没有热加载：在运行中的会话里执行 `rules sync` 不会改变当前管线，同步后的包要**重启**后才生效。启动只读本地缓存，不联系厂商（`TOKENHUSH_NO_RULE_SYNC` 只让 `rules sync` 拒绝发出请求，不会清除或停用已缓存的规则包）。
+
+**发布者信任边界。** 底线的范围刻意很窄。它拦截禁用检测器、移除必需类别与自动放行（`allow`）规则，但**并不**让已签名的规则包变得无害。一个已带有效签名的规则包仍然可以：
+
+- 用宽泛的 `block` 规则对响应内容造成拒绝服务。只要包里含有 block 动作规则或 blocklist 条目，解释器就会声明 `CanBlock`，策略会采纳由此产生的 `Block`。
+- 用全局或 per-rule 的 `allowlist` 抑制它自身的命中（`pkg/rules/interpreter.go`），于是看起来存在的规则可能永远不触发。
+
+因此，远端规则包能扩展检测的幅度**只取决于其发布者可被信任到什么程度**。它无法弱化内置检测器，但可以引入阻断、噪声或自我抑制的规则。请把规则签名密钥当作信任根。模式与上限（schema version 1、规则与命中上限）见 `pkg/rules/schema.go`；`rules` 命令组见 [deployment.zh-CN.md](deployment.zh-CN.md)。
 
 ## ✅ 注册期拒绝
 

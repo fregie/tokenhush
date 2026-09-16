@@ -65,6 +65,8 @@ flowchart LR
 | `pkg/license` | 只读的 Pro license 校验与展示（隔离，已做模糊测试） |
 | `cmd/tokenhush` | 免费 CLI：`run`（前台网关）、`status`、`env`（打印设置片段）、`doctor`、`version`，以及控制面 API |
 
+> 已同步的签名规则包会额外注册一个 `Inspector`（`customrules`，优先级 30）；它不是 `detectors:` 的取值。见 [plugins.zh-CN.md](plugins.zh-CN.md#已同步的签名规则包)。
+
 ## 🏗️ 关键设计决策
 
 ### 协议无关的叶子遍历（不做 API 规范化）

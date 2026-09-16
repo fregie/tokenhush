@@ -65,6 +65,8 @@ flowchart LR
 | `pkg/license` | Read-only Pro license validation and display (isolated, fuzz-tested) |
 | `cmd/tokenhush` | Free CLI: `run` (foreground gateway), `status`, `env` (print setup snippets), `doctor`, `version`, plus the control-plane API |
 
+> A synced, signed remote rule pack registers as one extra `Inspector` (`customrules`, priority 30); it is not a `detectors:` value. See [plugins.md](plugins.md#the-synced-remote-rule-pack).
+
 ## 🏗️ Key design decisions
 
 ### Protocol-agnostic leaf walk (no API normalization)
