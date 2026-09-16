@@ -9,11 +9,11 @@
 // (audit store, control session, entitlement, web UI) behind the lifecycle
 // hooks in Options.
 //
-// The assembly contract (Deps, Options, BuildOptions, RequestStats) is frozen
-// by ADR-0012 in the tokenhush-pro repository. pkg/gateway/testdata/
-// options_contract.txt plus TestOptionsContractDoc pin the exported struct
-// fields against accidental drift. The package itself is experimental until
-// v1.0.
+// The assembly contract (Deps, Options, BuildOptions, RequestStats) plus the
+// C7/C8 seam types (AllowlistStore, SelfProtectionConfig) is frozen by ADR-0012
+// in the tokenhush-pro repository. pkg/gateway/testdata/options_contract.txt
+// plus TestOptionsContractDoc pin the exported struct fields against
+// accidental drift. The package itself is experimental until v1.0.
 package gateway
 
 import (
@@ -72,6 +72,37 @@ type RunInfo struct {
 	Port  int
 }
 
+// AllowlistStore 是运行时可变更白名单（C7）的存储接缝：句柄由调用方创建，
+// 同一实例同时交给 BuildPipeline 与 Options，使检测器与 /allowlist 端点看到
+// 同一份快照。nil 表示仅使用静态配置（与引入本接缝之前的行为一致）。
+//
+// 接口归属 pkg/gateway：pkg/allowlist 以结构化方式实现它（Go 接口结构化满足，
+// 无需 import pkg/gateway），从而避免 pkg/allowlist → pkg/gateway 的反向依赖。
+type AllowlistStore interface {
+	// Entries 返回当前生效的全部条目（静态种子 ∪ 动态条目）。
+	Entries() []string
+	// Add 新增一条条目；重复或非法条目返回错误。
+	Add(entry string) error
+	// Remove 移除一条条目；不存在时返回错误。
+	Remove(entry string) error
+}
+
+// SelfProtectionConfig 是变更通道自保护（C8）的装配配置：窄口径排除集、
+// control token 值与拦截类别。零值 = 关闭，即与引入本配置之前的行为一致。
+type SelfProtectionConfig struct {
+	// Enabled 是自保护总开关；false（零值）= 关闭。
+	Enabled bool
+	// Modes 是启用的拦截类别，取值 cli-command / control-port / file-write；
+	// nil/空 = 调用方默认集。
+	Modes []string
+	// Exclusions 是窄口径排除集的值：control.token 的值 +
+	// <DataDir>/allowlist.json 的完整内容。这些值在请求方向强制脱敏且永不
+	// 回填，且不可被白名单豁免；白名单条目值刻意不在其中（否则会抵消 C7）。
+	Exclusions [][]byte
+	// ControlToken 是当前会话 control token 的值；""（零值）= 不接线。
+	ControlToken string
+}
+
 // Options is the frozen assembly contract. The zero value is not usable: Core
 // and Pipeline must be provided. Every hook is optional except as documented.
 type Options struct {
@@ -112,6 +143,12 @@ type Options struct {
 	// Ready is called once the listeners are bound and the session files are
 	// on disk; it is how a test learns the bound ephemeral port.
 	Ready func(RunInfo)
+	// AllowlistStore 是 C7 的运行时白名单句柄，供 buildHandler 注册 /allowlist
+	// 端点并读写同一份快照；nil = 仅静态配置（零值即旧行为）。
+	AllowlistStore AllowlistStore
+	// SelfProtection 是 C8 的装配配置（窄口径排除集 + control token），供
+	// buildHandler 侧可见；零值 = 关闭（零值即旧行为）。
+	SelfProtection SelfProtectionConfig
 }
 
 // Run assembles and runs one gateway session until ctx is cancelled.

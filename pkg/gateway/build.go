@@ -34,6 +34,12 @@ type BuildOptions struct {
 	Timeout time.Duration
 	// Tool labels the content Document (for example "claude-code").
 	Tool string
+	// AllowlistStore 是 C7 的运行时白名单句柄，供检测器在请求期读取共享快照；
+	// nil = 仅静态 Allowlist（零值即旧行为）。
+	AllowlistStore AllowlistStore
+	// SelfProtection 是 C8 的装配配置（窄口径排除集 + control token）；
+	// 零值 = 关闭（零值即旧行为）。
+	SelfProtection SelfProtectionConfig
 }
 
 // BuildPipeline assembles the content pipeline for one session: the enabled
