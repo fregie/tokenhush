@@ -131,6 +131,13 @@ type Pipeline struct {
 	// failing closed — see transformResponse for the asymmetry with the
 	// request path.
 	responseWalkFailures atomic.Uint64
+
+	// egressBlocks counts outbound request bodies the W2.3 egress re-check
+	// blocked because they still carried a secret the engine had already
+	// mapped to a placeholder under a covered encoding. It is a metadata-only
+	// signal (no content); each increment also emits one egress_blocked
+	// RedactionEvent via blockEgress. See egress.go.
+	egressBlocks atomic.Uint64
 }
 
 // NewPipeline builds the pipeline. It fails when cfg.Engine is nil, because no
@@ -197,18 +204,24 @@ func (p *Pipeline) RequestTransform() BodyTransform {
 	return p.transformRequest
 }
 
-// TransformErrorHandler maps a BlockedError produced by RequestTransform to a
-// 403, so a policy block is a clear client error instead of the forwarder's
-// default 500. Any other transform error returns false and keeps the default
-// fail-closed 500.
+// TransformErrorHandler maps a BlockedError or an EgressBlockedError produced
+// by RequestTransform to a 403, so a policy or egress block is a clear client
+// error instead of the forwarder's default 500. Any other transform error
+// returns false and keeps the default fail-closed 500. The EgressBlockedError
+// branch is additive: the *BlockedError response stays byte-identical.
 func (p *Pipeline) TransformErrorHandler() TransformErrorFunc {
 	return func(w http.ResponseWriter, err error) bool {
 		var blocked *BlockedError
-		if !errors.As(err, &blocked) {
-			return false
+		if errors.As(err, &blocked) {
+			http.Error(w, "blocked by content policy", http.StatusForbidden)
+			return true
 		}
-		http.Error(w, "blocked by content policy", http.StatusForbidden)
-		return true
+		var egress *EgressBlockedError
+		if errors.As(err, &egress) {
+			http.Error(w, "outbound body still carries a redacted secret", http.StatusForbidden)
+			return true
+		}
+		return false
 	}
 }
 
@@ -234,6 +247,13 @@ func (p *Pipeline) TransformErrorHandler() TransformErrorFunc {
 // the HTTP layer instead) maps the sentinel through the generic
 // transform-failure chain to a 500 with zero upstream bytes. That path is
 // intentionally unchanged: it is already fail-closed.
+//
+// The body this function is about to return then passes the W2.3 egress
+// re-check (egress.go): if it still carries a secret the engine has mapped to a
+// placeholder, under any encoding redact.NormalizeCandidates covers, the
+// request is blocked with *EgressBlockedError instead of being returned. The
+// re-check runs after the redaction step and is unreachable for a body that
+// failed the walk — egress.go states that boundary without overstating it.
 func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	if p == nil {
 		return nil, ErrNilPipeline
@@ -268,18 +288,32 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 		p.reportBlock(keyDecision)
 		return nil, &BlockedError{Phase: extension.RequestContent, Findings: keyFindings}
 	}
+	var out []byte
 	switch decision.Action {
 	case extension.Block:
 		p.reportBlock(decision)
 		return nil, &BlockedError{Phase: decision.Phase, Findings: decision.Findings}
 	case extension.Redact:
-		return p.redactBody(body, walked, decision.Findings)
+		redacted, err := p.redactBody(body, walked, decision.Findings)
+		if err != nil {
+			return nil, err
+		}
+		out = redacted
 	case extension.Warn:
 		p.recordWarn(decision)
-		return body, nil
+		out = body
 	default:
-		return body, nil
+		out = body
 	}
+	// W2.3 egress re-check. The step order is frozen: walk → value policy →
+	// key guard → redact/replace → egress re-check → return. It runs on the
+	// exact bytes this transform is about to hand the forwarder, in every
+	// non-block branch, because an encoded value can sit in a field no
+	// detector redacted. On a hit nothing is returned for forwarding.
+	if err := p.egressRecheck(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // redactBody rewrites the detected spans of every terminal leaf to core

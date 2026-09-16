@@ -14,7 +14,10 @@ import (
 // line carries only the detector type, because a block aborts before egress. A
 // walk-failure line names the action and says the body was forwarded unchanged:
 // it must never claim a redaction, and it prints none of the empty detector
-// fields (a walk failure skips the response body, it does not redact it).
+// fields (a walk failure skips the response body, it does not redact it). An
+// egress-block line likewise never claims a redaction — the outbound body was
+// blocked, not rewritten — and prints neither the matched placeholder nor the
+// empty detector fields.
 //
 // The pipeline calls Report from concurrent request goroutines, so a mutex
 // serialises whole-line writes, and a recover guard keeps a rendering bug from
@@ -42,6 +45,10 @@ func (l *redactionLogger) Report(ev proxy.RedactionEvent) {
 	switch ev.Action {
 	case proxy.RedactionActionBlock:
 		fmt.Fprintf(l.w, "tokenhush: blocked %s by content policy: %s\n", ev.Direction, ev.Type)
+	case proxy.RedactionActionEgressBlocked:
+		// Without this case the default branch would render an egress block as
+		// "redacted … (len=0) ", which is false: nothing was redacted here.
+		fmt.Fprintf(l.w, "tokenhush: blocked %s outbound body still carried a redacted secret (egress_blocked)\n", ev.Direction)
 	case proxy.RedactionActionResponseWalkFailed, proxy.RedactionActionSSEWalkFailed:
 		fmt.Fprintf(l.w, "tokenhush: unparseable %s body skipped: %s (forwarded unchanged)\n", ev.Direction, ev.Action)
 	default:

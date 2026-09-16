@@ -20,6 +20,12 @@ const (
 	// failed (the desync guard in ssebackfill_rewrite.go). Nothing is blocked:
 	// the original event bytes are written verbatim.
 	RedactionActionSSEWalkFailed = "sse_walk_failed"
+	// RedactionActionEgressBlocked marks an outbound request the W2.3 egress
+	// re-check blocked: after redaction the body still carried a secret the
+	// engine had mapped to a placeholder, so forwarding it would have restored
+	// the plaintext upstream. The event carries the matched placeholder token
+	// in Placeholder and nothing else.
+	RedactionActionEgressBlocked = "egress_blocked"
 )
 
 // Redaction directions for RedactionEvent.Direction.
@@ -42,7 +48,8 @@ const (
 // and Masked stay empty for them.
 type RedactionEvent struct {
 	// Action is RedactionActionRedact, RedactionActionBlock,
-	// RedactionActionResponseWalkFailed or RedactionActionSSEWalkFailed.
+	// RedactionActionResponseWalkFailed, RedactionActionSSEWalkFailed or
+	// RedactionActionEgressBlocked.
 	Action string
 	// Direction is RedactionDirectionRequest or RedactionDirectionResponse.
 	Direction string
@@ -55,13 +62,20 @@ type RedactionEvent struct {
 	Length int
 	// Masked is the redact.MaskSecret form; empty for a block.
 	Masked string
+	// Placeholder is the matched secret's placeholder token, set only for
+	// RedactionActionEgressBlocked. It is a placeholder token by construction,
+	// never plaintext: the membership check that produces it returns the
+	// engine's token (W2.1). It is the only content-bearing field this action
+	// populates — Type, Length and Masked stay empty for it — and every other
+	// action leaves it empty.
+	Placeholder string
 }
 
 // RedactionReporter receives one event per replaced span (Redact), per blocked
-// finding (Block), and per response/SSE body the walker could not parse (the
-// two walk-failure actions). The pipeline invokes it from request goroutines,
-// so an implementation must be safe for concurrent use and must not block or
-// call back into the pipeline.
+// finding (Block), per response/SSE body the walker could not parse (the two
+// walk-failure actions), and per blocked egress finding (EgressBlocked). The
+// pipeline invokes it from request goroutines, so an implementation must be
+// safe for concurrent use and must not block or call back into the pipeline.
 type RedactionReporter func(RedactionEvent)
 
 // SetRedactionReporter installs the reporter that observes redaction and block
