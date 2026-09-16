@@ -34,7 +34,7 @@ func (b *sseBackfiller) emit(he *heldEvent) error {
 		}
 		return b.write(he.raw)
 	}
-	rw := &leafRewriter{walked: leaves, edit: mapEdit(he.jsonEdits)}
+	rw := &leafRewriter{walked: leaves, edit: mapEdit(he.jsonEdits), parentEdit: mapParentEdit(he.jsonEdits)}
 	out, changed, err := rw.rewrite(src, "")
 	if err == nil && changed {
 		return b.write(splice(he.raw, he.dataOff, he.dataLen, out))
@@ -60,6 +60,21 @@ func mapEdit(edits map[string]string) leafEdit {
 		replacement, ok := edits[path]
 		if !ok {
 			return content, false
+		}
+		return []byte(replacement), replacement != string(content)
+	}
+}
+
+// mapParentEdit adapts the same map to the leafRewriter's encoded-parent hook,
+// so an edit keyed by an Encoded arguments parent replaces that parent's whole
+// value and the rewriter swallows its nested leaves. Terminal paths never reach
+// this hook, so a guard edit recorded against a terminal `.../arguments` leaf, or
+// a placeholder edit against a nested leaf, stays a per-leaf replacement.
+func mapParentEdit(edits map[string]string) leafParentEdit {
+	return func(_ int, path string, content []byte) ([]byte, bool) {
+		replacement, ok := edits[path]
+		if !ok {
+			return nil, false
 		}
 		return []byte(replacement), replacement != string(content)
 	}

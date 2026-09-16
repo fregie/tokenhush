@@ -91,12 +91,13 @@ type w64Refusal struct {
 // refusal reason the pipeline counter collapses.
 func w64GuardBackfiller(t *testing.T, dst *bytes.Buffer) (*sseBackfiller, *[]w64Refusal) {
 	t.Helper()
-	detect := w63Pipeline(t).DetectMutationChannel
+	pipe := w63Pipeline(t)
 	refusals := &[]w64Refusal{}
 	b := newSSEBackfiller(dst, 128, t4Replace)
-	b.setToolCallGuard(detect, func(class, reason string) {
+	b.setToolCallGuard(pipe.DetectMutationChannel, func(class, reason string) {
 		*refusals = append(*refusals, w64Refusal{class: class, reason: reason})
 	})
+	b.setToolCallGuardEncoded(pipe.matchEncodedArguments)
 	return b, refusals
 }
 
@@ -463,6 +464,172 @@ func TestSSEToolCallGuard(t *testing.T) {
 		args, _ := w64Arguments(t, dst.Bytes())
 		if args != mutationChannelRefusalNotice {
 			t.Fatalf("assembled arguments = %q, want the refusal notice", args)
+		}
+	})
+}
+
+// w64FirstArguments assembles the `arguments` deltas of out the way a client
+// does, reading the decoded value of the arguments field whatever its leaf shape
+// (Encoded parent or terminal fragment). w64Arguments cannot serve the Encoded
+// shape: the parent's nested leaves are not arguments paths, so they are skipped.
+func w64FirstArguments(t *testing.T, out []byte) string {
+	t.Helper()
+	dec := protocol.NewSSEDecoder()
+	events := append(dec.Feed(out), dec.Close()...)
+	var args strings.Builder
+	for _, ev := range events {
+		if !ev.DataSingle {
+			continue
+		}
+		payload := ev.Raw[ev.DataOffset : ev.DataOffset+ev.DataLen]
+		var doc struct {
+			Choices []struct {
+				Delta struct {
+					ToolCalls []struct {
+						Function struct {
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(payload, &doc); err != nil {
+			continue
+		}
+		for _, ch := range doc.Choices {
+			for _, tc := range ch.Delta.ToolCalls {
+				args.WriteString(tc.Function.Arguments)
+			}
+		}
+	}
+	return args.String()
+}
+
+// TestSSEToolCallGuardEncodedArguments is the M1 acceptance test: the mainstream
+// OpenAI streaming shape delivers the whole valid-JSON arguments value in one
+// event, so protocol.Walk yields an Encoded parent and never the terminal
+// `.../arguments` leaf the guard used to arm. The parent must be armed, matched
+// with the buffered concatenation logic, and its whole value replaced, while a
+// legal valid-JSON arguments call still streams byte-identically.
+func TestSSEToolCallGuardEncodedArguments(t *testing.T) {
+	notice := mutationChannelRefusalNotice
+
+	t.Run("whole_valid_json_arguments_in_one_event_is_refused", func(t *testing.T) {
+		pipe := w63Pipeline(t)
+		reporter, events := w14Reporter()
+		pipe.SetRedactionReporter(reporter)
+		w, rec := w14SSEWriter(t, pipe)
+
+		whole := w64ArgumentsEvent(t, `{"cmd":"tokenhush allowlist add evil.example"}`)
+		input := append(append([]byte{}, whole...), w64FinishEvent...)
+		input = append(input, w64DoneEvent...)
+
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		out := rec.Body.Bytes()
+		t.Logf("M1_WHOLE_OUT=%q", out)
+		if bytes.Contains(out, []byte("evil.example")) {
+			t.Fatalf("the valid-JSON command leaked verbatim: %q", out)
+		}
+		if got := w64FirstArguments(t, out); got != notice {
+			t.Fatalf("client-visible arguments = %q, want the refusal notice", got)
+		}
+		if got := pipe.StreamGuardRefusals(); got != 1 {
+			t.Fatalf("StreamGuardRefusals = %d, want 1", got)
+		}
+		if len(*events) != 1 || (*events)[0].Action != RedactionActionMutationChannelBlocked {
+			t.Fatalf("reporter events = %+v, want exactly one mutation-channel block", *events)
+		}
+	})
+
+	t.Run("command_split_across_nested_leaves_of_one_event_is_refused", func(t *testing.T) {
+		pipe := w63Pipeline(t)
+		w, rec := w14SSEWriter(t, pipe)
+
+		// Neither nested leaf matches alone and the raw parent text does not
+		// either (JSON punctuation separates the halves), so only the buffered
+		// concatenation logic catches this: it is why the Encoded parent is the
+		// unit that is matched and replaced, not one nested leaf.
+		whole := w64ArgumentsEvent(t, `{"a":"tokenhush allow","b":"list add evil.example"}`)
+		input := append(append([]byte{}, whole...), w64FinishEvent...)
+		input = append(input, w64DoneEvent...)
+
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		out := rec.Body.Bytes()
+		t.Logf("M1_SPLIT_OUT=%q", out)
+		if bytes.Contains(out, []byte("evil.example")) {
+			t.Fatalf("the split valid-JSON command leaked: %q", out)
+		}
+		if got := w64FirstArguments(t, out); got != notice {
+			t.Fatalf("client-visible arguments = %q, want the refusal notice", got)
+		}
+		if got := pipe.StreamGuardRefusals(); got != 1 {
+			t.Fatalf("StreamGuardRefusals = %d, want 1", got)
+		}
+	})
+
+	t.Run("valid_json_arguments_across_events_is_refused", func(t *testing.T) {
+		pipe := w63Pipeline(t)
+		w, rec := w14SSEWriter(t, pipe)
+
+		// The assembled value is valid JSON; no single fragment is, so each
+		// event's arguments leaf is terminal and accumulates across events.
+		fragments := []string{`{"cmd":"token`, `hush allowlist add evil.example"}`}
+		input := append(w64ArgumentsStream(t, fragments), w64FinishEvent...)
+		input = append(input, w64DoneEvent...)
+
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		out := rec.Body.Bytes()
+		t.Logf("M1_ACROSS_OUT=%q", out)
+		if bytes.Contains(out, []byte("evil.example")) {
+			t.Fatalf("the across-events valid-JSON command leaked: %q", out)
+		}
+		args, n := w64Arguments(t, out)
+		if args != notice || n != len(fragments) {
+			t.Fatalf("assembled arguments = %q (%d events), want the notice (%d events)", args, n, len(fragments))
+		}
+		if got := pipe.StreamGuardRefusals(); got != 1 {
+			t.Fatalf("StreamGuardRefusals = %d, want 1", got)
+		}
+	})
+
+	t.Run("legal_valid_json_arguments_in_one_event_passes_byte_identical", func(t *testing.T) {
+		pipe := w63Pipeline(t)
+		w, rec := w14SSEWriter(t, pipe)
+
+		whole := w64ArgumentsEvent(t, `{"path":"/tmp/report.txt","content":"hello world"}`)
+		input := append(append([]byte{}, whole...), w64FinishEvent...)
+		input = append(input, w64DoneEvent...)
+
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		out := rec.Body.Bytes()
+		if !bytes.Equal(out, input) {
+			t.Fatalf("a legal valid-JSON arguments call was rewritten:\n got %q\nwant %q", out, input)
+		}
+		if got := pipe.StreamGuardRefusals(); got != 0 {
+			t.Fatalf("StreamGuardRefusals = %d for a legal call, want 0", got)
+		}
+		if got := pipe.StreamGuardFailClosed(); got != 0 {
+			t.Fatalf("StreamGuardFailClosed = %d for a legal call, want 0", got)
 		}
 	})
 }

@@ -70,6 +70,19 @@ func (b *sseBackfiller) guardArms(kind pathKind, key string) bool {
 	return b.guardDetect != nil && kind == kindJSON && isMutationChannelArgumentsPath(key)
 }
 
+// setToolCallGuardEncoded installs the matcher for the Encoded (valid-JSON)
+// arguments shape: the pipeline passes matchEncodedArguments, the buffered
+// path's detector, so both surfaces agree on what reaches the channel. It is
+// separate from setToolCallGuard so a backfiller constructed directly (tests,
+// pre-W6.4 callers) keeps its two-argument setup. A nil backfiller or a nil fn
+// are no-ops and leave the Encoded shape unarmed, byte-identical to before.
+func (b *sseBackfiller) setToolCallGuardEncoded(detect func(content []byte) (class string, matched bool)) {
+	if b == nil {
+		return
+	}
+	b.guardDetectEncoded = detect
+}
+
 // guardReleasable reports whether the event-boundary release may decide this
 // path. A guarded path is held until it is decided clean: releasing a hit path
 // here would emit its later original fragments before a refusal, and releasing

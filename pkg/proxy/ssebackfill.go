@@ -100,6 +100,12 @@ type sseBackfiller struct {
 	// onGuardRefusal. Nil is a complete no-op; see setToolCallGuard.
 	guardDetect    func(text string) (class string, matched bool)
 	onGuardRefusal func(class, reason string)
+	// guardDetectEncoded is the W6.4 matcher for the Encoded (valid-JSON)
+	// arguments shape: the whole arguments value arrives in one event, so the
+	// guard must feed the parent and match it with the buffered path's
+	// concatenation logic. Nil leaves that shape unarmed; see
+	// setToolCallGuardEncoded.
+	guardDetectEncoded func(content []byte) (class string, matched bool)
 }
 
 // newSSEBackfiller returns a backfiller writing rewritten SSE bytes to dst.
@@ -209,6 +215,9 @@ func (b *sseBackfiller) processEvent(ev protocol.SSEEvent) error {
 	}
 	for _, leaf := range leaves {
 		if leaf.Encoded {
+			if err := b.feedGuardEncoded(leaf.Path, []byte(leaf.Content), seq); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := b.feed(leaf.Path, kindJSON, []byte(leaf.Content), seq); err != nil {
@@ -249,6 +258,55 @@ func (b *sseBackfiller) feed(key string, kind pathKind, chunk []byte, seq int) e
 	}
 	_, err := p.w.Write(chunk)
 	return err
+}
+
+// feedGuardEncoded feeds one Encoded arguments parent — a whole valid-JSON
+// arguments value delivered in a single event — into the guard. protocol.Walk
+// skips such a parent for the placeholder writer, so a guard that armed only the
+// terminal `.../arguments` leaf never saw the mainstream OpenAI streaming shape
+// and the command leaked verbatim. The parent content is matched with the
+// buffered path's concatenation logic (guardDetectEncoded), so a command split
+// across its nested leaves is still caught, and the refusal is recorded against
+// the parent path so emit replaces the whole arguments value. The content is
+// never written to the placeholder window: the nested terminal leaves keep their
+// existing per-leaf backfill.
+func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) error {
+	if b.guardDetect == nil || b.guardDetectEncoded == nil || !isMutationChannelArgumentsPath(key) {
+		return nil
+	}
+	p := b.paths[key]
+	if p == nil || p.kind != kindJSON {
+		p = b.newPathState(key, kindJSON)
+		b.paths[key] = p
+	}
+	if !p.active {
+		p.active = true
+		p.run = p.run[:0]
+		p.merged.Reset()
+		p.changed = false
+		b.guardReset(p)
+	}
+	if p.lastSeq != seq {
+		p.lastSeq = seq
+		p.run = append(p.run, seq)
+		b.held[seq].openRefs++
+		b.touched = append(b.touched, p)
+	}
+	if p.guardDecided {
+		return nil
+	}
+	n := min(len(content), SSEGuardCap)
+	p.guardAccum = append(p.guardAccum[:0], content[:n]...)
+	if class, matched := b.guardDetectEncoded(content); matched {
+		p.guardDecided, p.guardHit = true, true
+		b.noteGuardRefusal(class, sseGuardReasonMatch)
+		return nil
+	}
+	if n >= SSEGuardCap {
+		p.guardDecided, p.guardHit = true, true
+		b.noteGuardRefusal("", sseGuardReasonCap)
+	}
+	return nil
 }
 
 // newPathState builds a path's state and its placeholder writer. The wrapper is

@@ -748,6 +748,7 @@ func (w *pipelineResponseWriter) WriteHeader(status int) {
 			// list, so a class switched off stays a no-op.
 			if w.pipeline.selfProtectionEnabled {
 				w.backfill.setToolCallGuard(w.pipeline.DetectMutationChannel, w.pipeline.noteStreamingGuardRefusal)
+				w.backfill.setToolCallGuardEncoded(w.pipeline.matchEncodedArguments)
 			}
 			// Wire the emit-time desync guard so an unparseable payload is
 			// counted and reported instead of silent; the fallback (write the
