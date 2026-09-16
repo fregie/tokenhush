@@ -315,10 +315,13 @@ func doctorDirs(deps doctorDeps) []DoctorCheck {
 	return out
 }
 
-// doctorSecretStore reports the backend the fallback chain actually selected.
-// The plaintext layer is the one honest-degradation signal that must never be
-// silent (docs/security.md): it fails the check and embeds the stable warning
-// marker verbatim.
+// doctorSecretStore reports the backend the fallback chain actually selected
+// and, through KeySourceKindOf, the kind of key source behind it. The
+// machine-bound layer embeds its dedicated degradation marker verbatim; an
+// OS-bound layer stays marker-free; a store that cannot report its kind is
+// shown as unknown, never guessed. The plaintext layer remains the one
+// critical degradation signal (docs/security.md): it fails the check and
+// embeds the stable warning marker.
 func doctorSecretStore(deps doctorDeps) DoctorCheck {
 	store, err := deps.openStore()
 	if err != nil {
@@ -338,7 +341,14 @@ func doctorSecretStore(deps doctorDeps) DoctorCheck {
 			Fix:     "enable an OS keyring (Keychain / Credential Manager / gnome-keyring or KWallet)",
 		}
 	}
-	msg := "backend " + backend
+	kind := platform.KeySourceKindOf(store)
+	if kind == "" {
+		kind = "unknown"
+	}
+	msg := fmt.Sprintf("backend %s; key source %s", backend, kind)
+	if kind == platform.KeySourceMachineBound {
+		msg += "; " + platform.MachineBoundWarningMarker
+	}
 	if backend != platform.BackendKeyring {
 		msg += " (degraded fallback; OS keyring unavailable)"
 	}

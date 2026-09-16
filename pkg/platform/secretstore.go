@@ -75,6 +75,16 @@ const (
 // it verbatim.
 const PlaintextWarningMarker = "tokenhush: WARNING: plaintext secret store in use; secrets are NOT encrypted"
 
+// MachineBoundWarningMarker is the stable marker emitted whenever the encrypted
+// file layer is selected: entries do have a key, but that key is derived from
+// best-effort machine identity rather than an OS keychain, so the layer is
+// defense in depth above plaintext, not an OS trust boundary. It is
+// deliberately a separate constant from PlaintextWarningMarker — the two name
+// different facts ("a key, but only machine-bound" vs "no key at all") and
+// must never be conflated. tokenhush doctor greps for it and the CLI must
+// display it verbatim.
+const MachineBoundWarningMarker = "tokenhush: WARNING: secret store uses a machine-bound key; entries are not protected by an OS keychain"
+
 // SecretStore is the only component allowed to touch an OS secret store. It is
 // implemented by the graded fallback chain (native keyring -> systemd-creds ->
 // encrypted file -> plaintext file) selected at OpenSecretStore time.
@@ -242,6 +252,7 @@ func openSecretStore(cfg secretStoreConfig) (SecretStore, error) {
 	if cfg.machineSecret != nil && cfg.dataDir != "" {
 		if machineSecret, err := cfg.machineSecret(); err == nil && len(machineSecret) > 0 {
 			if backend, err := newEncryptedFileStore(cfg.dataDir, machineSecret); err == nil {
+				warnMachineBoundFallback(cfg, cfg.dataDir)
 				return &secretStore{backend: backend, label: BackendFileEncrypted, kind: KeySourceMachineBound}, nil
 			}
 		}
@@ -273,6 +284,17 @@ func warnPlaintextFallback(cfg secretStoreConfig, dataDir string) {
 		return
 	}
 	cfg.warnf("%s (dir: %s)", PlaintextWarningMarker, filepath.Join(dataDir, secretsDirName))
+}
+
+// warnMachineBoundFallback reports the recorded degradation through the same
+// writer as the plaintext marker: the encrypted layer has a key, but only a
+// machine-bound one. The warning is informational and never fails selection —
+// a failing writer is ignored, exactly like the plaintext marker.
+func warnMachineBoundFallback(cfg secretStoreConfig, dataDir string) {
+	if cfg.warnf == nil {
+		return
+	}
+	cfg.warnf("%s (dir: %s)", MachineBoundWarningMarker, filepath.Join(dataDir, secretsDirName))
 }
 
 // validateCredential is the parse-don't-validate gate every backend call passes
