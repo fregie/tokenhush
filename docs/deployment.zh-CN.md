@@ -347,8 +347,9 @@ Tokenhush 用两个目录：存 `tokenhush.yaml` 的配置目录，存运行时�
 |---|---|
 | `control.token` | 控制面 API 的每会话 bearer 令牌，以 `0600` 写入，每次 `run` 重新生成 |
 | `run.json` | 会话元数据（pid、端口、启动时间）。不携带任何秘密和请求内容。 |
+| `allowlist.json` | 运行期白名单条目（在列期间不脱敏的值）。带 `schema_version` 的 JSON，以 `0600` 写入。**非**会话文件：干净退出后保留。 |
 
-`run.json` 和 `control.token` 都是会话文件。干净关闭时 `run` 会删掉；`run.json` 残留只影响诊断，不影响数据安全。核心不保存请求或响应内容。
+`run.json` 和 `control.token` 都是会话文件。干净关闭时 `run` 会删掉；`run.json` 残留只影响诊断，不影响数据安全。`allowlist.json` **不是**会话文件：它保存运行期白名单，跨重启与干净退出都保留，且只包含你显式放行的值。核心不保存请求或响应内容。
 
 ## ⚙️ 6. 配置
 
@@ -394,7 +395,7 @@ Windows 上删掉安装目录，并从用户 `PATH` 中移除：
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\tokenhush"
 ```
 
-若加过 launchd agent、systemd unit 或计划任务，先删掉那个条目（见[让它在后台持续运行](#让它在后台持续运行)）。想彻底清干净，再删配置目录和数据目录。macOS 上两者都在 `~/Library/Application Support/tokenhush/`；Linux 上是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；Windows 上是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删数据目录会丢掉会话文件（控制令牌和 `run.json`）。
+若加过 launchd agent、systemd unit 或计划任务，先删掉那个条目（见[让它在后台持续运行](#让它在后台持续运行)）。想彻底清干净，再删配置目录和数据目录。macOS 上两者都在 `~/Library/Application Support/tokenhush/`；Linux 上是 `~/.config/tokenhush/` 和 `~/.local/share/tokenhush/`；Windows 上是 `%AppData%\tokenhush\` 和 `%LOCALAPPDATA%\tokenhush\`。删数据目录会丢掉会话文件（控制令牌和 `run.json`）以及持久化的运行期白名单（`allowlist.json`）。
 
 ## 🛠️ 9. 故障排查
 

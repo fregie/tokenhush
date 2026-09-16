@@ -176,7 +176,7 @@ upstreams:
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` |
 | Windows | `%AppData%\tokenhush\` |
 
-文件名为 `tokenhush.yaml`。用 `tokenhush run --config PATH` 覆盖路径，或用 `TOKENHUSH_HOME` 同时搬走配置与数据目录。它在**启动时**读取，改完请重启网关。`tokenhush doctor` 会校验配置与端口。`listen`、`detectors`、`allowlist`、`self_protection`、`log` 见 [`tokenhush.yaml` 参考](#tokenhushyaml-参考)。
+文件名为 `tokenhush.yaml`。用 `tokenhush run --config PATH` 覆盖路径，或用 `TOKENHUSH_HOME` 同时搬走配置与数据目录。它在**启动时**读取，改完请重启网关。唯一例外是运行期白名单：它是独立 store，经控制面变更并立即生效，无需重启（见 [`tokenhush.yaml` 参考](#tokenhushyaml-参考)）。`tokenhush doctor` 会校验配置与端口。`listen`、`detectors`、`allowlist`、`self_protection`、`log` 见 [`tokenhush.yaml` 参考](#tokenhushyaml-参考)。
 
 ### 限制
 
@@ -205,7 +205,7 @@ detectors:
   private_keys: true   # PEM 私钥头
   luhn: true           # 卡号（Luhn）
   email: true          # 电子邮件地址
-allowlist: []          # 永不脱敏的字面量；运行时白名单与其并集生效
+allowlist: []          # 在列期间永不脱敏的字面量；运行时白名单与其并集生效
 self_protection:       # 变更通道自保护；默认开启
   enabled: true        # false 为显式退出
   modes: [cli-command, control-port, file-write]
@@ -221,7 +221,7 @@ upstreams:             # 主机或路径前缀 -> 上游基础 URL
 - `listen.host` 只接受环回地址。网关**绝不**绑定 `0.0.0.0` 或空主机。它始终绑 `127.0.0.1`；主机有 IPv6 环回时同时绑 `[::1]`，没有时只服务 `127.0.0.1` 并打印提示。
 - 六个确定性检测器，高精度：密钥前缀、高熵字符串、JWT、PEM 私钥头、Luhn 卡号、电子邮件。命中生成稳定占位符，如 `__PII_email_9f2c8a4b6d1e__`，上游拿不到原始值。
 - `prefixes` 对应检测器 id `prefix`，`private_keys` 对应 `private_key`（见 `pkg/config` 注释）。
-- `allowlist` 放永不脱敏的字面量。运行时白名单出现后静态条目仍然生效：启动时它们作为种子导入运行时 store，且本键继续被读取——最终生效集合是两者的**并集**，而不是替换。每条必须非空、不含控制字符、长度不超过 4096 字节。
+- `allowlist` 放**在列期间**不脱敏的字面量。运行时白名单出现后静态条目仍然生效：启动时它们作为种子导入运行时 store，且本键继续被读取——最终生效集合是两者的**并集**，而不是替换。每条必须非空、不含控制字符、长度不超过 4096 字节。运行期白名单持久化在 `<DataDir>/allowlist.json`（`0600`、带 `schema_version`、**非** session file），且只经环回控制面变更：`tokenhush allowlist list|add|remove`、`GET|POST|DELETE /allowlist`，或 Pro Web UI。变更立即生效、无需重启，且每次变更写一条仅元数据审计行。
 - `self_protection` 保护变更通道（`tokenhush allowlist` CLI、环回控制端口、直写白名单文件），默认开启且三个模式全开。`enabled: true` 时 `modes:` 不得为空列表（省略该键则保留三个默认模式）；`enabled: false` 是显式退出。排除集本身刻意不可配置：它在运行时由 control token 值与白名单文件内容派生。
 - 核心配置里没有 `audit:` 键：仍带该键的配置会加载失败。审计块位于私有 Pro 层；公开核心只保留仅元数据的审计接缝。
 - `upstreams:` 把主机或路径前缀映射到你的 OpenAI 兼容上游。没配到的请求走内置路由：`/v1/messages` 去 Anthropic；`/v1/chat/completions` 和 `/v1/responses` 去 OpenAI。`GET /v1/models` 是唯一的**具名例外**：模型发现调用不携带用户数据，默认去 OpenAI，`upstreams:` 覆盖仍可改走别处。其他任何未知路径都明确报错（`ErrUnknownUpstream`），不会静默错路由；见 [security.zh-CN.md](security.zh-CN.md#具名路由例外清单)。
@@ -509,7 +509,7 @@ export LLM_BASE_URL=http://127.0.0.1:8787/v1
 
 - **工具连不上。** 先用 `tokenhush status` 确认网关在运行，再确认工具里的端口与 `tokenhush run` 打印的一致。
 - **404 或 "unknown upstream"。** 基础 URL 形态不对。Anthropic 协议客户端用裸 origin，OpenAI 兼容客户端用 `/v1`。后缀写错是明确报错，不会静默错路由。
-- **没有内容被脱敏。** 检查 `tokenhush.yaml` 里检测器是否启用，以及该值是否在 `allowlist` 上。见 [`tokenhush.yaml` 参考](#tokenhushyaml-参考)。
+- **没有内容被脱敏。** 检查 `tokenhush.yaml` 里检测器是否启用，以及该值是否在 `allowlist` 上（静态或运行期——`tokenhush allowlist list` 打印运行期条目）。见 [`tokenhush.yaml` 参考](#tokenhushyaml-参考)。
 - **请求根本没到网关。** 有些工具会缓存 provider 选择；重新选一次。VS Code 扩展的设置保存在扩展里，不在项目文件中。
 - **远程、容器或 SSH 会话。** `127.0.0.1` 指工具运行所在的那台机器，不是你的笔记本。请在那台主机上运行网关，或做端口转发。
 - **端到端验证。** 任何改动后，发一次请求，观察 `tokenhush status` 的 `requests` 计数增长。想用本机回显上游亲眼看到脱敏本身，见 [verify.zh-CN.md](verify.zh-CN.md)。

@@ -176,7 +176,7 @@ Every tool `tokenhush env` onboards must send a request path the gateway routes.
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` |
 | Windows | `%AppData%\tokenhush\` |
 
-The file is named `tokenhush.yaml`. Override its path with `tokenhush run --config PATH`, or move config and data together with `TOKENHUSH_HOME`. It is read at **startup**, so restart the gateway after editing. `tokenhush doctor` validates the config and the port. For `listen`, `detectors`, `allowlist`, `self_protection`, and `log`, see the [`tokenhush.yaml` reference](#tokenhushyaml-reference).
+The file is named `tokenhush.yaml`. Override its path with `tokenhush run --config PATH`, or move config and data together with `TOKENHUSH_HOME`. It is read at **startup**, so restart the gateway after editing. The one exception is the runtime allowlist: it is a separate store changed through the control plane and takes effect immediately, without a restart (see the [`tokenhush.yaml` reference](#tokenhushyaml-reference)). `tokenhush doctor` validates the config and the port. For `listen`, `detectors`, `allowlist`, `self_protection`, and `log`, see the [`tokenhush.yaml` reference](#tokenhushyaml-reference).
 
 ### Limits
 
@@ -205,7 +205,7 @@ detectors:
   private_keys: true   # PEM private-key headers
   luhn: true           # card numbers (Luhn)
   email: true          # email addresses
-allowlist: []          # literals never redacted; the runtime allowlist adds to them (union)
+allowlist: []          # literals never redacted while listed; the runtime allowlist adds to them (union)
 self_protection:       # change-channel guard; on by default
   enabled: true        # false is an explicit opt-out
   modes: [cli-command, control-port, file-write]
@@ -221,7 +221,7 @@ Key points:
 - `listen.host` takes loopback only; the gateway **never** binds `0.0.0.0` or an empty host. It binds `127.0.0.1` always and `[::1]` as well when the host has an IPv6 loopback; on a host without one it serves `127.0.0.1` only and logs a notice.
 - Six deterministic, high-precision detectors: key prefixes, high-entropy strings, JWT, PEM private-key headers, Luhn card numbers, email. A match becomes a stable placeholder like `__PII_email_9f2c8a4b6d1e__`, so upstream never sees the raw value.
 - `prefixes` → detector id `prefix`; `private_keys` → `private_key` (see `pkg/config` comments).
-- `allowlist` holds literals never redacted. Static entries stay supported alongside the runtime allowlist: at startup they seed the runtime store and this key keeps being read, so the effective allowlist is the **union** of the two — never a replacement. Each entry must be non-empty, free of control characters, and at most 4096 bytes.
+- `allowlist` holds literals that are not redacted **while they are listed**. Static entries stay supported alongside the runtime allowlist: at startup they seed the runtime store and this key keeps being read, so the effective allowlist is the **union** of the two — never a replacement. Each entry must be non-empty, free of control characters, and at most 4096 bytes. The runtime allowlist is persisted at `<DataDir>/allowlist.json` (`0600`, versioned, **not** a session file) and is changed only through the loopback control plane: `tokenhush allowlist list|add|remove`, `GET|POST|DELETE /allowlist`, or the Pro Web UI. A change takes effect immediately, without a restart, and each change writes one metadata-only audit row.
 - `self_protection` guards the change channel (the `tokenhush allowlist` CLI, the loopback control port, and direct writes to the allowlist file) and ships enabled with all three modes. With `enabled: true`, `modes:` must not be an empty list (omitting the key keeps all three); `enabled: false` is the explicit opt-out. The exclusion set itself is deliberately not configurable: it is derived at runtime from the control-token value and the allowlist file content.
 - The core config has no `audit:` key: a config that still contains one fails to load. The audit block lives in the private Pro layer; the public core keeps only the metadata-only audit seam.
 - `upstreams:` maps a host or path prefix to your OpenAI-compatible upstream. Unmatched requests use built-ins: `/v1/messages` routes to Anthropic; `/v1/chat/completions` and `/v1/responses` route to OpenAI. `GET /v1/models` is the single **named exception**: a non-data-bearing model-discovery call that defaults to OpenAI, which an `upstreams:` override can still move. Every other unknown path returns an explicit error (`ErrUnknownUpstream`), never a silent misroute; see [security.md](security.md#named-routing-exceptions).
@@ -509,7 +509,7 @@ export LLM_BASE_URL=http://127.0.0.1:8787/v1
 
 - **The tool cannot connect.** Confirm the gateway is running with `tokenhush status`, then confirm the port in the tool matches the port `tokenhush run` printed.
 - **404 or "unknown upstream".** The base-URL shape is wrong. Anthropic-protocol clients take the bare origin; OpenAI-compatible clients take `/v1`. A wrong suffix is an explicit error, not a silent misroute.
-- **Nothing is redacted.** Check that the detectors are enabled in `tokenhush.yaml` and that the value is not on the `allowlist`. See the [`tokenhush.yaml` reference](#tokenhushyaml-reference).
+- **Nothing is redacted.** Check that the detectors are enabled in `tokenhush.yaml` and that the value is not on the `allowlist` (static or runtime — `tokenhush allowlist list` prints the runtime entries). See the [`tokenhush.yaml` reference](#tokenhushyaml-reference).
 - **Requests never reach the gateway.** Some tools keep a cached provider selection; reselect the provider. For VS Code extensions, the setting lives in the extension, not in a project file.
 - **A remote, container, or SSH session.** `127.0.0.1` refers to the machine the tool runs on, not your laptop. Run the gateway on that host or forward the port.
 - **Verify end to end.** After any change, send one request and watch the `requests` counter in `tokenhush status` increase. To see redaction itself with a local echo upstream, follow [verify.md](verify.md).

@@ -184,7 +184,7 @@ raw-key grep exit=1
 |---|---|---|---|
 | 1 | **脱敏生效** | §3.4：对 `$WORK/upstream.log` 跑 `grep -c "$SECRET"` | 输出 `0`（退出码 `1`），且日志里出现 `__PII_...__` 占位符 |
 | 2 | **回填正确 + 出站不回填** | §3.3 客户端响应含原始密钥；§3.5 重放占位符后上游仍只含占位符 | 客户端拿到原文；上游始终无原始密钥 |
-| 3 | **审计接缝（仅元数据）** | §3 跑完后 `grep -rn "$SECRET" "$TOKENHUSH_HOME"` 与 `grep -rn '__PII_' "$TOKENHUSH_HOME"` | 都无命中；数据根只含会话元数据（运行中：`run.json`、`control.token`；干净退出后删除）。核心 `pkg/audit` 是 no-op 接缝，只定义**仅元数据**的记录契约，不落任何正文 |
+| 3 | **审计接缝（仅元数据）** | §3 跑完后 `grep -rn "$SECRET" "$TOKENHUSH_HOME"` 与 `grep -rn '__PII_' "$TOKENHUSH_HOME"` | 都无命中；数据根的文件清单为：会话文件 `run.json` 与 `control.token`（运行中，干净退出后删除），以及运行期白名单 `<DataDir>/allowlist.json`（`0600`、带 `schema_version`、**非**会话文件，干净退出后保留；只含你显式放行的字面量）。核心 `pkg/audit` 是 no-op 接缝，只定义**仅元数据**的记录契约，不落任何正文 |
 | 4 | **`privacy` 两项外发，均 active** | `"$BIN" privacy --json` | 正好两项：`update-check`、`rule-sync`，`status` 均为 `active`，且与 [`egress.yaml`](../egress.yaml) 和 [generated/network-egress.md](generated/network-egress.md) 逐字段一致；各带关闭开关（`TOKENHUSH_NO_UPDATE_CHECK=1` / `TOKENHUSH_NO_RULE_SYNC=1`） |
 | 5 | **`doctor` 通过** | 用一个空闲端口跑 `"$BIN" doctor --config <config>` | 退出码 `0`（无 failure）。工具未接入带来的 `warn` 不阻塞；`secret-store` 落到 `file-plaintext` 才算 failure |
 

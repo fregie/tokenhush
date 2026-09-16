@@ -100,7 +100,7 @@ A **placeholder** is the fake string that replaces a real secret on the way out.
 
 ### Detector strategy (V1)
 
-Deterministic rules with **high precision first**: known key prefixes (`sk-`, `AKIA`, `ghp_`, ...), high-entropy strings, JWT, private-key headers, Luhn card-number checksums, and email addresses. An allowlist and one-click release are provided. The wording stays honest: **"high-confidence secret interception"**, never "never leaks".
+Deterministic rules with **high precision first**: known key prefixes (`sk-`, `AKIA`, `ghp_`, ...), high-entropy strings, JWT, private-key headers, Luhn card-number checksums, and email addresses. An allowlist (static in `tokenhush.yaml`, plus a runtime-mutable, audited store) and one-click release are provided. The wording stays honest: **"high-confidence secret interception"**, never "never leaks".
 
 ## 📄 Open-core boundary
 

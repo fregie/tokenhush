@@ -347,8 +347,9 @@ The data directory holds:
 |---|---|
 | `control.token` | Per-session bearer token for the control API, written `0600`, regenerated on every `run` |
 | `run.json` | Session metadata (pid, port, start time). Carries no secrets and no request content. |
+| `allowlist.json` | Runtime allowlist entries (the values never redacted while listed). Versioned JSON written `0600`. **Not** a session file: it survives a clean shutdown. |
 
-`run.json` and `control.token` are session files. `run` removes them on clean shutdown, and a stale `run.json` only affects diagnostics, not data safety. The core stores no request or response content.
+`run.json` and `control.token` are session files. `run` removes them on clean shutdown, and a stale `run.json` only affects diagnostics, not data safety. `allowlist.json` is **not** a session file: it holds the runtime allowlist, stays across restarts and clean shutdown, and contains only the values you explicitly allowlisted. The core stores no request or response content.
 
 ## ⚙️ 6. Configuration
 
@@ -394,7 +395,7 @@ On Windows, remove the install directory and drop it from your user `PATH`:
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\Programs\tokenhush"
 ```
 
-If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories for a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the session files (the control token and `run.json`).
+If you added a launchd agent, systemd unit, or scheduled task, remove that entry first (see [Keep it running in the background](#keep-it-running-in-the-background)). Then delete the config and data directories for a clean slate. On macOS both live under `~/Library/Application Support/tokenhush/`; on Linux they are `~/.config/tokenhush/` and `~/.local/share/tokenhush/`; on Windows they are `%AppData%\tokenhush\` and `%LOCALAPPDATA%\tokenhush\`. Removing the data directory discards the session files (the control token and `run.json`) and the persisted runtime allowlist (`allowlist.json`).
 
 ## 🛠️ 9. Troubleshooting
 
