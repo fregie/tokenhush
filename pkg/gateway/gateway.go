@@ -272,6 +272,10 @@ func invokeTeardown(opts Options, deps *Deps) {
 // registered for GET explicitly; the method-less pattern keeps a non-GET
 // method on the control path inside the control API (JSON 405) instead of
 // letting it fall through to the data plane.
+//
+// C7/C8 装配接缝：opts.AllowlistStore 与 opts.SelfProtection 在本函数内就地可用，
+// 供 W5.3 直接注册 /allowlist 端点（不经 Options.Mount 的惰性端口机制——监听端口
+// 与 deps.Token 已由 Run 在调用前就绪）。W0.3 只记录可达性，尚不注册端点。
 func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt time.Time) http.Handler {
 	control := proxy.NewControlAPI(func() proxy.ControlStatus {
 		return proxy.ControlStatus{

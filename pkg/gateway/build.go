@@ -48,7 +48,7 @@ type BuildOptions struct {
 // daemon has its own builder that can register extra plugin families. The
 // gateway itself never builds a pipeline.
 func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
-	registry, err := buildRegistry(opts.Detectors, opts.Allowlist)
+	registry, err := buildRegistry(opts.Detectors, opts.Allowlist, opts.AllowlistStore)
 	if err != nil {
 		return nil, err
 	}
@@ -71,15 +71,20 @@ func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
 		Engine:   engine,
 		Sink:     opts.Sink,
 		Tool:     opts.Tool,
+		// C8 接缝：此处只搬运原语，零值 = 完全无操作；拦截实现归 W6.1–W6.4。
+		SelfProtectionEnabled: opts.SelfProtection.Enabled,
+		SelfProtectionModes:   opts.SelfProtection.Modes,
+		Exclusions:            opts.SelfProtection.Exclusions,
+		ControlToken:          opts.SelfProtection.ControlToken,
 	})
 }
 
 // buildRegistry registers the enabled built-in detectors in config order. A
 // registration failure is a construction error: the registry is the security
 // gate, so a rejected plugin must abort startup rather than be skipped.
-func buildRegistry(detectors, allowlist []string) (*extension.Registry, error) {
+func buildRegistry(detectors, allowlist []string, store AllowlistStore) (*extension.Registry, error) {
 	registry := extension.NewRegistry()
-	options := detectorOptions(allowlist)
+	options := detectorOptions(allowlist, store)
 	for _, id := range detectors {
 		constructor, ok := builtinDetectors[id]
 		if !ok {
@@ -93,12 +98,20 @@ func buildRegistry(detectors, allowlist []string) (*extension.Registry, error) {
 }
 
 // detectorOptions forwards the config allowlist to every detector; an empty
-// allowlist passes no options so the detector defaults apply.
-func detectorOptions(allowlist []string) []redact.Option {
-	if len(allowlist) == 0 {
-		return nil
+// allowlist passes no options so the detector defaults apply. A nil store
+// passes no runtime source (zero value = the pre-seam behaviour); a non-nil
+// store wires the shared handle so every detector reads it at Inspect time
+// (ADR-0012 A2: the effective literals are static ∪ dynamic, never a
+// replacement of the static set).
+func detectorOptions(allowlist []string, store AllowlistStore) []redact.Option {
+	var options []redact.Option
+	if len(allowlist) > 0 {
+		options = append(options, redact.WithAllowlist(allowlist...))
 	}
-	return []redact.Option{redact.WithAllowlist(allowlist...)}
+	if store != nil {
+		options = append(options, redact.WithAllowlistSource(store.Entries))
+	}
+	return options
 }
 
 // failClosedDetectors marks every enabled built-in detector FailClosed. The

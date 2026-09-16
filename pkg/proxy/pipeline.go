@@ -50,6 +50,21 @@ type PipelineConfig struct {
 	Sink audit.AuditSink
 	// Tool labels the content Document (for example "claude-code").
 	Tool string
+	// The fields below carry the C8 self-protection seam only: NewPipeline
+	// stores them for W6.1–W6.4, which own every interception, force-redaction,
+	// pattern-match and SSE-guard behaviour. Every zero value is a complete
+	// no-op (identical bytes on the wire as before the seam existed).
+	//
+	// SelfProtectionEnabled arms the C8 mutation-channel interception (W6.1+).
+	SelfProtectionEnabled bool
+	// SelfProtectionModes lists the enabled interception categories (W6.2+).
+	SelfProtectionModes []string
+	// Exclusions carries the narrow exclusion set force-redacted and never
+	// restored by C8 (W6.1+). Nil is a no-op.
+	Exclusions [][]byte
+	// ControlToken is the session control-token value consumed by C8 (W6.1+).
+	// Empty is a no-op.
+	ControlToken string
 }
 
 // Pipeline composes the W4.1 registry, W4.2 policy, W4.3 detectors, W4.4
@@ -79,6 +94,14 @@ type Pipeline struct {
 	sink     audit.AuditSink
 	tool     string
 
+	// C8 self-protection seam copied from PipelineConfig at construction time.
+	// W6.1–W6.4 consume these fields; W0.3 only carries them, and their zero
+	// values are a complete no-op.
+	selfProtectionEnabled bool
+	selfProtectionModes   []string
+	exclusions            [][]byte
+	controlToken          string
+
 	// reporter, when set, receives one masked event per replaced span and per
 	// policy block. It is an atomic pointer so a reporter installed before Run
 	// is read race-free by every request goroutine. See SetRedactionReporter.
@@ -105,6 +128,11 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 		engine:   cfg.Engine,
 		sink:     cfg.Sink,
 		tool:     cfg.Tool,
+
+		selfProtectionEnabled: cfg.SelfProtectionEnabled,
+		selfProtectionModes:   cfg.SelfProtectionModes,
+		exclusions:            cfg.Exclusions,
+		controlToken:          cfg.ControlToken,
 	}, nil
 }
 
