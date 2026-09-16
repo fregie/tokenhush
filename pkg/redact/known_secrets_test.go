@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -274,40 +275,97 @@ func TestKnownSecretMembership(t *testing.T) {
 	})
 }
 
-// TestKnownSecretsConcurrentReads exercises the new read API against a
-// concurrent writer (Placeholder), so a -race run of this package covers the
-// read path. It does not require -race to pass.
+// TestKnownSecretsConcurrentReads exercises the read API against a concurrent
+// writer (Placeholder), so a -race run of this package covers the read path
+// with real reader/writer overlap. Both sides are bounded by fixed iteration
+// counts: an unbounded writer grows the map while every read copies it (the
+// snapshot is O(n)), which turns the pair quadratic and lets a -race run exceed
+// any timeout. The fixed counts keep the total work constant while the
+// goroutines still start together and race on the same engine.
 func TestKnownSecretsConcurrentReads(t *testing.T) {
+	const (
+		writerIterations = 200
+		readers          = 4
+		readerIterations = 50
+	)
+
 	e := mustEngine(t)
 	const base = "concurrent-base"
 	want := e.Placeholder(base, "api_key")
 	body := []byte("xx " + base + " yy")
 
-	stop := make(chan struct{})
-	var wg sync.WaitGroup
+	var (
+		wg      sync.WaitGroup
+		start   = make(chan struct{})
+		written = make([]string, writerIterations) // read only after wg.Wait
+	)
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; ; i++ {
-			select {
-			case <-stop:
-				return
-			default:
-				e.Placeholder(fmt.Sprintf("concurrent-secret-%d", i), "jwt")
-			}
+		<-start
+		for i := 0; i < writerIterations; i++ {
+			secret := fmt.Sprintf("concurrent-secret-%d", i)
+			written[i] = secret
+			e.Placeholder(secret, "jwt")
 		}
 	}()
 
-	for i := 0; i < 200; i++ {
-		if ok, token := e.ContainsKnownSecret(body); !ok || token != want {
-			close(stop)
-			wg.Wait()
-			t.Fatalf("iteration %d: ContainsKnownSecret = (%v,%q), want (true,%q)", i, ok, token, want)
-		}
-		_ = e.KnownSecrets()
+	for r := 0; r < readers; r++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := 0; i < readerIterations; i++ {
+				// base stays mapped and is the only mapped secret occurring in
+				// body, so this hit is deterministic while the writer runs.
+				ok, token := e.ContainsKnownSecret(body)
+				if !ok || token != want {
+					t.Errorf("ContainsKnownSecret = (%v,%q), want (true,%q)", ok, token, want)
+					return
+				}
+				// Snapshot invariants that hold under concurrency: no empty or
+				// duplicate entries, and never more than base plus the writer's.
+				snapshot := e.KnownSecrets()
+				if len(snapshot) > writerIterations+1 {
+					t.Errorf("KnownSecrets returned %d secrets, want at most %d", len(snapshot), writerIterations+1)
+					return
+				}
+				seen := make(map[string]struct{}, len(snapshot))
+				for _, s := range snapshot {
+					if len(s) == 0 {
+						t.Error("KnownSecrets returned an empty secret")
+						return
+					}
+					if _, dup := seen[string(s)]; dup {
+						t.Errorf("KnownSecrets returned %q twice", s)
+						return
+					}
+					seen[string(s)] = struct{}{}
+				}
+			}
+		}()
 	}
-	close(stop)
+
+	close(start)
 	wg.Wait()
+
+	// Deterministic postcondition once every goroutine has joined: all writes
+	// landed, each secret is reported exactly once, and the snapshot is sorted.
+	wantAll := append([]string{base}, written...)
+	sort.Strings(wantAll)
+	got := secretsAsStrings(e.KnownSecrets())
+	if !sameStrings(got, wantAll) {
+		for i := range got {
+			if i >= len(wantAll) {
+				t.Fatalf("KnownSecrets returned %d entries, want %d (extra entry %d: %q)", len(got), len(wantAll), i, got[i])
+			}
+			if got[i] != wantAll[i] {
+				t.Fatalf("KnownSecrets mismatch at entry %d: got %q, want %q (%d entries, want %d)", i, got[i], wantAll[i], len(got), len(wantAll))
+			}
+		}
+		t.Fatalf("KnownSecrets = %d entries, want %d", len(got), len(wantAll))
+	}
 }
 
 // TestKnownSecretReadOnly proves the new API is read-only: repeated membership
