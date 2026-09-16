@@ -209,7 +209,6 @@ allowlist: []          # literals never redacted; the runtime allowlist adds to 
 self_protection:       # change-channel guard; on by default
   enabled: true        # false is an explicit opt-out
   modes: [cli-command, control-port, file-write]
-  exclude_paths: []    # extra files whose contents are never restored
 log:
   level: info          # debug | info | warn | error
 upstreams:             # host or path prefix -> upstream base URL
@@ -223,7 +222,7 @@ Key points:
 - Six deterministic, high-precision detectors: key prefixes, high-entropy strings, JWT, PEM private-key headers, Luhn card numbers, email. A match becomes a stable placeholder like `__PII_email_9f2c8a4b6d1e__`, so upstream never sees the raw value.
 - `prefixes` → detector id `prefix`; `private_keys` → `private_key` (see `pkg/config` comments).
 - `allowlist` holds literals never redacted. Static entries stay supported alongside the runtime allowlist: at startup they seed the runtime store and this key keeps being read, so the effective allowlist is the **union** of the two — never a replacement. Each entry must be non-empty, free of control characters, and at most 4096 bytes.
-- `self_protection` guards the change channel (the `tokenhush allowlist` CLI, the loopback control port, and direct writes to the allowlist file) and ships enabled with all three modes. `enabled: false` or a shortened `modes:` list is an explicit opt-out. `exclude_paths` names extra files whose full contents join the exclusion set that is never restored; each entry follows the same 4096-byte and no-control-character rule.
+- `self_protection` guards the change channel (the `tokenhush allowlist` CLI, the loopback control port, and direct writes to the allowlist file) and ships enabled with all three modes. With `enabled: true`, `modes:` must not be an empty list (omitting the key keeps all three); `enabled: false` is the explicit opt-out. The exclusion set itself is deliberately not configurable: it is derived at runtime from the control-token value and the allowlist file content.
 - The core config has no `audit:` key: a config that still contains one fails to load. The audit block lives in the private Pro layer; the public core keeps only the metadata-only audit seam.
 - `upstreams:` maps a host or path prefix to your OpenAI-compatible upstream. Unmatched requests use built-ins: `/v1/messages` routes to Anthropic; `/v1/chat/completions` and `/v1/responses` route to OpenAI. `GET /v1/models` is the single **named exception**: a non-data-bearing model-discovery call that defaults to OpenAI, which an `upstreams:` override can still move. Every other unknown path returns an explicit error (`ErrUnknownUpstream`), never a silent misroute; see [security.md](security.md#named-routing-exceptions).
 

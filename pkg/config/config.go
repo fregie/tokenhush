@@ -17,10 +17,9 @@ import (
 // fails fast with ErrTooLarge.
 const maxConfigBytes = 1 << 20 // 1 MiB
 
-// maxConfigEntryBytes bounds one allowlist or exclude_paths entry. Entries are
-// literals and file paths, not documents, so anything longer is a mistake or
-// hostile and is rejected rather than truncated. maxConfigBytes still bounds
-// the file as a whole.
+// maxConfigEntryBytes bounds one allowlist entry. Entries are literals, not
+// documents, so anything longer is a mistake or hostile and is rejected rather
+// than truncated. maxConfigBytes still bounds the file as a whole.
 const maxConfigEntryBytes = 4096
 
 // Canonical detector ids, matching docs/configuration.md. Note the deliberate mismatch
@@ -111,17 +110,17 @@ func (d Detectors) EnabledIDs() []string {
 // SelfProtection mirrors the `self_protection:` block: the change-channel
 // guard that keeps a model from weakening redaction through tool calls. It is
 // hardening by default, so a config file that omits the block keeps every
-// interception mode on; only an explicit `enabled: false` (or a shortened
-// `modes:` list) opts out.
+// interception mode on; only an explicit `enabled: false` opts out (with
+// `enabled: true`, at least one mode is required).
 //
-// ExcludePaths names extra files whose full contents join the runtime
-// exclusion set (alongside the control token and <DataDir>/allowlist.json).
-// The files are read by the gateway at startup; pkg/config only carries and
-// validates the paths.
+// The guard's exclusion set is deliberately NOT configurable: it is frozen to
+// the control-token value plus the full <DataDir>/allowlist.json content, both
+// derived at runtime by the gateway, so that no config value — and therefore
+// no model-influenced input — can widen or shrink what is force-redacted and
+// never restored.
 type SelfProtection struct {
-	Enabled      bool     `yaml:"enabled"`
-	Modes        []string `yaml:"modes"`
-	ExcludePaths []string `yaml:"exclude_paths"`
+	Enabled bool     `yaml:"enabled"`
+	Modes   []string `yaml:"modes"`
 }
 
 // EnabledModes returns the active interception categories in canonical
@@ -288,10 +287,19 @@ func (c *Config) validate(path string) error {
 }
 
 // validate rejects unusable self_protection values: modes outside the frozen
-// set, duplicate modes, and exclude_paths entries that are empty, contain
-// control characters, or exceed maxConfigEntryBytes. `enabled: false` is an
-// explicit user choice and is accepted without a warning.
+// set, duplicate modes, and `enabled: true` with an explicit empty modes list,
+// which would announce the guard as on while enforcing nothing. `enabled:
+// false` is an explicit user choice and is accepted without a warning; an
+// omitted `modes:` key inherits the hardened three-mode default (see Default).
 func (s SelfProtection) validate(path string) error {
+	if s.Enabled && len(s.Modes) == 0 {
+		return &Error{
+			Path:   path,
+			Field:  "self_protection.modes",
+			Reason: "enabled: true requires at least one mode (" + strings.Join(canonicalSelfProtectionModes[:], "|") + "); use enabled: false to opt out",
+			Err:    ErrInvalidSelfProtection,
+		}
+	}
 	seen := make(map[string]struct{}, len(s.Modes))
 	for i, mode := range s.Modes {
 		if !isSelfProtectionMode(mode) {
@@ -311,16 +319,6 @@ func (s SelfProtection) validate(path string) error {
 			}
 		}
 		seen[mode] = struct{}{}
-	}
-	for i, entry := range s.ExcludePaths {
-		if reason, bad := entryProblem(entry); bad {
-			return &Error{
-				Path:   path,
-				Field:  "self_protection.exclude_paths",
-				Reason: fmt.Sprintf("entry %d %s", i, reason),
-				Err:    ErrInvalidSelfProtection,
-			}
-		}
 	}
 	return nil
 }
@@ -351,7 +349,7 @@ func validateAllowlist(path string, entries []string) error {
 	return nil
 }
 
-// entryProblem reports why an allowlist or exclude_paths entry is unusable.
+// entryProblem reports why an allowlist entry is unusable.
 func entryProblem(entry string) (string, bool) {
 	switch {
 	case entry == "":

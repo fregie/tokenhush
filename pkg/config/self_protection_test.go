@@ -2,7 +2,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,9 +27,6 @@ func TestSelfProtectionDefaultsHardened(t *testing.T) {
 		if !reflect.DeepEqual(sp.Modes, allSelfProtectionModes) {
 			t.Fatalf("Default().SelfProtection.Modes = %v, want %v", sp.Modes, allSelfProtectionModes)
 		}
-		if sp.ExcludePaths != nil {
-			t.Fatalf("Default().SelfProtection.ExcludePaths = %v, want nil", sp.ExcludePaths)
-		}
 		if got := sp.EnabledModes(); !reflect.DeepEqual(got, allSelfProtectionModes) {
 			t.Fatalf("Default().SelfProtection.EnabledModes() = %v, want %v", got, allSelfProtectionModes)
 		}
@@ -53,9 +49,6 @@ func TestSelfProtectionDefaultsHardened(t *testing.T) {
 			}
 			if !reflect.DeepEqual(cfg.SelfProtection.Modes, allSelfProtectionModes) {
 				t.Errorf("SelfProtection.Modes = %v, want hardened default %v", cfg.SelfProtection.Modes, allSelfProtectionModes)
-			}
-			if cfg.SelfProtection.ExcludePaths != nil {
-				t.Errorf("SelfProtection.ExcludePaths = %v, want nil", cfg.SelfProtection.ExcludePaths)
 			}
 		})
 	}
@@ -86,13 +79,18 @@ func TestSelfProtectionDefaultsHardened(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit_exclude_paths_round_trip", func(t *testing.T) {
-		cfg, err := LoadFile(writeConfig(t, "self_protection:\n  exclude_paths: [/etc/tokenhush/extra.txt]\n"))
+	// enabled: true with an OMITTED modes: key inherits the hardened default
+	// (all three modes): only an explicit empty list is rejected.
+	t.Run("enabled_true_modes_omitted_keeps_hardened_defaults", func(t *testing.T) {
+		cfg, err := LoadFile(writeConfig(t, "self_protection:\n  enabled: true\n"))
 		if err != nil {
-			t.Fatalf("LoadFile: %v", err)
+			t.Fatalf("enabled: true with omitted modes must load, got %v", err)
 		}
-		if want := []string{"/etc/tokenhush/extra.txt"}; !reflect.DeepEqual(cfg.SelfProtection.ExcludePaths, want) {
-			t.Errorf("SelfProtection.ExcludePaths = %v, want %v", cfg.SelfProtection.ExcludePaths, want)
+		if !reflect.DeepEqual(cfg.SelfProtection.Modes, allSelfProtectionModes) {
+			t.Errorf("SelfProtection.Modes = %v, want hardened default %v", cfg.SelfProtection.Modes, allSelfProtectionModes)
+		}
+		if got := cfg.SelfProtection.EnabledModes(); !reflect.DeepEqual(got, allSelfProtectionModes) {
+			t.Errorf("EnabledModes() = %v, want %v", got, allSelfProtectionModes)
 		}
 	})
 }
@@ -101,7 +99,6 @@ func TestSelfProtectionDefaultsHardened(t *testing.T) {
 // come back as a typed *Error (never a panic), name the offending value, and
 // classify under ErrInvalidSelfProtection.
 func TestSelfProtectionValidation(t *testing.T) {
-	overlong := strings.Repeat("a", maxConfigEntryBytes+1)
 	cases := map[string]struct {
 		body       string
 		wantField  string
@@ -122,20 +119,10 @@ func TestSelfProtectionValidation(t *testing.T) {
 			wantField:  "self_protection.modes",
 			wantReason: []string{"duplicate", "cli-command"},
 		},
-		"empty_exclude_path": {
-			body:       "self_protection:\n  exclude_paths: [\"\"]\n",
-			wantField:  "self_protection.exclude_paths",
-			wantReason: []string{"entry 0", "empty"},
-		},
-		"control_char_exclude_path": {
-			body:       "self_protection:\n  exclude_paths: [\"/tmp/a\\tb\"]\n",
-			wantField:  "self_protection.exclude_paths",
-			wantReason: []string{"entry 0", "control characters"},
-		},
-		"over_long_exclude_path": {
-			body:       "self_protection:\n  exclude_paths: [\"" + overlong + "\"]\n",
-			wantField:  "self_protection.exclude_paths",
-			wantReason: []string{"entry 0", fmt.Sprintf("%d", maxConfigEntryBytes)},
+		"enabled_with_no_modes_is_rejected": {
+			body:       "self_protection:\n  enabled: true\n  modes: []\n",
+			wantField:  "self_protection.modes",
+			wantReason: []string{"enabled: true", "at least one mode", "enabled: false"},
 		},
 	}
 	for name, tc := range cases {
@@ -164,9 +151,10 @@ func TestSelfProtectionValidation(t *testing.T) {
 	}
 
 	valid := map[string]string{
-		"all_three_modes_and_a_path":  "self_protection:\n  enabled: true\n  modes: [cli-command, control-port, file-write]\n  exclude_paths: [/tmp/extra.txt]\n",
+		"all_three_modes":             "self_protection:\n  enabled: true\n  modes: [cli-command, control-port, file-write]\n",
+		"single_mode":                 "self_protection:\n  modes: [file-write]\n",
+		"enabled_true_modes_omitted":  "self_protection:\n  enabled: true\n",
 		"explicit_disable_is_allowed": "self_protection:\n  enabled: false\n",
-		"empty_exclude_paths":         "self_protection:\n  exclude_paths: []\n",
 	}
 	for name, body := range valid {
 		t.Run(name+"_accepted", func(t *testing.T) {
@@ -205,7 +193,7 @@ func TestSelfProtectionEnabledModesCanonicalOrder(t *testing.T) {
 			sp:   SelfProtection{Enabled: false, Modes: allSelfProtectionModes},
 			want: nil,
 		},
-		"absent_modes": {
+		"hand_built_zero_modes": {
 			sp:   SelfProtection{Enabled: true},
 			want: nil,
 		},
