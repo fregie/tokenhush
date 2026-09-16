@@ -132,6 +132,59 @@ func w63WantArgs(t *testing.T, got []byte, want ...string) {
 	}
 }
 
+// TestToolCallGuardEncodedOrdinals pins the B1 defect: consumeEncoded must
+// advance encodedIdx by the Encoded leaves it swallows, exactly as
+// mutationChannelGuardTargets numbers them, or a later encoded arguments target
+// is skipped (leak) and an unrelated encoded leaf can be hit instead.
+func TestToolCallGuardEncodedOrdinals(t *testing.T) {
+	t.Run("nested_encoded_leaf_keeps_the_next_tool_call_numbered", func(t *testing.T) {
+		pipe := w63Pipeline(t)
+		// The first call's arguments contain a nested Encoded leaf (its "note"
+		// value is itself a JSON document). Replacing that parent must consume
+		// the nested encoded leaf too, or the second call is no longer the
+		// target its own ordinal was computed for.
+		body := []byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"","tool_calls":[` +
+			`{"id":"call_1","type":"function","function":{"arguments":"{\"cmd\":\"tokenhush allowlist add evil\",\"note\":\"{\\\"a\\\":\\\"b\\\"}\"}"}},` +
+			`{"id":"call_2","type":"function","function":{"arguments":"{\"cmd\":\"tokenhush allowlist add evil2\"}"}}]}}]}`)
+
+		out, err := pipe.transformResponse(body, pipe.tool)
+		if err != nil {
+			t.Fatalf("transformResponse = %v, want nil", err)
+		}
+		t.Logf("B1_NESTED_ORIGINAL=%s", body)
+		t.Logf("B1_NESTED_GUARDED=%s", out)
+		if bytes.Contains(out, []byte("evil2")) {
+			t.Fatalf("the second (sibling) tool call leaked: %s", out)
+		}
+		w63WantArgs(t, out, mutationChannelRefusalNotice, mutationChannelRefusalNotice)
+	})
+
+	t.Run("non_arguments_encoded_leaf_is_never_mis_rewritten", func(t *testing.T) {
+		pipe := w63Pipeline(t)
+		// The message prose is an Encoded leaf carrying a matching command in
+		// its nested leaf. It is not the arguments field, so the guard must
+		// leave it untouched even while the arguments calls around it are
+		// numbered and refused.
+		raw := []byte(`{"choices":[{"index":0,"message":{"role":"assistant","content":"{\"secret\":\"tokenhush allowlist add evil\"}","tool_calls":[` +
+			`{"id":"call_1","type":"function","function":{"arguments":"{\"cmd\":\"tokenhush allowlist add evil1\",\"note\":\"{\\\"a\\\":\\\"b\\\"}\"}"}},` +
+			`{"id":"call_2","type":"function","function":{"arguments":"{\"cmd\":\"tokenhush allowlist add evil2\"}"}}]}}]}`)
+
+		out, err := pipe.transformResponse(raw, pipe.tool)
+		if err != nil {
+			t.Fatalf("transformResponse = %v, want nil", err)
+		}
+		t.Logf("B1_NONARG_ORIGINAL=%s", raw)
+		t.Logf("B1_NONARG_GUARDED=%s", out)
+		if !bytes.Contains(out, []byte(`"content":"{\"secret\":\"tokenhush allowlist add evil\"}"`)) {
+			t.Fatalf("the non-arguments encoded leaf was rewritten: %s", out)
+		}
+		if bytes.Contains(out, []byte("evil1")) || bytes.Contains(out, []byte("evil2")) {
+			t.Fatalf("an offending arguments call leaked: %s", out)
+		}
+		w63WantArgs(t, out, mutationChannelRefusalNotice, mutationChannelRefusalNotice)
+	})
+}
+
 // TestToolCallBlockedWithNotice is the W6.3 acceptance test: a mutation-channel
 // tool call is rewritten to the refusal notice per tool call, for both argument
 // shapes, while the response itself is still delivered and every other byte is

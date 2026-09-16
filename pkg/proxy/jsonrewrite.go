@@ -221,8 +221,11 @@ func (rw *leafRewriter) rewriteString(content, path string, start, end int, stat
 // path+"#" prefix scan: escapePointer does not escape '#', so a sibling key
 // literally named "x#y" produces the path "/x#y", which shares the "/x#" prefix
 // of an encoded parent "/x" and would make a prefix scan swallow (or desync on)
-// that sibling. The cursor rule is frozen: walkIdx advances by the whole run,
-// terminalIdx by the count of non-Encoded leaves in it.
+// that sibling. The cursor rule is frozen and must mirror
+// mutationChannelGuardTargets: walkIdx advances by the whole run, terminalIdx by
+// the count of non-Encoded leaves in it, and encodedIdx by the count of Encoded
+// leaves in it. Omitting the encoded increment makes encodedIdx lag, so a later
+// Encoded arguments target is numbered one too low and its guard is skipped.
 func (rw *leafRewriter) consumeEncoded(content []byte) error {
 	nested, err := protocol.Walk(content)
 	if err != nil {
@@ -230,7 +233,9 @@ func (rw *leafRewriter) consumeEncoded(content []byte) error {
 	}
 	rw.walkIdx += len(nested)
 	for _, leaf := range nested {
-		if !leaf.Encoded {
+		if leaf.Encoded {
+			rw.encodedIdx++
+		} else {
 			rw.terminalIdx++
 		}
 	}
