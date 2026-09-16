@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/fregie/tokenhush/pkg/audit"
@@ -45,7 +46,7 @@ type BuildOptions struct {
 // daemon has its own builder that can register extra plugin families. The
 // gateway itself never builds a pipeline.
 func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
-	registry, err := buildRegistry(opts.Detectors, opts.Allowlist)
+	registry, err := buildRegistry(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -71,19 +72,30 @@ func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
 	})
 }
 
-// buildRegistry registers the enabled built-in detectors in config order. A
-// registration failure is a construction error: the registry is the security
-// gate, so a rejected plugin must abort startup rather than be skipped.
-func buildRegistry(detectors, allowlist []string) (*extension.Registry, error) {
+// buildRegistry registers the enabled built-in detectors in config order and,
+// when opts carries a synced rule pack, the compiled remote-rule interpreter.
+// A compile or registration failure is a construction error: the registry is
+// the security gate, so a rejected plugin must abort startup rather than be
+// skipped and the interpreter must never be silently dropped.
+func buildRegistry(opts BuildOptions) (*extension.Registry, error) {
 	registry := extension.NewRegistry()
-	options := detectorOptions(allowlist)
-	for _, id := range detectors {
+	options := detectorOptions(opts.Allowlist)
+	for _, id := range opts.Detectors {
 		constructor, ok := builtinDetectors[id]
 		if !ok {
 			continue
 		}
 		if err := registry.Register(constructor(options...)); err != nil {
 			return nil, err
+		}
+	}
+	if opts.Rules != nil {
+		interp, err := rules.Compile(opts.Rules, rules.DefaultOptions())
+		if err != nil {
+			return nil, fmt.Errorf("compile remote rules: %w", err)
+		}
+		if err := registry.Register(interp); err != nil {
+			return nil, fmt.Errorf("register remote rules interpreter: %w", err)
 		}
 	}
 	return registry, nil
