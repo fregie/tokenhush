@@ -29,6 +29,7 @@ usage:
   tokenhush privacy  show requests that leave your machine for the vendor
   tokenhush update [--check]  upgrade via the owning package manager
   tokenhush rules <sync|rollback>  sync signed detection rules or roll back
+  tokenhush allowlist <list|add|remove>  manage the runtime allowlist
   tokenhush version  print version and build information
 `
 
@@ -57,6 +58,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return updateCommand(args[1:], stdout, stderr)
 	case "rules":
 		return rulesCommand(args[1:], stdout, stderr)
+	case "allowlist":
+		return allowlistCommand(args[1:], stdout, stderr)
 	case "status":
 		// W6.7 seam: statusCommand renders the read-only Pro badge when a
 		// valid license file is present by calling proLicenseBadge().
