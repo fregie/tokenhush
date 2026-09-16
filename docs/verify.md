@@ -172,7 +172,7 @@ The demo touches nothing outside `$WORK`: the gateway's control token and config
 
 Proves: detected secrets are replaced before the body is forwarded; backfill runs only on the client-bound response; an `upstreams:` override can redirect a route and redaction still runs first.
 
-Does not prove: perfect recall. Detection is deterministic and high-precision-first ([security.md](security.md)); a value that no detector recognises is forwarded unchanged. The hard invariant this demo shows is one-way: **placeholders are never backfilled outbound** ([security.md](security.md#hard-invariants)).
+Does not prove: perfect recall. Detection is deterministic and high-precision-first ([security.md](security.md)); a value that no detector recognises is forwarded unchanged. Nor does it prove that every encoded form of a known secret is caught: the outbound re-check that runs after redaction is a fixed decoder enumeration, and its known uncovered classes are published under [known limitations](security.md#known-limitations). The hard invariant this demo shows is one-way: **placeholders are never backfilled outbound** ([security.md](security.md#hard-invariants)).
 
 ## 📚 Related
 

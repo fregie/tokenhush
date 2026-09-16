@@ -14,7 +14,7 @@ Tokenhush is one static binary: no runtime dependencies, no daemon, no root cert
 | Architecture | amd64 or arm64 |
 | Go (source builds only) | Go 1.25 or newer |
 | Network | Loopback only. The gateway binds `127.0.0.1`, plus `[::1]` when the host has an IPv6 loopback. |
-| Disk | Room for runtime session files (the core stores no request or response content) |
+| Disk | Room for runtime session files and the persisted runtime allowlist (the core stores no request or response content) |
 
 Release binaries are pure Go (`CGO_ENABLED=0`), so no C toolchain is needed. The gateway refuses `0.0.0.0` and empty hosts; it binds loopback only (`127.0.0.1` always, plus `[::1]` when the host has an IPv6 loopback), because it is a local component, not a network service.
 
