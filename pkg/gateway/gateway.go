@@ -37,6 +37,18 @@ import (
 // method pattern (GET only) once a request reaches it.
 const controlStatusPath = "/status"
 
+// controlAllowlistPath is the control-plane allowlist CRUD route. It mirrors
+// the unexported constant in pkg/proxy and is registered for GET/POST/DELETE
+// plus the method-less spelling (see buildHandler).
+const controlAllowlistPath = "/allowlist"
+
+// controlAuditProvider labels the audit rows produced by control-plane
+// mutations, following the metadata-only row convention of the Pro daemon's
+// lifecycle and plugin rows (Provider names the subsystem, Path names the
+// operation, Method names the action, Client names the source and Detectors
+// carries the resulting entry count as a tag).
+const controlAuditProvider = "control"
+
 // Tuning shared by every embedded gateway. The detector timeout is
 // deliberately generous: the built-in detectors are configured FailClosed, so
 // a too-short timeout would turn a large but legitimate request into a block.
@@ -275,17 +287,26 @@ func invokeTeardown(opts Options, deps *Deps) {
 //
 // C7/C8 装配接缝：opts.AllowlistStore 与 opts.SelfProtection 在本函数内就地可用，
 // 供 W5.3 直接注册 /allowlist 端点（不经 Options.Mount 的惰性端口机制——监听端口
-// 与 deps.Token 已由 Run 在调用前就绪）。W0.3 只记录可达性，尚不注册端点。
+// 与 deps.Token 已由 Run 在调用前就绪）。/allowlist 与 /status 采用同一双注册
+// 模式：具体方法路由保证正确方法可达，无方法注册保证 PUT 等方法留在控制面并
+// 由 ControlAPI 的内部 mux 产出 JSON 405，而不是落到 "/" catch-all 数据面。
 func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt time.Time) http.Handler {
-	control := proxy.NewControlAPI(func() proxy.ControlStatus {
-		return proxy.ControlStatus{
-			State:      proxy.ControlStateRunning,
-			Addrs:      append([]string(nil), addrs...),
-			UptimeMS:   time.Since(startedAt).Milliseconds(),
-			Requests:   deps.Requests.Load(),
-			Redactions: deps.Redactions.Load(),
-		}
-	})
+	control := proxy.NewControlAPI(
+		func() proxy.ControlStatus {
+			return proxy.ControlStatus{
+				State:      proxy.ControlStateRunning,
+				Addrs:      append([]string(nil), addrs...),
+				UptimeMS:   time.Since(startedAt).Milliseconds(),
+				Requests:   deps.Requests.Load(),
+				Redactions: deps.Redactions.Load(),
+				Allowlist:  allowlistEntryCount(opts.AllowlistStore),
+			}
+		},
+		proxy.WithControlAllowlist(opts.AllowlistStore),
+		proxy.WithControlAudit(func(ev proxy.ControlAuditEvent) {
+			recordAllowlistMutation(opts.Sink, ev)
+		}),
+	)
 	guardedControl := proxy.HostAllowlist(port)(
 		proxy.OriginPolicy(proxy.ControlAuth(func() string { return deps.Token })(control)))
 
@@ -301,9 +322,42 @@ func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt 
 	mux := http.NewServeMux()
 	mux.Handle("GET "+controlStatusPath, guardedControl)
 	mux.Handle(controlStatusPath, guardedControl)
+	mux.Handle("GET "+controlAllowlistPath, guardedControl)
+	mux.Handle("POST "+controlAllowlistPath, guardedControl)
+	mux.Handle("DELETE "+controlAllowlistPath, guardedControl)
+	mux.Handle(controlAllowlistPath, guardedControl)
 	if opts.Mount != nil {
 		opts.Mount(mux, deps)
 	}
 	mux.Handle("/", dataPlane)
 	return mux
+}
+
+// allowlistEntryCount returns the current effective entry count for /status.
+// A nil store (C7 not wired) reports 0; the values themselves never appear in
+// the status payload.
+func allowlistEntryCount(store AllowlistStore) int {
+	if store == nil {
+		return 0
+	}
+	return len(store.Entries())
+}
+
+// recordAllowlistMutation writes one metadata-only audit row for a successful
+// control-plane allowlist change. A nil sink is a no-op (core passes
+// audit.NoopSink{}). The entry value is deliberately not recorded: the row
+// carries the action, the source identifier and the resulting entry count, and
+// the store's entries never leave memory through the audit seam.
+func recordAllowlistMutation(sink audit.AuditSink, ev proxy.ControlAuditEvent) {
+	if sink == nil {
+		return
+	}
+	_ = sink.Record(audit.Record{
+		TS:        time.Now().UnixMilli(),
+		Provider:  controlAuditProvider,
+		Method:    ev.Action,
+		Path:      controlAllowlistPath,
+		Client:    ev.Source,
+		Detectors: []string{fmt.Sprintf("entries:%d", ev.Count)},
+	})
 }
