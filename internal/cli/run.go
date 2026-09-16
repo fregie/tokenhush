@@ -10,9 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fregie/tokenhush/pkg/allowlist"
 	"github.com/fregie/tokenhush/pkg/audit"
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/gateway"
+	"github.com/fregie/tokenhush/pkg/platform"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
@@ -23,13 +25,14 @@ type RunDeps struct {
 	// ConfigPath is loaded only when cfg is nil: an explicit tokenhush.yaml
 	// path, or the platform default when empty.
 	ConfigPath string
-	// DataDir overrides platform.DataDir(); it holds the control token and the
-	// pid/port file. Empty means the platform data directory.
+	// DataDir overrides platform.DataDir(); it holds the control token, the
+	// pid/port file and the C7 allowlist store (<DataDir>/allowlist.json).
+	// Empty means the platform data directory.
 	DataDir string
 	// Stdout receives the human-facing startup lines. Nil discards them.
 	Stdout io.Writer
-	// Stderr is the diagnostics stream, kept in the seam for callers; the
-	// audit-free core writes only to Stdout.
+	// Stderr is the diagnostics stream: the masked redaction log and the C7
+	// allowlist-store degradation warnings are written here. Nil discards them.
 	Stderr io.Writer
 	// PolicyTimeout bounds one content-detector invocation. Zero uses the
 	// gateway default. It is the seam the fail-closed test drives to force a
@@ -74,13 +77,35 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	// seam, used only by the default resolver's unknown-path rejection row.
 	sink := audit.NoopSink{}
 
+	// C7 生产装配（W5.1）：store 持久化到 <DataDir>/allowlist.json，数据根必须在
+	// 这里确定——gateway.Run 内部的解析发生在 pipeline 构造之后，而 store 在构造
+	// detector 时就要接线。deps.DataDir 显式指定时原样使用，否则读平台默认（与
+	// gateway.Run 的回退路径同一个值，并由 Setup 固定给本次会话）。
+	dataDir := deps.DataDir
+	if dataDir == "" {
+		resolved, err := platform.DataDir()
+		if err != nil {
+			return err
+		}
+		dataDir = resolved
+	}
+	warn := deps.Stderr
+	if warn == nil {
+		warn = io.Discard
+	}
+	allowlistStore, err := allowlist.Open(dataDir, loaded.Allowlist, warn)
+	if err != nil {
+		return err
+	}
+
 	pipeline := deps.Pipeline
 	if pipeline == nil {
 		pipeline, err = gateway.BuildPipeline(gateway.BuildOptions{
-			Detectors: loaded.Detectors.EnabledIDs(),
-			Allowlist: loaded.Allowlist,
-			Sink:      sink,
-			Timeout:   deps.PolicyTimeout,
+			Detectors:      loaded.Detectors.EnabledIDs(),
+			Allowlist:      loaded.Allowlist,
+			Sink:           sink,
+			Timeout:        deps.PolicyTimeout,
+			AllowlistStore: allowlistStore,
 		})
 		if err != nil {
 			return err
@@ -92,21 +117,20 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	}
 
 	opts := gateway.Options{
-		Core:          *loaded,
-		Sink:          sink,
-		Pipeline:      pipeline,
-		PolicyTimeout: deps.PolicyTimeout,
-		Stdout:        deps.Stdout,
-		Stderr:        deps.Stderr,
-		Ready:         deps.Ready,
-	}
-
-	if deps.DataDir != "" {
-		dataDir := deps.DataDir
-		opts.Setup = func(d *gateway.Deps) error {
+		Core:           *loaded,
+		Sink:           sink,
+		Pipeline:       pipeline,
+		PolicyTimeout:  deps.PolicyTimeout,
+		Stdout:         deps.Stdout,
+		Stderr:         deps.Stderr,
+		Ready:          deps.Ready,
+		AllowlistStore: allowlistStore,
+		// 固定本次会话的数据根：store 文件与 run.json/control.token 必须落在同一个
+		// 目录（此前仅在 deps.DataDir 显式指定时固定；现在 store 也需要它）。
+		Setup: func(d *gateway.Deps) error {
 			d.DataDir = dataDir
 			return nil
-		}
+		},
 	}
 	return gateway.Run(ctx, opts)
 }
