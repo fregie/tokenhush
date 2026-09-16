@@ -41,6 +41,15 @@ Tokenhush is itself a security tool, so **it must be secure first**. This docume
 > [!NOTE]
 > **Known boundary (stdlib behaviour, not a parser defect).** With the default HTTP client, a response whose `Content-Encoding` arrives as two header lines with a first value of exactly `gzip` is decompressed by Go's `net/http` transport before the pipeline ever sees it, because the transport tests `Header.Get` (the first value only) rather than all values. Observed as a 200 with an empty body when the body is not valid gzip, with no upstream bytes released to the client. This is `net/http` behaviour, not a parser defect, and it does not create an uninspected pass-through: the pipeline's own all-values classifier is unaffected and is locked by `TestClassifyContentEncodingMultiValued`, and the transport's early decode releases no bytes the pipeline would otherwise have forwarded raw.
 
+## 🧯 Failure policy, per path
+
+The failure policy depends on which direction a body travels, because only the outbound (request) direction can turn a parse failure into an upstream leak.
+
+- **Request path: fail closed when JSON is declared.** A request body is leaf-walked before it is forwarded. If the walk fails and the request declares JSON (a `Content-Type` of `application/json*`, or no `Content-Type` at all with JSON symptoms, meaning the first non-whitespace byte is `{`, `[` or `"`), the gateway fails closed with **HTTP 400** and sends **zero upstream bytes**. The verdict is made at the HTTP layer (`pkg/gateway`'s data plane), because the body-transform seam cannot see headers; the underlying sentinel is `proxy.ErrUnwalkableBody`. A request that is explicitly non-JSON (`text/plain`, …) keeps the documented passthrough: the body is forwarded byte for byte and no walk runs. Test-locked by `TestPipelineMalformedInputPassthrough` (the seam returns the sentinel with a byte-identical body) and the `pkg/gateway` data-plane tests.
+- **Response and SSE path: deliberately not fail-closed.** A response body the walker cannot parse is still forwarded byte for byte, and backfill still runs. Both directions here are client-bound (inbound): an unparseable response cannot exfiltrate anything to an upstream, and failing closed would break legitimate plain-text error bodies and `data: [DONE]`/ping streams. The skip is no longer silent: `Pipeline.ResponseWalkFailures()` counts it, and each skip emits one metadata-only `RedactionEvent` (`response_walk_failed` for the buffered path, `sse_walk_failed` for the SSE desync guard; direction `response`, phase `response_content`) that carries no body bytes, object keys or JSON paths.
+
+This asymmetry is deliberate: fail closed where a failure could leak, stay transparent and observable where it cannot.
+
 ## 📌 Named routing exceptions
 
 The gateway **refuses to guess** an upstream for an unrecognised request: an unknown route is an explicit typed error (`ErrUnknownUpstream`), never a silent misroute. There is exactly one **named exception list**, and a path gets on it only because the call carries no user data and every provider serves it identically:
@@ -57,6 +66,26 @@ A configured `upstreams:` override still wins over the exception (and over the b
 - **False negatives (under-redaction)** hurt the promise: sensitive content leaves the machine.
 
 The V1 strategy is **deterministic, high-precision-first detectors** (known key prefixes, high entropy, JWT, private-key headers, Luhn card-number checksums, and email addresses), backed by an allowlist and one-click release. The project does **not** claim "never leaks". The honest claim is **"high-confidence secret interception"**.
+
+## 🔎 Detection scope: values and object keys
+
+Detection runs at two independent positions in a walked JSON document:
+
+- **String values** (the original scope). Every string leaf is inspected, and a finding is replaced with a placeholder.
+- **Object keys** (added later). A JSON object's member names are inspected as an **independent key-position mechanism**: `protocol.WalkKeys`, a separate API that returns key spans and JSON Pointer paths. At key positions the participating detector set is exactly **`prefix` (api_key), `high_entropy`, `jwt`, `private_key`**. `luhn` (credit_card) and `email` are deliberately excluded there, to avoid false positives on 16-digit numeric keys and email-shaped keys. A credential-shaped key **fails the request closed** (the request is blocked with zero upstream bytes), and keys are **never rewritten**; a detector that fails closed at a key position also blocks.
+
+Object keys are **not** `Leaf`s and never enter the document model defined by `pkg/extension`. The key scan is a separate, additive API (`protocol.WalkKeys`, added without changing `Walk` or `Leaf`), so the "leaf = value" contract documented in `architecture.md` is **unchanged**.
+
+**Decision record.** Adding a separate `WalkKeys` API, instead of extending `protocol.Walk`'s `Leaf` contract with key positions, is a deliberate decision (the O3 decision in the hardening plan). Extending `Leaf` was rejected because it would change `pkg/extension`'s V1-stable public surface and break the "leaf = value" contract (`architecture.md`). The key-position mechanism is pinned by `pkg/protocol` tests and by `pkg/proxy`'s key tests; the cross-repo assembly contract for the surrounding hardening work is frozen in the private Pro repository's ADR-0012 amendment A2.
+
+## ⚠️ Known limitations
+
+Stated plainly, so nothing here reads as a closed guarantee. The honest register throughout is **high-confidence interception**.
+
+- **`high_entropy`'s pure-hex exclusion also applies in the key domain.** The detector already declines to flag a run made only of hex characters (to avoid false positives on hashes and IDs). The same exclusion applies at object-key positions, so a secret that is pure hex and placed in an object key is **not** blocked. This is the same exclusion as in the value domain, not a new gap; it is pinned by `TestPipelinePureHexKeysNotBlocked`.
+- **Encoded-form coverage is not established (placeholder).** Secrets transformed by an encoding (hex, base64, gzip, …) before they leave are a known area of residual risk, and the explicit list of encoding classes that are known **not** to be covered is not published yet.
+  <!-- W1.5 placeholder: the encoder-normalization work (W2.2) supplies the known-uncovered encoding-class list here; do not state a coverage guarantee before then. -->
+- **Response/SSE observability is metadata-only.** The response-path walk-failure counter and its events carry metadata only (direction, phase, action; no body, keys or paths) by design, and an unparseable response body is deliberately not blocked (see "Failure policy, per path").
 
 ## 🔑 Key handling
 

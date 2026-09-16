@@ -43,6 +43,15 @@ Tokenhush 本身就是安全工具，所以**它自己必须先安全**。本文
 > [!NOTE]
 > **已知边界（stdlib 行为，非解析器缺陷）。** 使用默认 HTTP client 时，若响应的 `Content-Encoding` 以两行头到达且首行值恰为 `gzip`，Go 的 `net/http` transport 会在管线看到它之前就解压，因为 transport 用 `Header.Get`（只看首个值）而非全部值判断。当 body 并非合法 gzip 时，观测结果是 200 + 空 body，且**没有**任何上游字节释放给客户端。这是 `net/http` 的行为，不是解析器缺陷，也不会造成未检视透传：管线自己的「读全部值」分类器不受影响，且由 `TestClassifyContentEncodingMultiValued` 锁定，transport 的提前解压不会释放任何管线本会原样转发的字节。
 
+## 🧯 失败策略按路径分级
+
+失败策略取决于 body 的传输方向，因为只有出站（请求）方向会把解析失败变成对上游的泄露。
+
+- **请求路径：声明为 JSON 时 fail-closed。** 请求体在转发前先做叶位遍历。若遍历失败且该请求声明为 JSON（`Content-Type` 为 `application/json*`；或缺失 `Content-Type` 但出现 JSON 征兆，即首个非空白字节是 `{`、`[` 或 `"`），网关即 fail-closed：返回 **HTTP 400**，且**上游零字节**。该裁决在 HTTP 层（`pkg/gateway` 数据面）做出，因为 body 改写接缝读不到请求头；底层哨兵是 `proxy.ErrUnwalkableBody`。显式非 JSON 的请求（`text/plain` 等）保持既有直通：body 逐字节转发，不运行任何遍历。由 `TestPipelineMalformedInputPassthrough`（接缝返回哨兵且 body 逐字节不变）与 `pkg/gateway` 数据面测试锁定。
+- **响应与 SSE 路径：刻意不 fail-closed。** walker 无法解析的响应体仍逐字节转发，回填也照旧运行。这两个方向都是回客户端方向（入站）：无法解析的响应不可能把任何东西外泄到上游；fail-closed 只会打断合法的纯文本错误体与 `data: [DONE]`/ping 流。跳过不再是静默的：`Pipeline.ResponseWalkFailures()` 为其计数，每次跳过发出一条仅元数据的 `RedactionEvent`（缓冲路径为 `response_walk_failed`，SSE desync 守卫为 `sse_walk_failed`；direction `response`、phase `response_content`），不含任何正文、对象键或 JSON 路径。
+
+这一不对称是刻意为之：会在可能泄露处 fail-closed，在不可能泄露处保持透明且可观测。
+
 ## 📌 具名路由例外清单
 
 网关**拒绝猜测**未知请求的上游：未知路径是明确的类型化错误（`ErrUnknownUpstream`），绝不静默错路由。只有一份**具名例外清单**，且一条路径能进清单的唯一理由是：该调用不携带用户数据，且所有提供商的服务方式完全一致：
@@ -59,6 +68,26 @@ Tokenhush 本身就是安全工具，所以**它自己必须先安全**。本文
 - **假阴性（脱敏不足）** 伤承诺：敏感内容离开本机。
 
 V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵、JWT、私钥头、Luhn 卡号校验和、电子邮件地址），再配白名单和一键放行。本项目**不**声称“永不泄露”。诚实的说法是**“高置信密钥拦截”**。
+
+## 🔎 检测范围：值域与对象键
+
+在一个被遍历的 JSON 文档中，检测运行在两个相互独立的位置：
+
+- **字符串值**（原有范围）。每个字符串叶都会被检视，命中即以占位符替换。
+- **对象键**（后续加入）。JSON 对象的成员名作为**独立的键位机制**被检视：即 `protocol.WalkKeys`——一个独立 API，返回键位 span 与 JSON Pointer 路径。键位参与判定的检测器集恰为 **`prefix`（api_key）、`high_entropy`、`jwt`、`private_key`**。`luhn`（credit_card）与 `email` 在键位被**刻意排除**，以免对 16 位数字键与邮箱形态键误报。凭据形态的键会使**请求 fail-closed**（整请求被阻断，上游零字节），且键**永不被重写**；键位上有检测器失败关闭时同样阻断。
+
+对象键**不是** `Leaf`，绝不进入 `pkg/extension` 定义的文档模型。键位扫描是一个独立、纯新增的 API（`protocol.WalkKeys`，新增而不改动 `Walk` 或 `Leaf`），因此 `architecture.zh-CN.md` 中记录的“叶子=值”契约**保持不变**。
+
+**决策留痕。** 选择新增独立的 `WalkKeys` API，而不是把键位塞进 `protocol.Walk` 的 `Leaf` 契约，是一项刻意的决定（加固计划中的 O3 决策）。否决“扩展 `Leaf`”的理由是：那会改动 `pkg/extension` 的 V1 稳定公开面，并破坏“叶子=值”契约（`architecture.zh-CN.md`）。键位机制由 `pkg/protocol` 测试与 `pkg/proxy` 的键位测试锁定；外围加固工作所依赖的跨仓装配契约冻结在私有 Pro 仓库的 ADR-0012 增补 A2。
+
+## ⚠️ 已知限制
+
+如实列出，以免此处任何一句被读成已闭合的保证。全文的诚实口径是**高置信拦截**。
+
+- **`high_entropy` 对纯 hex 的排除同样作用于键域。** 该检测器本就不标记只由 hex 字符构成的运行（避免对哈希与 ID 误报）。同一排除也作用于对象键位，故**纯 hex** 的密钥置于对象键**不会被拦**。这与值域是同一排除、并非新增缺口；由 `TestPipelinePureHexKeysNotBlocked` 钉死。
+- **编码形态的覆盖尚未确立（占位）。** 在离开本机之前被某层编码（hex、base64、gzip 等）变换过的密钥是一片已知残余风险区；而“已知**不**被覆盖的编码类别”这份显式清单尚未发布。
+  <!-- W1.5 占位：由编码归一化工作（W2.2）在此填写“已知不覆盖的编码类别”清单；在此之前不得写入覆盖保证。 -->
+- **响应/SSE 的可观测性是仅元数据。** 响应路径的 walk 失败计数与事件按设计只携带元数据（direction、phase、action；无正文、无键、无路径），且无法解析的响应体**刻意不阻断**（见“失败策略按路径分级”）。
 
 ## 🔑 密钥处理
 

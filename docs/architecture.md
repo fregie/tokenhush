@@ -77,6 +77,8 @@ A "leaf" is a string value buried inside the request JSON. Take this body:
 
 The gateway walks the JSON tree and runs detect/replace on `"my key is sk-abc123"`. It does not translate Anthropic, OpenAI, or Responses into one internal shape, because that shape would rot as APIs change. Double-encoded JSON inside tool calls is handled recursively, and SSE is parsed incrementally at the leaf level.
 
+**Object keys are outside this model.** A JSON object's member names are inspected by a separate, additive API (`protocol.WalkKeys`, a key-span scanner), and they are **not** `Leaf`s: they never enter the `extension.Document` model. `Walk` and `Leaf` are unchanged, so the "leaf = value" contract above still holds. See `security.md` for the key-position detector set and the failure policy.
+
 ### Placeholders and backfill
 
 A **placeholder** is the fake string that replaces a real secret on the way out. Format: JSON-safe, tokenizer-friendly, high-entropy, for example `__PII_email_3f9a2b__`.
@@ -87,7 +89,7 @@ A **placeholder** is the fake string that replaces a real secret on the way out.
 
 ### Streaming
 
-- **Outbound**: the full body is read, then redacted. There is no streaming-rewrite problem on this side. A request that arrives with a non-identity `Content-Encoding` is rejected with **415** in `Forwarder.ServeHTTP` before the body is read and before the upstream is dialed, so a client-compressed body can never skip redaction (see `security.md`, invariant 8).
+- **Outbound**: the full body is read, then redacted. There is no streaming-rewrite problem on this side. A request that arrives with a non-identity `Content-Encoding` is rejected with **415** in `Forwarder.ServeHTTP` before the body is read and before the upstream is dialed, so a client-compressed body can never skip redaction (see `security.md`, invariant 8). A request body that declares JSON but that the leaf walker cannot parse is likewise rejected with **400** before the upstream is dialed (see `security.md`).
 - **Inbound, non-SSE**: the body is buffered whole and backfilled as one unit. A `gzip`/`deflate` `Content-Encoding` is decompressed before any status code is committed; an encoding the core cannot decode (`br`, `zstd`, ...) or a decode failure is answered **502**, never passed through.
 - **Inbound, SSE (`text/event-stream`)**: a placeholder can arrive split across several `data:` events, each a partial JSON delta. A raw sliding window over the byte stream cannot match it, because the placeholder is not contiguous (`__PII_ema` in one event, `il_3f9a2b__` in the next) and the intervening SSE/JSON framing changes the bytes. The response instead streams through an **SSE-aware backfiller** (`pkg/proxy/ssebackfill.go`):
   - Every single-line `data:` payload's terminal string leaves are fed into a **per-path window** (a `BackfillWriter` sized to the longest placeholder), so one JSON leaf path accumulates across events and across framing.
