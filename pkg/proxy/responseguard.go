@@ -157,7 +157,7 @@ func (p *Pipeline) guardResponseToolCalls(body []byte, walked []protocol.Leaf) (
 			if !matched {
 				return content, false
 			}
-			p.reportMutationChannelBlock(class)
+			p.noteBufferedGuardRefusal(class)
 			return []byte(mutationChannelRefusalNotice), true
 		},
 		parentEdit: func(encodedIdx int, _ string, content []byte) ([]byte, bool) {
@@ -168,7 +168,7 @@ func (p *Pipeline) guardResponseToolCalls(body []byte, walked []protocol.Leaf) (
 			if !matched {
 				return nil, false
 			}
-			p.reportMutationChannelBlock(class)
+			p.noteBufferedGuardRefusal(class)
 			return []byte(mutationChannelRefusalNotice), true
 		},
 	}

@@ -219,15 +219,22 @@ func controlErrorMessage(body []byte) string {
 
 // statusUpView is the snapshot `tokenhush status` renders for a running
 // gateway: liveness, pid, bound addresses and session counters, all metadata.
+// The C8 counters (W6.5) mirror ControlStatus and are metadata-only: refusals,
+// mutations and blocks, never content.
 type statusUpView struct {
-	Running    bool     `json:"running"`
-	PID        int      `json:"pid"`
-	State      string   `json:"state"`
-	Addrs      []string `json:"addrs"`
-	UptimeMS   int64    `json:"uptime_ms"`
-	Requests   uint64   `json:"requests"`
-	Redactions uint64   `json:"redactions"`
-	License    string   `json:"license,omitempty"`
+	Running                     bool     `json:"running"`
+	PID                         int      `json:"pid"`
+	State                       string   `json:"state"`
+	Addrs                       []string `json:"addrs"`
+	UptimeMS                    int64    `json:"uptime_ms"`
+	Requests                    uint64   `json:"requests"`
+	Redactions                  uint64   `json:"redactions"`
+	SelfProtectionInterceptions uint64   `json:"self_protection_interceptions"`
+	AllowlistMutations          uint64   `json:"allowlist_mutations"`
+	StreamGuardRefusals         uint64   `json:"stream_guard_refusals"`
+	StreamGuardFailClosed       uint64   `json:"stream_guard_fail_closed"`
+	EgressBlocks                uint64   `json:"egress_blocks"`
+	License                     string   `json:"license,omitempty"`
 }
 
 // statusDownView is the snapshot rendered when no gateway answers.
@@ -296,14 +303,19 @@ func statusCommand(args []string, stdout, stderr io.Writer) int {
 		status.State = proxy.ControlStateRunning
 	}
 	view := statusUpView{
-		Running:    true,
-		PID:        session.state.PID,
-		State:      status.State,
-		Addrs:      append([]string(nil), status.Addrs...),
-		UptimeMS:   status.UptimeMS,
-		Requests:   status.Requests,
-		Redactions: status.Redactions,
-		License:    license,
+		Running:                     true,
+		PID:                         session.state.PID,
+		State:                       status.State,
+		Addrs:                       append([]string(nil), status.Addrs...),
+		UptimeMS:                    status.UptimeMS,
+		Requests:                    status.Requests,
+		Redactions:                  status.Redactions,
+		SelfProtectionInterceptions: status.SelfProtectionInterceptions,
+		AllowlistMutations:          status.AllowlistMutations,
+		StreamGuardRefusals:         status.StreamGuardRefusals,
+		StreamGuardFailClosed:       status.StreamGuardFailClosed,
+		EgressBlocks:                status.EgressBlocks,
+		License:                     license,
 	}
 	if asJSON {
 		return writeJSON(stdout, stderr, "status", view)
@@ -321,6 +333,11 @@ func writeStatusText(w io.Writer, view statusUpView) {
 	fmt.Fprintf(w, "  uptime: %s\n", uptime)
 	fmt.Fprintf(w, "  requests: %d\n", view.Requests)
 	fmt.Fprintf(w, "  redactions: %d\n", view.Redactions)
+	fmt.Fprintf(w, "  self-protection interceptions: %d\n", view.SelfProtectionInterceptions)
+	fmt.Fprintf(w, "  allowlist mutations: %d\n", view.AllowlistMutations)
+	fmt.Fprintf(w, "  stream guard refusals: %d\n", view.StreamGuardRefusals)
+	fmt.Fprintf(w, "  stream guard fail-closed: %d\n", view.StreamGuardFailClosed)
+	fmt.Fprintf(w, "  egress blocks: %d\n", view.EgressBlocks)
 	if view.License != "" {
 		fmt.Fprintln(w, view.License)
 	}

@@ -189,9 +189,10 @@ func (p *Pipeline) StreamGuardFailClosed() uint64 {
 }
 
 // noteStreamingGuardRefusal records one refused streamed tool call: it
-// increments the pipeline counters and emits the same metadata-only event W6.3
-// emits on the buffered path, so W6.5 has one interception signal for both. The
-// matched class is metadata; no argument byte, path or content is reported.
+// increments the pipeline counters, emits the same metadata-only event W6.3
+// emits on the buffered path and writes the matching metadata-only audit row,
+// so W6.5 has one interception signal for both. The matched class and the
+// refusal reason are metadata; no argument byte, path or content is recorded.
 func (p *Pipeline) noteStreamingGuardRefusal(class, reason string) {
 	if p == nil {
 		return
@@ -201,4 +202,5 @@ func (p *Pipeline) noteStreamingGuardRefusal(class, reason string) {
 		p.streamGuardFailClosed.Add(1)
 	}
 	p.reportMutationChannelBlock(class)
+	p.recordGuardRefusal(class, auditSurfaceStream, reason)
 }

@@ -365,7 +365,9 @@ func TestMutationChannelPatterns(t *testing.T) {
 // documentation artifact: the accessor must be non-empty, must equal the file
 // byte for byte (so the two cannot drift), and must explicitly record the
 // classes the plan requires — base64/encoded commands, indirect scripts,
-// multi-step assembly and the wrappers deliberately not enumerated.
+// multi-step assembly, the wrappers deliberately not enumerated, and the
+// W6.5 honesty gap: arguments carried outside the OpenAI `arguments` string
+// field (an Anthropic-shaped `input` object is not scanned), which W6.6 cites.
 func TestKnownUncoveredMutationChannels(t *testing.T) {
 	list := KnownUncoveredMutationChannels()
 	if len(list) == 0 {
@@ -385,7 +387,7 @@ func TestKnownUncoveredMutationChannels(t *testing.T) {
 		t.Fatalf("accessor and %s drifted:\n accessor=%q\n file=%q", path, list, parsed)
 	}
 
-	for _, want := range []string{"base64", "indirect", "multi-step", "wrapper"} {
+	for _, want := range []string{"base64", "indirect", "multi-step", "wrapper", "anthropic", "input"} {
 		if !anyMutationUncoveredClass(list, want) {
 			t.Fatalf("the %q limitation is not recorded: %q", want, list)
 		}

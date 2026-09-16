@@ -166,6 +166,14 @@ type Pipeline struct {
 	// See sseguard.go.
 	streamGuardRefusals   atomic.Uint64
 	streamGuardFailClosed atomic.Uint64
+
+	// selfProtectionInterceptions counts tool calls the W6.3 full-buffered
+	// response guard refused: every rewrite of an offending tool call's
+	// arguments to the refusal notice. It is a metadata-only counter (no
+	// content) and backs /status (W6.5); each refusal also writes one
+	// metadata-only audit row via noteBufferedGuardRefusal. The streaming
+	// path's refusals stay in streamGuardRefusals/streamGuardFailClosed.
+	selfProtectionInterceptions atomic.Uint64
 }
 
 // NewPipeline builds the pipeline. It fails when cfg.Engine is nil, because no

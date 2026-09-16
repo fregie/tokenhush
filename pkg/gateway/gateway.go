@@ -302,6 +302,11 @@ func invokeTeardown(opts Options, deps *Deps) {
 // 模式：具体方法路由保证正确方法可达，无方法注册保证 PUT 等方法留在控制面并
 // 由 ControlAPI 的内部 mux 产出 JSON 405，而不是落到 "/" catch-all 数据面。
 func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt time.Time) http.Handler {
+	// W6.5: allowlist mutations are counted here, next to the audited mutation
+	// callback, because the ADR-0012 golden freezes Options/Deps/BuildOptions
+	// and forbids a new assembly field. The closure lives as long as the
+	// handler, so the counter is per-session like the pipeline's counters.
+	var allowlistMutations atomic.Uint64
 	control := proxy.NewControlAPI(
 		func() proxy.ControlStatus {
 			return proxy.ControlStatus{
@@ -311,10 +316,18 @@ func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt 
 				Requests:   deps.Requests.Load(),
 				Redactions: deps.Redactions.Load(),
 				Allowlist:  allowlistEntryCount(opts.AllowlistStore),
+				// The pipeline accessors are nil-safe, so a gateway assembled
+				// without a pipeline reports zero rather than panicking.
+				SelfProtectionInterceptions: opts.Pipeline.SelfProtectionInterceptions(),
+				AllowlistMutations:          allowlistMutations.Load(),
+				StreamGuardRefusals:         opts.Pipeline.StreamGuardRefusals(),
+				StreamGuardFailClosed:       opts.Pipeline.StreamGuardFailClosed(),
+				EgressBlocks:                opts.Pipeline.EgressBlocks(),
 			}
 		},
 		proxy.WithControlAllowlist(opts.AllowlistStore),
 		proxy.WithControlAudit(func(ev proxy.ControlAuditEvent) {
+			allowlistMutations.Add(1)
 			recordAllowlistMutation(opts.Sink, ev)
 			// W6.1/W6.2: a runtime allowlist mutation rewrites
 			// <DataDir>/allowlist.json, so refresh the C8 exclusion set to the

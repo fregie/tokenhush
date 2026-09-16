@@ -16,10 +16,13 @@ import (
 	"github.com/fregie/tokenhush/pkg/redact"
 )
 
-// TestRedactionLogRendersEveryAction pins the four-action rendering. A
-// walk-failure event must never be rendered as a redaction: the response body
-// was forwarded unchanged, so the line says exactly that and prints none of the
-// empty detector fields. The pre-existing redact and block lines must stay
+// TestRedactionLogRendersEveryAction pins the explicit rendering of every
+// action the pipeline reports. A walk-failure event must never be rendered as a
+// redaction: the response body was forwarded unchanged, so the line says
+// exactly that and prints none of the empty detector fields. A mutation-channel
+// refusal likewise refuses a tool call without redacting anything, so it must
+// name the action and the channel instead of falling to the default branch's
+// "redacted … (len=0) " line. The pre-existing redact and block lines must stay
 // byte-identical.
 func TestRedactionLogRendersEveryAction(t *testing.T) {
 	cases := []struct {
@@ -28,6 +31,7 @@ func TestRedactionLogRendersEveryAction(t *testing.T) {
 		want          string
 		walkFailure   bool
 		egressBlocked bool
+		refused       bool
 	}{
 		{
 			name: "response_walk_failed",
@@ -59,6 +63,27 @@ func TestRedactionLogRendersEveryAction(t *testing.T) {
 			},
 			want:          "tokenhush: blocked request outbound body still carried a redacted secret (egress_blocked)\n",
 			egressBlocked: true,
+		},
+		{
+			name: "mutation_channel_blocked",
+			event: proxy.RedactionEvent{
+				Action:    proxy.RedactionActionMutationChannelBlocked,
+				Direction: proxy.RedactionDirectionResponse,
+				Phase:     "response_content",
+				Type:      "cli-command",
+			},
+			want:    "tokenhush: refused response tool call (mutation_channel_blocked, channel=cli-command)\n",
+			refused: true,
+		},
+		{
+			name: "mutation_channel_blocked_without_a_matched_class",
+			event: proxy.RedactionEvent{
+				Action:    proxy.RedactionActionMutationChannelBlocked,
+				Direction: proxy.RedactionDirectionResponse,
+				Phase:     "response_content",
+			},
+			want:    "tokenhush: refused response tool call (mutation_channel_blocked, channel=none)\n",
+			refused: true,
 		},
 		{
 			name: "redact_line_unchanged",
@@ -123,6 +148,23 @@ func TestRedactionLogRendersEveryAction(t *testing.T) {
 				}
 				if strings.Contains(line, "  ") {
 					t.Fatalf("line %q has a stray double space", line)
+				}
+			}
+			if tc.refused {
+				// The default branch would render this action as a redaction
+				// line ("tokenhush: redacted … (len=0)"), which is false: the
+				// tool call was refused, not rewritten to a placeholder.
+				if strings.HasPrefix(line, "tokenhush: redacted") {
+					t.Fatalf("refusal line claims a redaction: %q", line)
+				}
+				if !strings.Contains(line, tc.event.Action) {
+					t.Fatalf("line %q does not name the action constant %q", line, tc.event.Action)
+				}
+				if !strings.Contains(line, "refused") {
+					t.Fatalf("line %q does not say the tool call was refused", line)
+				}
+				if strings.Contains(line, "(len=") {
+					t.Fatalf("line %q prints an empty-field artifact", line)
 				}
 			}
 		})

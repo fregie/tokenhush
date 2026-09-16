@@ -52,6 +52,14 @@ const ControlStateRunning = "running"
 // ControlStatus is the metadata-only snapshot GET /status returns. It carries
 // no request or response content: only liveness, bound addresses and the
 // session's cumulative counters (docs/deployment.md §5, docs/security.md).
+//
+// The C8 counters (W6.5) are additive and metadata-only: they count refusals,
+// mutations and blocks, never content, never an allowlist entry and never a
+// matched candidate. SelfProtectionInterceptions covers the W6.3 full-buffered
+// tool-call guard; the streaming guard reports separately through
+// StreamGuardRefusals and its fail-closed subset StreamGuardFailClosed;
+// AllowlistMutations counts successful control-plane allowlist changes (the
+// human/CLI source); EgressBlocks counts the W2.3 outbound re-check blocks.
 type ControlStatus struct {
 	State      string   `json:"state"`      // ControlStateRunning while serving
 	Addrs      []string `json:"addrs"`      // bound listener addresses
@@ -62,6 +70,20 @@ type ControlStatus struct {
 	// ∪ runtime additions) at snapshot time. Metadata only: the entry values
 	// are never part of /status.
 	Allowlist int `json:"allowlist"`
+	// SelfProtectionInterceptions counts tool calls the W6.3 buffered
+	// response guard refused this session (see Pipeline.SelfProtectionInterceptions).
+	SelfProtectionInterceptions uint64 `json:"self_protection_interceptions"`
+	// AllowlistMutations counts successful control-plane allowlist mutations
+	// this session (W5.3's audited add/remove callback).
+	AllowlistMutations uint64 `json:"allowlist_mutations"`
+	// StreamGuardRefusals counts streamed tool calls the W6.4 SSE guard
+	// refused this session; StreamGuardFailClosed is the subset refused
+	// without a pattern match (cap exhaustion or release without a decision).
+	StreamGuardRefusals   uint64 `json:"stream_guard_refusals"`
+	StreamGuardFailClosed uint64 `json:"stream_guard_fail_closed"`
+	// EgressBlocks counts outbound request bodies the W2.3 egress re-check
+	// blocked this session.
+	EgressBlocks uint64 `json:"egress_blocks"`
 }
 
 // ControlStatusFunc returns a fresh status snapshot. It is called on every
