@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +27,8 @@ type cliBackend struct {
 	srv  *httptest.Server
 	pub  ed25519.PublicKey
 	priv ed25519.PrivateKey
+
+	hits atomic.Int64
 
 	mu          sync.Mutex
 	manifest    []byte
@@ -46,18 +49,21 @@ func newCLIBackend(t *testing.T, serial uint64, revoked []uint64) *cliBackend {
 	b.publish(t, serial, revoked)
 	mux := http.NewServeMux()
 	mux.HandleFunc(rules.ManifestPath, func(w http.ResponseWriter, r *http.Request) {
+		b.hits.Add(1)
 		b.mu.Lock()
 		body := b.manifest
 		b.mu.Unlock()
 		_, _ = w.Write(body)
 	})
 	mux.HandleFunc(rules.BundlePath, func(w http.ResponseWriter, r *http.Request) {
+		b.hits.Add(1)
 		b.mu.Lock()
 		body := b.bundle
 		b.mu.Unlock()
 		_, _ = w.Write(body)
 	})
 	mux.HandleFunc(rules.RevocationsPath, func(w http.ResponseWriter, r *http.Request) {
+		b.hits.Add(1)
 		b.mu.Lock()
 		body := b.revocations
 		b.mu.Unlock()
@@ -68,7 +74,25 @@ func newCLIBackend(t *testing.T, serial uint64, revoked []uint64) *cliBackend {
 	return b
 }
 
+// requests reports how many rule-service requests this backend has served, so
+// a test can prove a code path performed no egress.
+func (b *cliBackend) requests() int64 { return b.hits.Load() }
+
+// publish serves the default test pack: one warn-action ticket regex rule,
+// which never reaches the redaction pipeline and therefore cannot change the
+// data plane.
 func (b *cliBackend) publish(t *testing.T, serial uint64, revoked []uint64) {
+	t.Helper()
+	b.publishWithConfig(t, serial, revoked, rules.Config{
+		SchemaVersion: rules.SchemaVersion,
+		Rules: []rules.Rule{{
+			ID: "ticket", Type: rules.RuleRegex, Pattern: `PROJ-[0-9]{4,}`, Action: "warn",
+		}},
+	})
+}
+
+// publishWithConfig signs and serves cfg as the pack at serial.
+func (b *cliBackend) publishWithConfig(t *testing.T, serial uint64, revoked []uint64, cfg rules.Config) {
 	t.Helper()
 	pack := rules.Pack{
 		Channel:          "stable",
@@ -77,9 +101,7 @@ func (b *cliBackend) publish(t *testing.T, serial uint64, revoked []uint64) {
 		KeyID:            "rules-cli-test",
 		NotBefore:        cliNow.Add(-time.Hour),
 		Expires:          cliNow.Add(24 * time.Hour),
-		Config: rules.Config{SchemaVersion: rules.SchemaVersion, Rules: []rules.Rule{{
-			ID: "ticket", Type: rules.RuleRegex, Pattern: `PROJ-[0-9]{4,}`, Action: "warn",
-		}}},
+		Config:           cfg,
 	}
 	pack.Signature = signB64(b.priv, rules.PackSigningInput(pack))
 	bundle, err := json.Marshal(pack)

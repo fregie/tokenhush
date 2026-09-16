@@ -61,9 +61,12 @@ type RunInfo = gateway.RunInfo
 // gateway.BuildPipeline (unless a test injected one), and delegates the whole
 // process shell and request path to gateway.Run.
 //
-// A nil cfg is loaded from deps.ConfigPath (or the platform default). The
-// returned error also wraps pkg/proxy's typed listener errors (for example
-// ErrAddrInUse), so callers can classify with errors.Is.
+// A nil cfg is loaded from deps.ConfigPath (or the platform default). When it
+// builds the pipeline it also reads the cached remote rule pack from the local
+// cache (never the network); a missing or unusable pack falls back to the
+// built-in detectors with a warning on deps.Stderr. The returned error also
+// wraps pkg/proxy's typed listener errors (for example ErrAddrInUse), so
+// callers can classify with errors.Is.
 func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	loaded, err := gateway.ResolveConfig(cfg, deps.ConfigPath)
 	if err != nil {
@@ -76,14 +79,26 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 
 	pipeline := deps.Pipeline
 	if pipeline == nil {
-		pipeline, err = gateway.BuildPipeline(gateway.BuildOptions{
+		buildOpts := gateway.BuildOptions{
 			Detectors: loaded.Detectors.EnabledIDs(),
 			Allowlist: loaded.Allowlist,
+			Rules:     activeRulesConfig(deps.Stderr),
 			Sink:      sink,
 			Timeout:   deps.PolicyTimeout,
-		})
+		}
+		pipeline, err = gateway.BuildPipeline(buildOpts)
 		if err != nil {
-			return err
+			if !isRulesError(err) {
+				return err
+			}
+			// A pack that passed Active() should always compile, so this is a
+			// defensive fallback: drop the pack, keep the built-in detectors.
+			fmt.Fprintf(deps.Stderr, "tokenhush: rules: %v; using built-in defaults\n", err)
+			buildOpts.Rules = nil
+			pipeline, err = gateway.BuildPipeline(buildOpts)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

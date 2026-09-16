@@ -64,6 +64,71 @@ var newRulesClient = func(warn func(string)) (*rules.Client, error) {
 	}, nil
 }
 
+// activeRulesConfig reads the rule pack selected by `tokenhush rules sync` from
+// the local cache and returns it for the build pipeline. It performs no network
+// I/O; a missing or unusable cache falls back to the built-in defaults with a
+// warning on stderr. A nil Config means the built-in defaults.
+func activeRulesConfig(stderr io.Writer) *rules.Config {
+	warn := func(msg string) { fmt.Fprintln(stderr, msg) }
+	client, err := newRulesClient(warn)
+	if err != nil {
+		fmt.Fprintf(stderr, "tokenhush: rules: %v; using built-in defaults\n", err)
+		return nil
+	}
+	active, err := client.Active()
+	if err != nil {
+		fmt.Fprintf(stderr, "tokenhush: rules: %v; using built-in defaults\n", err)
+		return nil
+	}
+	for _, w := range active.Warnings {
+		fmt.Fprintln(stderr, w)
+	}
+	return active.Config
+}
+
+// rulesErrorSentinels enumerates the typed errors pkg/rules exports. A rule
+// pack that fails to compile or register is wrapped around one of these, so
+// isRulesError can tell a pack failure apart from an unrelated construction
+// error (for example a placeholder-engine failure).
+var rulesErrorSentinels = []error{
+	rules.ErrParse,
+	rules.ErrUnknownField,
+	rules.ErrSchemaVersion,
+	rules.ErrNoRules,
+	rules.ErrInvalidRule,
+	rules.ErrInvalidRegex,
+	rules.ErrInvalidLiteral,
+	rules.ErrTooManyMatches,
+	rules.ErrPackReplayed,
+	rules.ErrPackRevoked,
+	rules.ErrChannelMismatch,
+	rules.ErrBundleHashMismatch,
+	rules.ErrHTTPStatus,
+	rules.ErrClientConfig,
+	rules.ErrCacheMiss,
+	rules.ErrNothingToRollback,
+	rules.ErrFloorDisablesDetector,
+	rules.ErrFloorRemovesCategory,
+	rules.ErrFloorAutoAllow,
+	rules.ErrPackTooLarge,
+	rules.ErrPackMalformed,
+	rules.ErrPackUnknownKey,
+	rules.ErrPackBadSignature,
+	rules.ErrPackExpired,
+	rules.ErrPackNotYetValid,
+	rules.ErrIncompatibleBinary,
+}
+
+// isRulesError reports whether err's chain wraps any pkg/rules typed error.
+func isRulesError(err error) bool {
+	for _, sentinel := range rulesErrorSentinels {
+		if errors.Is(err, sentinel) {
+			return true
+		}
+	}
+	return false
+}
+
 // rulesCommand dispatches `tokenhush rules <sync|rollback>`.
 func rulesCommand(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {

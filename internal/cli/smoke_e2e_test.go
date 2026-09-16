@@ -141,6 +141,7 @@ func TestSmokeE2E(t *testing.T) {
 
 		dataDir := t.TempDir()
 		cfg := smokeConfig(upstreamSrv.URL)
+		installNoPackRulesSeam(t)
 		base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 		t.Cleanup(func() { _ = stop() })
 
@@ -196,6 +197,7 @@ func TestSmokeE2E(t *testing.T) {
 		// reverse mapping), mirroring the pkg/proxy unit test of the same
 		// invariant.
 		cfg.Detectors = config.Detectors{Prefix: true}
+		installNoPackRulesSeam(t)
 		base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 		t.Cleanup(func() { _ = stop() })
 

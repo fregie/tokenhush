@@ -164,6 +164,7 @@ func TestRunServerEndToEnd(t *testing.T) {
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 
 	dataDir := t.TempDir()
+	installNoPackRulesSeam(t)
 	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 
 	secret := runSecret()
@@ -226,6 +227,7 @@ func TestRunServerControlGuards(t *testing.T) {
 	cfg.Listen.Host = "127.0.0.1"
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
+	installNoPackRulesSeam(t)
 	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir()})
 	defer func() { _ = stop() }()
 
@@ -252,6 +254,7 @@ func TestRunServerPortInUse(t *testing.T) {
 	cfg.Listen.Host = "127.0.0.1"
 	cfg.Listen.Port = config.Port(port)
 	dataDir := t.TempDir()
+	installNoPackRulesSeam(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -284,6 +287,7 @@ func TestRunServerFailClosedOnDetectorTimeout(t *testing.T) {
 			cfg.Listen.Host = "127.0.0.1"
 			cfg.Listen.Port = 0
 			cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
+			installNoPackRulesSeam(t)
 			base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), PolicyTimeout: tt.timeout})
 			defer func() { _ = stop() }()
 

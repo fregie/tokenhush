@@ -79,6 +79,7 @@ func TestGoldenBaseline(t *testing.T) {
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 
+	installNoPackRulesSeam(t)
 	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir, Stdout: &startup})
 
 	secret := runSecret()
