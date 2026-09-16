@@ -23,6 +23,7 @@ import (
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/gateway"
 	"github.com/fregie/tokenhush/pkg/proxy"
+	"github.com/fregie/tokenhush/pkg/rules"
 )
 
 // Synthetic credential assembled at runtime: the fragments never appear as one
@@ -65,11 +66,87 @@ func (u *echoUpstream) received() []byte {
 	return append([]byte(nil), u.body...)
 }
 
+// testRulesOverrideInEffect records that a test installed its own rules-client
+// seam. startTestDaemon embeds the no-pack default only while it is false:
+// installTestRulesClient restores the previous seam via LIFO t.Cleanup, so an
+// unconditional assignment inside the helper would clobber an override that was
+// installed earlier. internal/cli has no parallel tests, so a plain package
+// variable is safe; every installer still resets it via t.Cleanup.
+var testRulesOverrideInEffect bool
+
+// installTestRulesClientFunc is the primitive behind installTestRulesClient for
+// overrides that are not a plain client (for example a constructor failure). It
+// saves the current seam, marks an override as in effect so startTestDaemon
+// does not replace it with the embedded no-pack default, and restores both via
+// t.Cleanup.
+func installTestRulesClientFunc(t *testing.T, f func(func(string)) (*rules.Client, error)) {
+	t.Helper()
+	previous, wasInEffect := newRulesClient, testRulesOverrideInEffect
+	testRulesOverrideInEffect = true
+	t.Cleanup(func() {
+		newRulesClient = previous
+		testRulesOverrideInEffect = wasInEffect
+	})
+	newRulesClient = f
+}
+
+// installTestRulesClient installs c as the newRulesClient seam and restores the
+// previous seam via t.Cleanup. It is the canonical override for tests that need
+// a specific rules client (T7/T8/T10): the mark it sets keeps startTestDaemon
+// from clobbering the client. The warn sink RunServer supplies is wired into c
+// when c has none, so Active()/Sync() warnings follow production routing.
+func installTestRulesClient(t *testing.T, c *rules.Client) {
+	t.Helper()
+	installTestRulesClientFunc(t, func(warn func(string)) (*rules.Client, error) {
+		if c.Warn == nil {
+			c.Warn = warn
+		}
+		return c, nil
+	})
+}
+
+// noPackRulesClient builds the isolated default rules client: an empty cache
+// under root, so no pack is active and RunServer exercises the built-in
+// detector defaults only. root is a per-test t.TempDir().
+func noPackRulesClient(t *testing.T, root string) *rules.Client {
+	t.Helper()
+	cache, err := rules.OpenFileCache(root)
+	if err != nil {
+		t.Fatalf("OpenFileCache: %v", err)
+	}
+	highWater, err := rules.OpenFileHighWater(filepath.Join(root, "highwater.json"))
+	if err != nil {
+		t.Fatalf("OpenFileHighWater: %v", err)
+	}
+	return &rules.Client{
+		BaseURL:   rules.DefaultBaseURL,
+		Channel:   "stable",
+		Verifier:  &rules.Verifier{Keys: rules.DefaultKeys(), CurrentBinaryVersion: Version},
+		Cache:     cache,
+		HighWater: highWater,
+	}
+}
+
+// installNoPackRulesClient installs the no-pack client. startTestDaemon embeds
+// it by default; a test that reaches RunServer outside the helper (for example
+// the direct RunServer call in TestRunServerPortInUse) must install it itself.
+func installNoPackRulesClient(t *testing.T) {
+	t.Helper()
+	installTestRulesClient(t, noPackRulesClient(t, t.TempDir()))
+}
+
 // startTestDaemon runs RunServer on an ephemeral port and returns once it is
 // ready, plus the control token read back from the session file. stop cancels
 // the context, waits for a clean shutdown and returns RunServer's error.
+//
+// Unless the test installed an override first, the helper also installs the
+// no-pack rules client, so no test that reaches RunServer here can read the
+// developer's real rule cache.
 func startTestDaemon(t *testing.T, cfg *config.Config, deps RunDeps) (base, token string, stop func() error) {
 	t.Helper()
+	if !testRulesOverrideInEffect {
+		installNoPackRulesClient(t)
+	}
 	if deps.DataDir == "" {
 		deps.DataDir = t.TempDir()
 	}
@@ -164,7 +241,6 @@ func TestRunServerEndToEnd(t *testing.T) {
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
 
 	dataDir := t.TempDir()
-	installNoPackRulesSeam(t)
 	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: dataDir})
 
 	secret := runSecret()
@@ -227,7 +303,6 @@ func TestRunServerControlGuards(t *testing.T) {
 	cfg.Listen.Host = "127.0.0.1"
 	cfg.Listen.Port = 0
 	cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
-	installNoPackRulesSeam(t)
 	base, token, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir()})
 	defer func() { _ = stop() }()
 
@@ -254,7 +329,9 @@ func TestRunServerPortInUse(t *testing.T) {
 	cfg.Listen.Host = "127.0.0.1"
 	cfg.Listen.Port = config.Port(port)
 	dataDir := t.TempDir()
-	installNoPackRulesSeam(t)
+	// This test calls RunServer directly, so it installs the no-pack client
+	// itself instead of getting it from startTestDaemon.
+	installNoPackRulesClient(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -287,7 +364,6 @@ func TestRunServerFailClosedOnDetectorTimeout(t *testing.T) {
 			cfg.Listen.Host = "127.0.0.1"
 			cfg.Listen.Port = 0
 			cfg.Upstreams = config.Upstreams{"/v1/messages": upstreamSrv.URL}
-			installNoPackRulesSeam(t)
 			base, _, stop := startTestDaemon(t, &cfg, RunDeps{DataDir: t.TempDir(), PolicyTimeout: tt.timeout})
 			defer func() { _ = stop() }()
 

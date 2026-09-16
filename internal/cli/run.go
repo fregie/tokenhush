@@ -28,8 +28,10 @@ type RunDeps struct {
 	DataDir string
 	// Stdout receives the human-facing startup lines. Nil discards them.
 	Stdout io.Writer
-	// Stderr is the diagnostics stream, kept in the seam for callers; the
-	// audit-free core writes only to Stdout.
+	// Stderr is the diagnostics stream: the default-on redaction log and the
+	// rules startup/fallback warnings are written here. When nil, both are
+	// silenced; in particular the rule-fallback warning is dropped, never
+	// written to Stdout and never a panic.
 	Stderr io.Writer
 	// PolicyTimeout bounds one content-detector invocation. Zero uses the
 	// gateway default. It is the seam the fail-closed test drives to force a
@@ -93,7 +95,8 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 			}
 			// A pack that passed Active() should always compile, so this is a
 			// defensive fallback: drop the pack, keep the built-in detectors.
-			fmt.Fprintf(deps.Stderr, "tokenhush: rules: %v; using built-in defaults\n", err)
+			warn := ruleWarn(deps.Stderr)
+			warn(fmt.Sprintf("tokenhush: rules: %v; using built-in defaults", err))
 			buildOpts.Rules = nil
 			pipeline, err = gateway.BuildPipeline(buildOpts)
 			if err != nil {

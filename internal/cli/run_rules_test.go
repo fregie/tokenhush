@@ -11,7 +11,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,34 +32,6 @@ func remoteOnlyRules() rules.Config {
 			ID: "zz-remote-only", Type: rules.RuleKeyword,
 			Keywords: []string{remoteOnlyToken}, Action: "redact",
 		}},
-	}
-}
-
-// installNoPackRulesSeam points newRulesClient at an empty temp cache so a test
-// that reaches RunServer never reads the developer's real rule cache. T6
-// replaces these call-site installs with one default inside startTestDaemon.
-func installNoPackRulesSeam(t *testing.T) {
-	t.Helper()
-	root := t.TempDir()
-	previous := newRulesClient
-	t.Cleanup(func() { newRulesClient = previous })
-	newRulesClient = func(warn func(string)) (*rules.Client, error) {
-		cache, err := rules.OpenFileCache(root)
-		if err != nil {
-			return nil, err
-		}
-		highWater, err := rules.OpenFileHighWater(filepath.Join(root, "highwater.json"))
-		if err != nil {
-			return nil, err
-		}
-		return &rules.Client{
-			BaseURL:   rules.DefaultBaseURL,
-			Channel:   "stable",
-			Verifier:  &rules.Verifier{Keys: rules.DefaultKeys(), CurrentBinaryVersion: Version},
-			Cache:     cache,
-			HighWater: highWater,
-			Warn:      warn,
-		}, nil
 	}
 }
 
@@ -175,11 +146,9 @@ func TestRunServerAppliesCachedPackWithSyncDisabled(t *testing.T) {
 // TestRunServerStartsWithBuiltinsWhenRulesClientFails proves a rules-client
 // failure is a warning, not a startup abort.
 func TestRunServerStartsWithBuiltinsWhenRulesClientFails(t *testing.T) {
-	previous := newRulesClient
-	t.Cleanup(func() { newRulesClient = previous })
-	newRulesClient = func(func(string)) (*rules.Client, error) {
+	installTestRulesClientFunc(t, func(func(string)) (*rules.Client, error) {
 		return nil, errors.New("rules cache root unavailable")
-	}
+	})
 
 	var stderr bytes.Buffer
 	upstream, base, stop := startRulesDaemon(t, &stderr)

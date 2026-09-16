@@ -64,24 +64,34 @@ var newRulesClient = func(warn func(string)) (*rules.Client, error) {
 	}, nil
 }
 
+// ruleWarn returns the diagnostic sink for the rules startup path. When w is
+// nil (RunDeps.Stderr is optional) the sink drops every line: a nil writer must
+// silence the fallback warning rather than panic or divert it to stdout.
+func ruleWarn(w io.Writer) func(string) {
+	if w == nil {
+		return func(string) {}
+	}
+	return func(msg string) { fmt.Fprintln(w, msg) }
+}
+
 // activeRulesConfig reads the rule pack selected by `tokenhush rules sync` from
 // the local cache and returns it for the build pipeline. It performs no network
 // I/O; a missing or unusable cache falls back to the built-in defaults with a
 // warning on stderr. A nil Config means the built-in defaults.
 func activeRulesConfig(stderr io.Writer) *rules.Config {
-	warn := func(msg string) { fmt.Fprintln(stderr, msg) }
+	warn := ruleWarn(stderr)
 	client, err := newRulesClient(warn)
 	if err != nil {
-		fmt.Fprintf(stderr, "tokenhush: rules: %v; using built-in defaults\n", err)
+		warn(fmt.Sprintf("tokenhush: rules: %v; using built-in defaults", err))
 		return nil
 	}
 	active, err := client.Active()
 	if err != nil {
-		fmt.Fprintf(stderr, "tokenhush: rules: %v; using built-in defaults\n", err)
+		warn(fmt.Sprintf("tokenhush: rules: %v; using built-in defaults", err))
 		return nil
 	}
 	for _, w := range active.Warnings {
-		fmt.Fprintln(stderr, w)
+		warn(w)
 	}
 	return active.Config
 }

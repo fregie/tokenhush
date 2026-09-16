@@ -147,35 +147,30 @@ func signB64(priv ed25519.PrivateKey, input []byte) string {
 	return base64.RawURLEncoding.EncodeToString(ed25519.Sign(priv, input))
 }
 
-// installRulesSeams points the CLI at backend b and a temp cache root, and
-// restores the original seam on cleanup.
+// installRulesSeams points the CLI at backend b and a temp cache root through
+// the canonical test override, which restores the seam on cleanup.
 func installRulesSeams(t *testing.T, b *cliBackend, root string) {
 	t.Helper()
-	previous := newRulesClient
-	t.Cleanup(func() { newRulesClient = previous })
-	newRulesClient = func(warn func(string)) (*rules.Client, error) {
-		cache, err := rules.OpenFileCache(root)
-		if err != nil {
-			return nil, err
-		}
-		hw, err := rules.OpenFileHighWater(filepath.Join(root, "highwater.json"))
-		if err != nil {
-			return nil, err
-		}
-		return &rules.Client{
-			BaseURL: b.srv.URL,
-			Channel: "stable",
-			Verifier: &rules.Verifier{
-				Keys:                 []rules.Key{{ID: "rules-cli-test", Public: b.pub}},
-				CurrentBinaryVersion: "0.4.0",
-				Now:                  func() time.Time { return cliNow },
-			},
-			Cache:      cache,
-			HighWater:  hw,
-			HTTPClient: b.srv.Client(),
-			Warn:       warn,
-		}, nil
+	cache, err := rules.OpenFileCache(root)
+	if err != nil {
+		t.Fatalf("OpenFileCache: %v", err)
 	}
+	hw, err := rules.OpenFileHighWater(filepath.Join(root, "highwater.json"))
+	if err != nil {
+		t.Fatalf("OpenFileHighWater: %v", err)
+	}
+	installTestRulesClient(t, &rules.Client{
+		BaseURL: b.srv.URL,
+		Channel: "stable",
+		Verifier: &rules.Verifier{
+			Keys:                 []rules.Key{{ID: "rules-cli-test", Public: b.pub}},
+			CurrentBinaryVersion: "0.4.0",
+			Now:                  func() time.Time { return cliNow },
+		},
+		Cache:      cache,
+		HighWater:  hw,
+		HTTPClient: b.srv.Client(),
+	})
 }
 
 func TestRulesSyncInstallsAndReports(t *testing.T) {
@@ -313,12 +308,10 @@ func TestRulesUsage(t *testing.T) {
 // so no network request can leave the machine.
 func TestRulesSyncDisabledByEnv(t *testing.T) {
 	t.Setenv(EnvNoRuleSync, "1")
-	previous := newRulesClient
-	t.Cleanup(func() { newRulesClient = previous })
-	newRulesClient = func(func(string)) (*rules.Client, error) {
+	installTestRulesClientFunc(t, func(func(string)) (*rules.Client, error) {
 		t.Fatal("rules sync built a client despite TOKENHUSH_NO_RULE_SYNC")
 		return nil, nil
-	}
+	})
 
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"rules", "sync"}, &stdout, &stderr); code != ExitOK {

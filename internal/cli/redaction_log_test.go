@@ -63,6 +63,12 @@ func TestRedactionLogMasksSecret(t *testing.T) {
 			if !strings.Contains(logs, "tokenhush:") {
 				t.Fatalf("captured no daemon output; the scan would be vacuous: %q", logs)
 			}
+			// Isolation discriminator: the helper-embedded no-pack default must
+			// keep startup off the developer's real rule cache, so the captured
+			// diagnostics never carry the real-cache fallback warning.
+			if strings.Contains(logs, "using built-in defaults") {
+				t.Fatal("captured diagnostics carry the rules real-cache fallback; startup is not isolated")
+			}
 			if strings.Contains(logs, secret) {
 				t.Fatal("redaction log leaked the raw secret; refusing to echo the leak")
 			}
