@@ -3,6 +3,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -367,8 +368,19 @@ func TestPipelineRedactionDisabledForwardsSecret(t *testing.T) {
 	t.Logf("redaction-disabled upstream body (contains the raw secret): %s", sent)
 }
 
-// TestPipelineMalformedInputPassthrough proves a body the walker cannot parse
-// is forwarded byte-for-byte instead of being corrupted or blocking traffic.
+// TestPipelineMalformedInputPassthrough proves the pipeline seam no longer
+// decides the fate of a body the walker cannot parse: it returns the original
+// body byte-for-byte together with ErrUnwalkableBody (which still wraps the
+// walker's own sentinel), and the HTTP layer — the only layer that can read
+// the request headers — chooses between fail-closed and the documented
+// non-JSON passthrough (pkg/gateway/dataplane.go).
+//
+// This test was intentionally rewritten by W1.3: it previously asserted
+// err == nil for every case below, which stopped being the seam contract once
+// transformRequest began reporting the failure. The rewrite is deliberate, not
+// a regression, and the old assertions could not pass unchanged. The empty
+// body case is unchanged: there is nothing to inspect, so it still returns
+// (body, nil).
 func TestPipelineMalformedInputPassthrough(t *testing.T) {
 	engine := w45Engine(t)
 	pipe := w45Pipeline(t, PipelineConfig{Registry: w45Registry(t), Engine: engine})
@@ -388,8 +400,20 @@ func TestPipelineMalformedInputPassthrough(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := transform(tc.body)
-			if err != nil {
-				t.Fatalf("transform(%d bytes): %v", len(tc.body), err)
+			if tc.name == "empty" {
+				if err != nil {
+					t.Fatalf("empty body: err = %v, want nil", err)
+				}
+			} else {
+				// The sentinel is the contract; the walker's own error stays
+				// reachable through the wrap (pinned, so a future refactor
+				// cannot silently drop either chain).
+				if !errors.Is(err, ErrUnwalkableBody) {
+					t.Fatalf("transform(%d bytes): err = %v, want ErrUnwalkableBody", len(tc.body), err)
+				}
+				if !errors.Is(err, protocol.ErrMalformedJSON) {
+					t.Fatalf("transform(%d bytes): err = %v, want it to wrap protocol.ErrMalformedJSON", len(tc.body), err)
+				}
 			}
 			if !bytes.Equal(got, tc.body) {
 				t.Errorf("body changed: got %d bytes, want %d", len(got), len(tc.body))

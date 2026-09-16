@@ -27,6 +27,21 @@ var ErrNilPipeline = errors.New("proxy: nil pipeline")
 // outbound or backfill inbound data.
 var ErrNilEngine = errors.New("proxy: pipeline requires a placeholder engine")
 
+// ErrUnwalkableBody reports that the outbound request body is not a JSON
+// document this build can leaf-walk (non-JSON text, invalid UTF-8, malformed
+// or over-nested JSON). transformRequest returns the original body unchanged
+// together with this sentinel, wrapping the walker's own error so errors.Is
+// still reaches protocol.ErrMalformedJSON, protocol.ErrNestingDepth or
+// protocol.ErrEncodedDepth.
+//
+// The sentinel is deliberately not a decision. BodyTransform receives only
+// []byte and cannot see the request headers, so whether an unparseable body is
+// a client error (declared JSON) or legitimate non-JSON traffic (passthrough)
+// is decided by the HTTP layer in pkg/gateway/dataplane.go, the only layer
+// that can read Content-Type — the same reasoning Forwarder.ServeHTTP
+// documents for its Content-Encoding guard.
+var ErrUnwalkableBody = errors.New("proxy: request body is not a JSON document the walker can parse")
+
 // Audit metadata for content-policy warnings written by the pipeline.
 const (
 	auditProviderPipeline = "pipeline"
@@ -175,12 +190,26 @@ func (p *Pipeline) TransformErrorHandler() TransformErrorFunc {
 
 // transformRequest is the outbound path: Walk -> inspect -> policy -> redact.
 //
-// A body that is not a JSON document this build can leaf-walk (empty, non-JSON,
-// invalid UTF-8, malformed or over-nested) is forwarded unchanged. V1 routes
-// only known JSON API paths, and the resolver rejects unknown paths before they
-// reach the pipeline; passing non-JSON through keeps legitimate non-JSON
-// traffic working instead of breaking it. The limitation is recorded in the
-// W4.5 learnings.
+// An empty body returns (body, nil): there is nothing to inspect.
+//
+// A body that is not a JSON document this build can leaf-walk (non-JSON text,
+// invalid UTF-8, malformed or over-nested JSON) is returned byte-identical
+// together with ErrUnwalkableBody, which wraps the walker's own error.
+// This transform decides nothing about such a body and never corrupts it:
+// whether it is a client error or legitimate non-JSON traffic depends on the
+// request headers, which only the HTTP layer can read (BodyTransform takes
+// only []byte). pkg/gateway/dataplane.go matches the sentinel with errors.Is
+// and fails closed with 400 when the request declares JSON (Content-Type:
+// application/json* or, absent a Content-Type, a body with JSON symptoms);
+// otherwise it forwards the returned body unchanged, preserving the
+// long-documented non-JSON passthrough (V1 routes known JSON API paths, and
+// the resolver rejects unknown paths before they reach the pipeline).
+//
+// A Forwarder built with a non-nil transform (production does not do this:
+// pkg/gateway/dataplane.go passes a nil transform and runs this transform at
+// the HTTP layer instead) maps the sentinel through the generic
+// transform-failure chain to a 500 with zero upstream bytes. That path is
+// intentionally unchanged: it is already fail-closed.
 func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	if p == nil {
 		return nil, ErrNilPipeline
@@ -190,7 +219,7 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	}
 	walked, err := protocol.Walk(body)
 	if err != nil {
-		return body, nil
+		return body, fmt.Errorf("%w: %w", ErrUnwalkableBody, err)
 	}
 	decision, err := p.policy.Evaluate(contentDocument(extension.RequestContent, p.tool, walked))
 	if err != nil {
