@@ -79,6 +79,8 @@ flowchart LR
 
 网关遍历 JSON 树，对字符串 `"my key is sk-abc123"` 执行检测/替换。它不为 Anthropic、OpenAI 或 Responses 建一套内部统一结构，那套结构会随 API 每次变动而腐坏。工具调用内部的双重编码 JSON 字符串递归处理，SSE 在叶子层级增量解析。
 
+**对象键不在此模型内。** JSON 对象的成员名由一个独立、纯新增的 API（`protocol.WalkKeys`，键位 span 扫描器）检视，它们**不是** `Leaf`，绝不进入 `extension.Document` 模型。`Walk` 与 `Leaf` 未变，故上文的“叶子=值”契约依然成立。键位检测集与失败策略见 `security.zh-CN.md`。
+
 ### 占位符与回填
 
 **占位符（placeholder）**：出站时替换真密钥的那段假字符串。格式要求 JSON 安全、对 tokenizer 友好、高熵，例如 `__PII_email_3f9a2b__`。
@@ -89,7 +91,7 @@ flowchart LR
 
 ### 流式
 
-- **出站**：完整读取 body，再脱敏。出站方向不存在流式改写难题。请求若带非 identity 的 `Content-Encoding`，会在 `Forwarder.ServeHTTP` 中、读取 body 之前、拨号上游之前即以 **415** 拒绝，故客户端压缩体绕不过脱敏（见 `security.zh-CN.md` 不变量 8）。
+- **出站**：完整读取 body，再脱敏。出站方向不存在流式改写难题。请求若带非 identity 的 `Content-Encoding`，会在 `Forwarder.ServeHTTP` 中、读取 body 之前、拨号上游之前即以 **415** 拒绝，故客户端压缩体绕不过脱敏（见 `security.zh-CN.md` 不变量 8）。请求体若声明为 JSON、但叶位 walker 无法解析，同样在拨号上游之前以 **400** 拒绝（见 `security.zh-CN.md`）。
 - **入站、非 SSE**：body 整体缓冲后一次性回填。`gzip`/`deflate` 的 `Content-Encoding` 会在提交任何状态码之前解压；核心无法解码的编码（`br`、`zstd` 等）或解压失败一律应答 **502**，绝不透传。
 - **入站、SSE（`text/event-stream`）**：占位符可能被拆到多个 `data:` 事件里，每个只是一段部分 JSON delta。原始字节流上的定长滑动窗口配不上它，因为占位符并不连续（前一事件 `__PII_ema`、后一事件 `il_3f9a2b__`），且中间的 SSE/JSON 分帧会改变字节。响应改为流经一个 **SSE 感知回填器**（`pkg/proxy/ssebackfill.go`）：
   - 每个单行 `data:` 载荷的终端字符串叶子被喂入一个**按路径的窗口**（`BackfillWriter`，按最长占位符定长），因此同一个 JSON 叶子路径可跨事件、跨分帧累积。
@@ -100,7 +102,7 @@ flowchart LR
 
 ### 检测器策略（V1）
 
-确定性规则，**高精度优先**：已知密钥前缀（`sk-`、`AKIA`、`ghp_`、...）、高熵字符串、JWT、私钥头、Luhn 卡号校验和、电子邮件地址。另配白名单和一键放行。措辞保持诚实：**“高置信密钥拦截”**，绝不写“永不泄露”。
+确定性规则，**高精度优先**：已知密钥前缀（`sk-`、`AKIA`、`ghp_`、...）、高熵字符串、JWT、私钥头、Luhn 卡号校验和、电子邮件地址。另配白名单（`tokenhush.yaml` 的静态键，加上可运行期变更且逐次审计的 store）和一键放行。措辞保持诚实：**“高置信密钥拦截”**，绝不写“永不泄露”。
 
 ## 📄 开源核心边界
 

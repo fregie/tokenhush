@@ -1,0 +1,20 @@
+# Known uncovered encoding classes for the outbound re-check.
+#
+# This file is the documentation artifact: the security documentation cites the
+# classes below, and KnownUncoveredEncodings in pkg/redact mirrors them. A test
+# asserts the accessor and this file stay byte-for-byte equal, so neither side
+# can drift from the other.
+#
+# The outbound re-check is high-confidence interception, not a closed guarantee.
+# An entry here is a boundary of a fixed decoder enumeration (see
+# NormalizeCandidates); it is not a claim that everything else is covered.
+#
+# One class per line. Blank lines and lines starting with '#' are comments.
+arbitrary multi-layer custom or non-standard encodings (the decoder set is a fixed enumeration, not a grammar)
+encodings nested deeper than NormalizeMaxRounds (each round peels one layer)
+inputs larger than NormalizeMaxInputBytes (the body is not scanned at all)
+od -tu1 output produced without -v (a run of sixteen identical bytes collapses to '*', silently dropping sixteen bytes; only the od -tu1 -v layout is covered)
+a payload that straddles a candidate window cut for inputs larger than NormalizeMaxCandidateBytes
+password-protected or encrypted containers (gzip without a passphrase is covered; an encrypted payload is opaque)
+steganographic or lossy transforms (re-typing, image or audio embedding, token reordering)
+encodings whose bytes the extractor cannot bound (a secret split across unrelated JSON fields or interleaved with other data)

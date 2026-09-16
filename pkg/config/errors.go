@@ -27,6 +27,12 @@ var (
 	ErrInvalidUpstream = errors.New("invalid upstreams entry")
 	// ErrInvalidLogLevel means log.level is not one of debug|info|warn|error.
 	ErrInvalidLogLevel = errors.New("invalid log.level")
+	// ErrInvalidSelfProtection means a self_protection value is outside the
+	// frozen schema: an unknown or duplicate mode, or enabled with no modes.
+	ErrInvalidSelfProtection = errors.New("invalid self_protection")
+	// ErrInvalidAllowlist means an allowlist entry is unusable: empty, contains
+	// control characters, or exceeds the entry length bound.
+	ErrInvalidAllowlist = errors.New("invalid allowlist")
 )
 
 // Error is the single typed error returned by this package. It carries the

@@ -49,17 +49,50 @@ const (
 	BackendFilePlaintext = "file-plaintext"
 )
 
+// Key source kinds reported by stores that can identify where their key comes
+// from (KeySourceReporter). These strings are frozen: W3.2's degradation
+// warning, tokenhush doctor and the Pro layer branch on these exact values.
+const (
+	// KeySourceOSBound is an OS-protected source: the native keyring or
+	// systemd-creds, where the operating system mediates access to the key
+	// material.
+	KeySourceOSBound = "os-bound"
+
+	// KeySourceMachineBound is the encrypted-file layer, whose AES key is
+	// derived from best-effort machine identity. It is defense in depth above
+	// plaintext, not an OS trust boundary.
+	KeySourceMachineBound = "machine-bound"
+
+	// KeySourceNone is the plaintext last-resort layer: it has no key source at
+	// all. It always emits PlaintextWarningMarker, and reporting "none" keeps
+	// it distinct from both keyed kinds so no consumer mistakes an unencrypted
+	// store for a keyed one.
+	KeySourceNone = "none"
+)
+
 // PlaintextWarningMarker is the stable marker emitted whenever the plaintext
 // fallback is selected. tokenhush doctor greps for it and the CLI must display
 // it verbatim.
 const PlaintextWarningMarker = "tokenhush: WARNING: plaintext secret store in use; secrets are NOT encrypted"
 
+// MachineBoundWarningMarker is the stable marker emitted whenever the encrypted
+// file layer is selected: entries do have a key, but that key is derived from
+// best-effort machine identity rather than an OS keychain, so the layer is
+// defense in depth above plaintext, not an OS trust boundary. It is
+// deliberately a separate constant from PlaintextWarningMarker — the two name
+// different facts ("a key, but only machine-bound" vs "no key at all") and
+// must never be conflated. tokenhush doctor greps for it and the CLI must
+// display it verbatim.
+const MachineBoundWarningMarker = "tokenhush: WARNING: secret store uses a machine-bound key; entries are not protected by an OS keychain"
+
 // SecretStore is the only component allowed to touch an OS secret store. It is
 // implemented by the graded fallback chain (native keyring -> systemd-creds ->
 // encrypted file -> plaintext file) selected at OpenSecretStore time.
 //
-// The audit subsystem uses the namespace service "tokenhush/audit" with key
-// "hmac-key" (docs/security.md); V1 stores no provider keys.
+// The audit subsystem stores its keys under the namespace service
+// "tokenhush-pro/audit" with key "hmac-key" (docs/security.md); the legacy
+// "tokenhush/audit" coordinate is migrated forward at startup, so it is never
+// written to. V1 stores no provider keys.
 type SecretStore interface {
 	// Get returns the stored secret. A missing entry yields an error matching
 	// ErrNotFound.
@@ -81,6 +114,33 @@ type SecretStore interface {
 	Backend() string
 }
 
+// KeySourceReporter is implemented by secret stores that can report where the
+// key protecting their entries comes from; the method name and its values are
+// frozen by W3.1. KeySourceKindOf asks a plain SecretStore.
+//
+// It is deliberately an optional interface instead of a fourth SecretStore
+// method: adding a method to the exported SecretStore interface would break
+// every external implementation at compile time (the Pro module keeps several
+// in-memory SecretStore doubles), while consumers only ever need to ask.
+type KeySourceReporter interface {
+	// KeySourceKind returns one of KeySourceOSBound, KeySourceMachineBound or
+	// KeySourceNone, decided by the branch openSecretStore actually selected.
+	KeySourceKind() string
+}
+
+// KeySourceKindOf reports the key-source kind of any SecretStore. A nil store,
+// or one that does not implement KeySourceReporter (a third-party backend or a
+// decorator), reports "" — "cannot report" — never a guessed kind.
+func KeySourceKindOf(store SecretStore) string {
+	if store == nil {
+		return ""
+	}
+	if reporter, ok := store.(KeySourceReporter); ok {
+		return reporter.KeySourceKind()
+	}
+	return ""
+}
+
 // storeBackend is the per-layer primitive the selection chain composes.
 // keyringBackend (W2.0) satisfies it directly.
 type storeBackend interface {
@@ -93,6 +153,7 @@ type storeBackend interface {
 type secretStore struct {
 	backend storeBackend
 	label   string
+	kind    string
 }
 
 // Get returns the stored secret or an error matching ErrNotFound.
@@ -122,6 +183,13 @@ func (s *secretStore) Delete(service, key string) error {
 // Backend reports the label of the selected layer.
 func (s *secretStore) Backend() string { return s.label }
 
+// KeySourceKind reports where the key of the selected layer comes from,
+// decided by the branch openSecretStore actually took: the native keyring and
+// systemd-creds report KeySourceOSBound, the encrypted file layer reports
+// KeySourceMachineBound, and the plaintext layer reports KeySourceNone (it has
+// no key at all).
+func (s *secretStore) KeySourceKind() string { return s.kind }
+
 // probeService and probeKey name the read-only availability probe. The probe
 // never writes: a backend that answers ErrNotFound is healthy, while any other
 // error (no D-Bus session, locked keychain, unsupported platform) tells the
@@ -144,13 +212,10 @@ type secretStoreConfig struct {
 }
 
 // OpenSecretStore resolves the platform data dir and selects the strongest
-// available backend per the docs/security.md fallback chain.
+// available backend per the docs/security.md fallback chain. Its signature and
+// behaviour are unchanged: it is OpenSecretStoreWith with no injected options.
 func OpenSecretStore() (SecretStore, error) {
-	dataDir, err := DataDir()
-	if err != nil {
-		return nil, err
-	}
-	return openSecretStore(defaultSecretStoreConfig(dataDir))
+	return OpenSecretStoreWith()
 }
 
 // defaultSecretStoreConfig wires the production seam: W2.0's native keyring
@@ -171,24 +236,26 @@ func defaultSecretStoreConfig(dataDir string) secretStoreConfig {
 
 // openSecretStore walks the fallback chain deterministically: native keyring,
 // systemd-creds, encrypted file, plaintext file. The first layer that proves
-// itself usable wins and is reported by Backend() for the whole store lifetime.
+// itself usable wins and is reported by Backend() and KeySourceKind() for the
+// whole store lifetime.
 func openSecretStore(cfg secretStoreConfig) (SecretStore, error) {
 	if cfg.keyring != nil {
 		if backend := cfg.keyring(); backend != nil && cfg.keyringWorks != nil && cfg.keyringWorks(backend) {
-			return &secretStore{backend: backend, label: BackendKeyring}, nil
+			return &secretStore{backend: backend, label: BackendKeyring, kind: KeySourceOSBound}, nil
 		}
 	}
 
 	if cfg.systemd != nil {
 		if backend, ok := cfg.systemd(cfg.dataDir); ok && backend != nil {
-			return &secretStore{backend: backend, label: BackendSystemdCreds}, nil
+			return &secretStore{backend: backend, label: BackendSystemdCreds, kind: KeySourceOSBound}, nil
 		}
 	}
 
 	if cfg.machineSecret != nil && cfg.dataDir != "" {
 		if machineSecret, err := cfg.machineSecret(); err == nil && len(machineSecret) > 0 {
 			if backend, err := newEncryptedFileStore(cfg.dataDir, machineSecret); err == nil {
-				return &secretStore{backend: backend, label: BackendFileEncrypted}, nil
+				warnMachineBoundFallback(cfg, cfg.dataDir)
+				return &secretStore{backend: backend, label: BackendFileEncrypted, kind: KeySourceMachineBound}, nil
 			}
 		}
 	}
@@ -196,7 +263,7 @@ func openSecretStore(cfg secretStoreConfig) (SecretStore, error) {
 	if cfg.dataDir != "" {
 		if backend, err := newPlaintextFileStore(cfg.dataDir); err == nil {
 			warnPlaintextFallback(cfg, cfg.dataDir)
-			return &secretStore{backend: backend, label: BackendFilePlaintext}, nil
+			return &secretStore{backend: backend, label: BackendFilePlaintext, kind: KeySourceNone}, nil
 		}
 	}
 
@@ -219,6 +286,17 @@ func warnPlaintextFallback(cfg secretStoreConfig, dataDir string) {
 		return
 	}
 	cfg.warnf("%s (dir: %s)", PlaintextWarningMarker, filepath.Join(dataDir, secretsDirName))
+}
+
+// warnMachineBoundFallback reports the recorded degradation through the same
+// writer as the plaintext marker: the encrypted layer has a key, but only a
+// machine-bound one. The warning is informational and never fails selection —
+// a failing writer is ignored, exactly like the plaintext marker.
+func warnMachineBoundFallback(cfg secretStoreConfig, dataDir string) {
+	if cfg.warnf == nil {
+		return
+	}
+	cfg.warnf("%s (dir: %s)", MachineBoundWarningMarker, filepath.Join(dataDir, secretsDirName))
 }
 
 // validateCredential is the parse-don't-validate gate every backend call passes

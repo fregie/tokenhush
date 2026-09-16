@@ -184,7 +184,7 @@ raw-key grep exit=1
 |---|---|---|---|
 | 1 | **脱敏生效** | §3.4：对 `$WORK/upstream.log` 跑 `grep -c "$SECRET"` | 输出 `0`（退出码 `1`），且日志里出现 `__PII_...__` 占位符 |
 | 2 | **回填正确 + 出站不回填** | §3.3 客户端响应含原始密钥；§3.5 重放占位符后上游仍只含占位符 | 客户端拿到原文；上游始终无原始密钥 |
-| 3 | **审计接缝（仅元数据）** | §3 跑完后 `grep -rn "$SECRET" "$TOKENHUSH_HOME"` 与 `grep -rn '__PII_' "$TOKENHUSH_HOME"` | 都无命中；数据根只含会话元数据（运行中：`run.json`、`control.token`；干净退出后删除）。核心 `pkg/audit` 是 no-op 接缝，只定义**仅元数据**的记录契约，不落任何正文 |
+| 3 | **审计接缝（仅元数据）** | §3 跑完后 `grep -rn "$SECRET" "$TOKENHUSH_HOME"` 与 `grep -rn '__PII_' "$TOKENHUSH_HOME"` | 都无命中；数据根的文件清单为：会话文件 `run.json` 与 `control.token`（运行中，干净退出后删除），以及运行期白名单 `<DataDir>/allowlist.json`（`0600`、带 `schema_version`、**非**会话文件，干净退出后保留；只含你显式放行的字面量）。核心 `pkg/audit` 是 no-op 接缝，只定义**仅元数据**的记录契约，不落任何正文 |
 | 4 | **`privacy` 两项外发，均 active** | `"$BIN" privacy --json` | 正好两项：`update-check`、`rule-sync`，`status` 均为 `active`，且与 [`egress.yaml`](../egress.yaml) 和 [generated/network-egress.md](generated/network-egress.md) 逐字段一致；各带关闭开关（`TOKENHUSH_NO_UPDATE_CHECK=1` / `TOKENHUSH_NO_RULE_SYNC=1`） |
 | 5 | **`doctor` 通过** | 用一个空闲端口跑 `"$BIN" doctor --config <config>` | 退出码 `0`（无 failure）。工具未接入带来的 `warn` 不阻塞；`secret-store` 落到 `file-plaintext` 才算 failure |
 
@@ -198,7 +198,8 @@ raw-key grep exit=1
   或在 `tokenhush.yaml` 改 `listen.port`，再 `tokenhush doctor --config <file>`。
 - **`doctor` 报 `secret-store ... plaintext`（fail）**：说明回退到了明文文件后端，核心会显式失败而不是静默降级。
   启用系统钥匙串（macOS Keychain / Windows Credential Manager / gnome-keyring 或 KWallet）后重试。
-  非明文回退（如 `file-encrypted`）是 `ok`，会在消息里标注"degraded fallback"。
+  非明文回退（`file-encrypted`）报 `ok`，但会标注 `key source machine-bound` 与降级标记：它的密钥经 HKDF 由 best-effort 机器标识派生，是**对随意读文件的纵深防御，不是 OS 信任边界**；同机同用户、可派生该标识的攻击者仍能解开它。只有 `key source os-bound`（系统钥匙串 / systemd-creds）才表示密钥由操作系统保管。`tokenhush doctor` 报 `backend …; key source <kind>`（`os-bound` / `machine-bound` / `none`），后两者各自附带专用标记（machine-bound 降级 / 明文），因此"`ok`"不等于"密钥受 OS 保护"。
+  这一项描述的是**核心自己**的密钥库。审计库与它的 vault 属于私有 Pro 层、使用 Pro 自己的数据根（见 Pro 仓库文档），两者是不同的根，因此上面的核心数据根清单不包含审计库，并不构成冲突。
 - **工具装了但没走网关**：`doctor` 会对检测到的工具给出 `warn` 与 fix 行，照它给的 `tokenhush env <tool>` 配置即可。
 - **输出里偶尔看到 `__PII_...__`**：映射只在内存、随会话生命周期存在；重启网关后旧占位符无法还原，这是**安全降级**，不是泄露。
 - **本地代理拦截了回环请求**：若设置了 `HTTP(S)_PROXY`，把 `127.0.0.1,localhost,::1` 加进 `NO_PROXY`（`doctor` 的 `proxy-env` 会提示）。

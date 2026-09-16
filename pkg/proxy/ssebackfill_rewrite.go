@@ -7,7 +7,8 @@ import "github.com/fregie/tokenhush/pkg/protocol"
 // leafRewriter driven by the path->final-content map; any error or a no-op
 // rewrite falls back to the original bytes verbatim, so a desync can never
 // produce a half-spliced record. A raw (non-JSON) event's payload is replaced
-// directly, without JSON quoting.
+// directly, without JSON quoting. An emit-time walk failure is reported to the
+// observer set via setWalkFailureObserver before the fallback is written.
 func (b *sseBackfiller) emit(he *heldEvent) error {
 	if he.kind == kindRaw {
 		if he.rawEdit == nil {
@@ -19,8 +20,21 @@ func (b *sseBackfiller) emit(he *heldEvent) error {
 		return b.write(he.raw)
 	}
 	src := he.raw[he.dataOff : he.dataOff+he.dataLen]
-	leaves, _ := protocol.Walk(src)
-	rw := &leafRewriter{walked: leaves, edit: mapEdit(he.jsonEdits)}
+	leaves, walkErr := protocol.Walk(src)
+	if walkErr != nil {
+		// Desync guard: the payload was already walked when it was fed, so a
+		// failure here means the held edits and the raw bytes disagree. Report
+		// it (observable instead of silent, metadata only) and fall back to
+		// the original bytes verbatim. Non-JSON payloads never reach this
+		// branch: processEvent routes them through kindRaw, the documented
+		// `data: [DONE]`/ping passthrough — the client-bound direction is
+		// deliberately not fail-closed (see transformResponse).
+		if b.onWalkFailure != nil {
+			b.onWalkFailure(walkErr)
+		}
+		return b.write(he.raw)
+	}
+	rw := &leafRewriter{walked: leaves, edit: mapEdit(he.jsonEdits), parentEdit: mapParentEdit(he.jsonEdits)}
 	out, changed, err := rw.rewrite(src, "")
 	if err == nil && changed {
 		return b.write(splice(he.raw, he.dataOff, he.dataLen, out))
@@ -46,6 +60,21 @@ func mapEdit(edits map[string]string) leafEdit {
 		replacement, ok := edits[path]
 		if !ok {
 			return content, false
+		}
+		return []byte(replacement), replacement != string(content)
+	}
+}
+
+// mapParentEdit adapts the same map to the leafRewriter's encoded-parent hook,
+// so an edit keyed by an Encoded arguments parent replaces that parent's whole
+// value and the rewriter swallows its nested leaves. Terminal paths never reach
+// this hook, so a guard edit recorded against a terminal `.../arguments` leaf, or
+// a placeholder edit against a nested leaf, stays a per-leaf replacement.
+func mapParentEdit(edits map[string]string) leafParentEdit {
+	return func(_ int, path string, content []byte) ([]byte, bool) {
+		replacement, ok := edits[path]
+		if !ok {
+			return nil, false
 		}
 		return []byte(replacement), replacement != string(content)
 	}

@@ -97,6 +97,10 @@ func WithAllowlist(literals ...string) Option {
 // detectorConfig is the mutable state Options write into.
 type detectorConfig struct {
 	allowlist *Allowlist
+	// allowlistSource, when set, is consulted once per Inspect: the effective
+	// literals are the union of the static allowlist and the source's current
+	// result. See WithAllowlistSource.
+	allowlistSource func() []string
 }
 
 // newDetectorConfig applies opts in order. Nil options are ignored.
@@ -113,22 +117,24 @@ func newDetectorConfig(opts []Option) detectorConfig {
 // detector is the shared implementation behind every built-in Inspector: one
 // fixed id, finding type, confidence and deterministic finder.
 type detector struct {
-	id         string
-	finding    string
-	confidence float64
-	find       finderFunc
-	allow      *Allowlist
+	id          string
+	finding     string
+	confidence  float64
+	find        finderFunc
+	allow       *Allowlist
+	allowSource func() []string
 }
 
 // newDetector assembles a built-in detector.
 func newDetector(id, finding string, confidence float64, find finderFunc, opts []Option) extension.Inspector {
 	cfg := newDetectorConfig(opts)
 	return &detector{
-		id:         id,
-		finding:    finding,
-		confidence: confidence,
-		find:       find,
-		allow:      cfg.allowlist,
+		id:          id,
+		finding:     finding,
+		confidence:  confidence,
+		find:        find,
+		allow:       cfg.allowlist,
+		allowSource: cfg.allowlistSource,
 	}
 }
 
@@ -153,6 +159,12 @@ func (d *detector) Inspect(doc *extension.Document) ([]extension.Finding, error)
 	if doc == nil {
 		return nil, nil
 	}
+	// 无运行期来源时沿用构造期 Allowlist（旧路径逐字节不变）；有来源时按
+	// 「静态字面量 ∪ 来源当前值」解析一次，本次 Inspect 的全部 finding 共用。
+	allow := d.allow
+	if d.allowSource != nil {
+		allow = unionAllowlist(d.allow, d.allowSource())
+	}
 	var findings []extension.Finding
 	for i := range doc.Leaves {
 		content := doc.Leaves[i].Content
@@ -163,7 +175,7 @@ func (d *detector) Inspect(doc *extension.Document) ([]extension.Finding, error)
 			if s.start < 0 || s.start >= s.end || s.end > len(content) {
 				continue
 			}
-			if d.allow.suppresses(content, s.start, s.end) {
+			if allow.suppresses(content, s.start, s.end) {
 				continue
 			}
 			findings = append(findings, extension.Finding{

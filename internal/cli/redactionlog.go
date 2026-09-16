@@ -11,7 +11,13 @@ import (
 // redactionLogger renders the pipeline's RedactionEvents as one masked line
 // each on the daemon's diagnostics stream. A redact line carries the detector
 // type, the matched byte length and the masked value (never the value); a block
-// line carries only the detector type, because a block aborts before egress.
+// line carries only the detector type, because a block aborts before egress. A
+// walk-failure line names the action and says the body was forwarded unchanged:
+// it must never claim a redaction, and it prints none of the empty detector
+// fields (a walk failure skips the response body, it does not redact it). An
+// egress-block line likewise never claims a redaction — the outbound body was
+// blocked, not rewritten — and prints neither the matched placeholder nor the
+// empty detector fields.
 //
 // The pipeline calls Report from concurrent request goroutines, so a mutex
 // serialises whole-line writes, and a recover guard keeps a rendering bug from
@@ -39,6 +45,23 @@ func (l *redactionLogger) Report(ev proxy.RedactionEvent) {
 	switch ev.Action {
 	case proxy.RedactionActionBlock:
 		fmt.Fprintf(l.w, "tokenhush: blocked %s by content policy: %s\n", ev.Direction, ev.Type)
+	case proxy.RedactionActionEgressBlocked:
+		// Without this case the default branch would render an egress block as
+		// "redacted … (len=0) ", which is false: nothing was redacted here.
+		fmt.Fprintf(l.w, "tokenhush: blocked %s outbound body still carried a redacted secret (egress_blocked)\n", ev.Direction)
+	case proxy.RedactionActionResponseWalkFailed, proxy.RedactionActionSSEWalkFailed:
+		fmt.Fprintf(l.w, "tokenhush: unparseable %s body skipped: %s (forwarded unchanged)\n", ev.Direction, ev.Action)
+	case proxy.RedactionActionMutationChannelBlocked:
+		// Without this case the default branch would render a refusal as
+		// "redacted … (len=0) ", which is false: the tool call was refused and
+		// its arguments were replaced by the refusal notice, not redacted. The
+		// class is metadata ("none" when the streaming guard failed closed
+		// without a pattern match); no argument byte is ever rendered.
+		channel := ev.Type
+		if channel == "" {
+			channel = "none"
+		}
+		fmt.Fprintf(l.w, "tokenhush: refused %s tool call (mutation_channel_blocked, channel=%s)\n", ev.Direction, channel)
 	default:
 		fmt.Fprintf(l.w, "tokenhush: redacted %s %s (len=%d) %s\n",
 			ev.Direction, ev.Type, ev.Length, ev.Masked)

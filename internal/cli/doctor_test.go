@@ -33,6 +33,17 @@ func (s doctorTestStore) Backend() string {
 	return s.backend
 }
 
+// doctorKindTestStore is a doctorTestStore that also reports a key-source kind,
+// the shape platform's real store has through KeySourceReporter. The plain
+// doctorTestStore stays a cannot-report store on purpose.
+type doctorKindTestStore struct {
+	doctorTestStore
+	kind string
+}
+
+// KeySourceKind reports the injected kind verbatim.
+func (s doctorKindTestStore) KeySourceKind() string { return s.kind }
+
 // doctorNopCloser stands in for a released proxy.Listeners in injected checks.
 type doctorNopCloser struct{}
 
@@ -220,6 +231,98 @@ func TestDoctorPlaintextFallbackFailsLoudly(t *testing.T) {
 	}
 	t.Logf("plaintext --json check: status=%s message=%q fix=%q exit=%d",
 		check.Status, check.Message, check.Fix, report.Exit)
+}
+
+// TestDoctorSecretStoreKeySource pins how doctor surfaces the W3.1 key-source
+// kind on the real rendered output: the machine-bound layer shows the dedicated
+// degradation marker (never the plaintext one), OS-bound layers show their kind
+// with no marker at all, and a store that cannot report its kind is rendered as
+// unknown instead of a guess. Non-plaintext fallbacks stay ok
+// (docs/oss-testing.md).
+func TestDoctorSecretStoreKeySource(t *testing.T) {
+	tests := []struct {
+		name        string
+		store       platform.SecretStore
+		wantCheck   []string
+		forbidCheck []string
+	}{
+		{
+			name: "machine_bound_shows_marker",
+			store: doctorKindTestStore{
+				doctorTestStore: doctorTestStore{backend: platform.BackendFileEncrypted},
+				kind:            platform.KeySourceMachineBound,
+			},
+			wantCheck: []string{
+				"backend " + platform.BackendFileEncrypted,
+				"key source " + platform.KeySourceMachineBound,
+				platform.MachineBoundWarningMarker,
+				"degraded fallback",
+			},
+			forbidCheck: []string{platform.PlaintextWarningMarker},
+		},
+		{
+			name: "os_bound_is_marker_free",
+			store: doctorKindTestStore{
+				doctorTestStore: doctorTestStore{backend: platform.BackendKeyring},
+				kind:            platform.KeySourceOSBound,
+			},
+			wantCheck:   []string{"backend " + platform.BackendKeyring, "key source " + platform.KeySourceOSBound},
+			forbidCheck: []string{platform.PlaintextWarningMarker, platform.MachineBoundWarningMarker},
+		},
+		{
+			name:        "cannot_report_is_unknown_not_a_guess",
+			store:       doctorTestStore{backend: platform.BackendKeyring},
+			wantCheck:   []string{"backend " + platform.BackendKeyring, "key source unknown"},
+			forbidCheck: []string{platform.PlaintextWarningMarker, platform.MachineBoundWarningMarker, platform.KeySourceMachineBound, platform.KeySourceOSBound},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tweak := func(d *doctorDeps) {
+				d.openStore = func() (platform.SecretStore, error) { return tc.store, nil }
+			}
+
+			code, stdout, stderr := runDoctorCommand(t, nil, tweak)
+			if code != ExitOK {
+				t.Fatalf("exit = %d, want %d\nstdout:\n%s\nstderr:\n%s", code, ExitOK, stdout, stderr)
+			}
+			if !strings.Contains(stdout, "[ok]   secret-store") {
+				t.Errorf("stdout missing the ok secret-store line:\n%s", stdout)
+			}
+			for _, want := range tc.wantCheck {
+				if !strings.Contains(stdout, want) {
+					t.Errorf("stdout missing %q:\n%s", want, stdout)
+				}
+			}
+			for _, forbidden := range tc.forbidCheck {
+				if strings.Contains(stdout, forbidden) {
+					t.Errorf("stdout must not contain %q:\n%s", forbidden, stdout)
+				}
+			}
+			t.Logf("exit=%d\n%s", code, stdout)
+
+			code, stdout, _ = runDoctorCommand(t, []string{"--json"}, tweak)
+			if code != ExitOK {
+				t.Fatalf("--json exit = %d, want %d", code, ExitOK)
+			}
+			report := parseDoctorJSON(t, stdout)
+			check := doctorFindCheck(t, report, doctorCheckSecrets)
+			if check.Status != doctorOK {
+				t.Errorf("secret-store check = %+v, want ok", check)
+			}
+			for _, want := range tc.wantCheck {
+				if !strings.Contains(check.Message, want) {
+					t.Errorf("secret-store message missing %q: %q", want, check.Message)
+				}
+			}
+			for _, forbidden := range tc.forbidCheck {
+				if strings.Contains(check.Message, forbidden) {
+					t.Errorf("secret-store message must not contain %q: %q", forbidden, check.Message)
+				}
+			}
+		})
+	}
 }
 
 // TestDoctorDegradedLoopbackWarns locks the honest-degradation rule: a v4-only

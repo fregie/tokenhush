@@ -10,7 +10,7 @@
 #   go test ./internal/cli -run TestGoldenBaseline -update-golden
 
 [status] HTTP 200
-{"state":"running","addrs":["127.0.0.1:<PORT>","[::1]:<PORT>"],"uptime_ms":<UPTIME>,"requests":1,"redactions":1}
+{"state":"running","addrs":["127.0.0.1:<PORT>","[::1]:<PORT>"],"uptime_ms":<UPTIME>,"requests":1,"redactions":1,"allowlist":0,"self_protection_interceptions":0,"allowlist_mutations":0,"stream_guard_refusals":0,"stream_guard_fail_closed":0,"egress_blocks":0}
 
 [startup]
 tokenhush: gateway listening on http://127.0.0.1:<PORT>

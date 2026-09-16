@@ -31,6 +31,21 @@ var errRewriterDesync = errors.New("proxy: JSON rewriter leaf desync")
 // content. A false "changed" means the raw token is copied byte-for-byte.
 type leafEdit func(terminalIdx int, path string, content []byte) ([]byte, bool)
 
+// leafParentEdit rewrites one Encoded (double-encoded) JSON string leaf as a
+// whole, instead of descending into its nested leaves. It receives:
+//
+//   - encodedIdx: the parent's ordinal among the encoded leaves in Walk order
+//     (nested encoded parents included), so a caller with duplicate paths can
+//     identify the exact leaf;
+//   - path: the parent's protocol JSON Pointer;
+//   - content: the parent's decoded string content (the embedded JSON text).
+//
+// Returning changed=true replaces the entire string value with the re-quoted
+// replacement and swallows the parent's nested leaves; the walk and terminal
+// cursors advance past that run so the following sibling leaf keeps its correct
+// ordinal. Returning false descends into the nested leaves as before.
+type leafParentEdit func(encodedIdx int, path string, content []byte) ([]byte, bool)
+
 // leafRewriter rewrites JSON string leaves in place while preserving every byte
 // it does not change: key order, whitespace, separators and number spelling all
 // survive. Only a string value whose edit reports a change is re-quoted and
@@ -48,8 +63,10 @@ type leafEdit func(terminalIdx int, path string, content []byte) ([]byte, bool)
 type leafRewriter struct {
 	walked      []protocol.Leaf
 	edit        leafEdit
+	parentEdit  leafParentEdit
 	walkIdx     int
 	terminalIdx int
+	encodedIdx  int
 }
 
 // rewrite re-walks src and returns the rewritten document. path is the JSON
@@ -164,6 +181,19 @@ func (rw *leafRewriter) rewriteString(content, path string, start, end int, stat
 	rw.walkIdx++
 
 	if leaf.Encoded {
+		if rw.parentEdit != nil {
+			encodedIdx := rw.encodedIdx
+			rw.encodedIdx++
+			if replacement, changed := rw.parentEdit(encodedIdx, path, []byte(content)); changed {
+				state.splice(start, end, jsonQuote(string(replacement)))
+				if err := rw.consumeEncoded([]byte(content)); err != nil {
+					return err
+				}
+				return nil
+			}
+		} else {
+			rw.encodedIdx++
+		}
 		inner, innerChanged, err := rw.rewrite([]byte(content), path+"#")
 		if err != nil {
 			return err
@@ -181,6 +211,34 @@ func (rw *leafRewriter) rewriteString(content, path string, start, end int, stat
 		}
 	}
 	rw.terminalIdx++
+	return nil
+}
+
+// consumeEncoded advances the walk and terminal cursors past the nested leaves
+// of an Encoded parent whose whole content was just replaced.
+//
+// The run length comes from re-walking the parent's decoded content, NOT from a
+// path+"#" prefix scan: escapePointer does not escape '#', so a sibling key
+// literally named "x#y" produces the path "/x#y", which shares the "/x#" prefix
+// of an encoded parent "/x" and would make a prefix scan swallow (or desync on)
+// that sibling. The cursor rule is frozen and must mirror
+// mutationChannelGuardTargets: walkIdx advances by the whole run, terminalIdx by
+// the count of non-Encoded leaves in it, and encodedIdx by the count of Encoded
+// leaves in it. Omitting the encoded increment makes encodedIdx lag, so a later
+// Encoded arguments target is numbered one too low and its guard is skipped.
+func (rw *leafRewriter) consumeEncoded(content []byte) error {
+	nested, err := protocol.Walk(content)
+	if err != nil {
+		return fmt.Errorf("%w: re-walk replaced encoded parent: %w", errRewriterDesync, err)
+	}
+	rw.walkIdx += len(nested)
+	for _, leaf := range nested {
+		if leaf.Encoded {
+			rw.encodedIdx++
+		} else {
+			rw.terminalIdx++
+		}
+	}
 	return nil
 }
 

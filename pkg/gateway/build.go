@@ -38,6 +38,12 @@ type BuildOptions struct {
 	Tool string
 	// Rules 是已同步的签名规则包；nil = 仅内置检测器（等价于本字段引入前的行为）。
 	Rules *rules.Config
+	// AllowlistStore 是 C7 的运行时白名单句柄，供检测器在请求期读取共享快照；
+	// nil = 仅静态 Allowlist（零值即旧行为）。
+	AllowlistStore AllowlistStore
+	// SelfProtection 是 C8 的装配配置（窄口径排除集 + control token）；
+	// 零值 = 关闭（零值即旧行为）。
+	SelfProtection SelfProtectionConfig
 }
 
 // BuildPipeline assembles the content pipeline for one session: the enabled
@@ -69,6 +75,11 @@ func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
 		Engine:   engine,
 		Sink:     opts.Sink,
 		Tool:     opts.Tool,
+		// C8 接缝：此处只搬运原语，零值 = 完全无操作；拦截实现归 W6.1–W6.4。
+		SelfProtectionEnabled: opts.SelfProtection.Enabled,
+		SelfProtectionModes:   opts.SelfProtection.Modes,
+		Exclusions:            opts.SelfProtection.Exclusions,
+		ControlToken:          opts.SelfProtection.ControlToken,
 	})
 }
 
@@ -79,7 +90,7 @@ func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
 // skipped and the interpreter must never be silently dropped.
 func buildRegistry(opts BuildOptions) (*extension.Registry, error) {
 	registry := extension.NewRegistry()
-	options := detectorOptions(opts.Allowlist)
+	options := detectorOptions(opts.Allowlist, opts.AllowlistStore)
 	for _, id := range opts.Detectors {
 		constructor, ok := builtinDetectors[id]
 		if !ok {
@@ -102,12 +113,20 @@ func buildRegistry(opts BuildOptions) (*extension.Registry, error) {
 }
 
 // detectorOptions forwards the config allowlist to every detector; an empty
-// allowlist passes no options so the detector defaults apply.
-func detectorOptions(allowlist []string) []redact.Option {
-	if len(allowlist) == 0 {
-		return nil
+// allowlist passes no options so the detector defaults apply. A nil store
+// passes no runtime source (zero value = the pre-seam behaviour); a non-nil
+// store wires the shared handle so every detector reads it at Inspect time
+// (ADR-0012 A2: the effective literals are static ∪ dynamic, never a
+// replacement of the static set).
+func detectorOptions(allowlist []string, store AllowlistStore) []redact.Option {
+	var options []redact.Option
+	if len(allowlist) > 0 {
+		options = append(options, redact.WithAllowlist(allowlist...))
 	}
-	return []redact.Option{redact.WithAllowlist(allowlist...)}
+	if store != nil {
+		options = append(options, redact.WithAllowlistSource(store.Entries))
+	}
+	return options
 }
 
 // failClosedDetectors marks every enabled built-in detector FailClosed and,

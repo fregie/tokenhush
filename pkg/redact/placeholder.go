@@ -67,6 +67,13 @@ type PlaceholderEngine struct {
 	salt          []byte
 	bySecret      map[string]string // "type\x00secret" -> placeholder
 	byPlaceholder map[string]string // placeholder -> secret
+	// neverBackfill holds decoded secret values that Secret and BackfillFunc
+	// must refuse to restore. It is the narrow W6.1 exception to the F1
+	// general restore primitive: values in the C8 exclusion set are
+	// force-redacted outbound and can never be materialised into a
+	// client-bound response. Nil means every mapped value restores (the
+	// pre-W6.1 behaviour). See ExcludeFromBackfill.
+	neverBackfill map[string]struct{}
 }
 
 // NewPlaceholderEngine returns an engine with a fresh cryptographically random
@@ -126,13 +133,49 @@ func (e *PlaceholderEngine) Placeholder(secret, findingType string) string {
 // previous session's placeholders and any placeholder-shaped non-token — return
 // ("", false) so the caller can leave them verbatim.
 //
+// A value registered with ExcludeFromBackfill is never returned: the token is
+// known, but restoring it would materialise an exclusion-set value into a
+// client-bound body, so Secret reports ("", false) and BackfillFunc leaves the
+// placeholder in place. Every other value restores exactly as before.
+//
 // Secret is the inbound-only direction: callers must never use it while writing
 // toward the upstream (docs/security.md).
 func (e *PlaceholderEngine) Secret(placeholder string) (string, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	secret, ok := e.byPlaceholder[placeholder]
-	return secret, ok
+	if !ok {
+		return "", false
+	}
+	if _, excluded := e.neverBackfill[secret]; excluded {
+		return "", false
+	}
+	return secret, true
+}
+
+// ExcludeFromBackfill registers decoded secret values that Secret and
+// BackfillFunc must refuse to restore. It is the narrow W6.1 exception to the
+// F1 general restore primitive: the C8 exclusion set (the control-token value
+// plus the full <DataDir>/allowlist.json content) is force-redacted outbound
+// and must never be materialised into a client-bound response.
+//
+// The set is exact and additive: only the registered byte strings are refused,
+// so every other value's restore behaviour stays byte-identical (W6.1's
+// boundary requirement). Empty values are ignored. Calling it more than once
+// accumulates; there is deliberately no un-exclude path, because widening what
+// may be restored is the operation C8 exists to prevent.
+func (e *PlaceholderEngine) ExcludeFromBackfill(values ...[]byte) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, value := range values {
+		if len(value) == 0 {
+			continue
+		}
+		if e.neverBackfill == nil {
+			e.neverBackfill = make(map[string]struct{})
+		}
+		e.neverBackfill[string(value)] = struct{}{}
+	}
 }
 
 // MaxPlaceholderLen is the longest token this engine can ever produce. Inbound

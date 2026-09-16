@@ -10,9 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fregie/tokenhush/pkg/allowlist"
 	"github.com/fregie/tokenhush/pkg/audit"
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/gateway"
+	"github.com/fregie/tokenhush/pkg/platform"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
@@ -23,15 +25,17 @@ type RunDeps struct {
 	// ConfigPath is loaded only when cfg is nil: an explicit tokenhush.yaml
 	// path, or the platform default when empty.
 	ConfigPath string
-	// DataDir overrides platform.DataDir(); it holds the control token and the
-	// pid/port file. Empty means the platform data directory.
+	// DataDir overrides platform.DataDir(); it holds the control token, the
+	// pid/port file and the C7 allowlist store (<DataDir>/allowlist.json).
+	// Empty means the platform data directory.
 	DataDir string
 	// Stdout receives the human-facing startup lines. Nil discards them.
 	Stdout io.Writer
-	// Stderr is the diagnostics stream: the default-on redaction log and the
-	// rules startup/fallback warnings are written here. When nil, both are
-	// silenced; in particular the rule-fallback warning is dropped, never
-	// written to Stdout and never a panic.
+	// Stderr is the diagnostics stream: the default-on masked redaction log, the
+	// rules startup/fallback warnings and the C7 allowlist-store degradation
+	// warnings are written here. When nil, all are silenced; in particular the
+	// rule-fallback warning is dropped, never written to Stdout and never a
+	// panic.
 	Stderr io.Writer
 	// PolicyTimeout bounds one content-detector invocation. Zero uses the
 	// gateway default. It is the seam the fail-closed test drives to force a
@@ -79,14 +83,47 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	// seam, used only by the default resolver's unknown-path rejection row.
 	sink := audit.NoopSink{}
 
+	// C7 生产装配（W5.1）：store 持久化到 <DataDir>/allowlist.json，数据根必须在
+	// 这里确定——gateway.Run 内部的解析发生在 pipeline 构造之后，而 store 在构造
+	// detector 时就要接线。deps.DataDir 显式指定时原样使用，否则读平台默认（与
+	// gateway.Run 的回退路径同一个值，并由 Setup 固定给本次会话）。
+	dataDir := deps.DataDir
+	if dataDir == "" {
+		resolved, err := platform.DataDir()
+		if err != nil {
+			return err
+		}
+		dataDir = resolved
+	}
+	warn := deps.Stderr
+	if warn == nil {
+		warn = io.Discard
+	}
+	allowlistStore, err := allowlist.Open(dataDir, loaded.Allowlist, warn)
+	if err != nil {
+		return err
+	}
+
+	// C8 自保护的装配配置（加固默认）：Enabled/Modes 来自配置，排除集的两个值
+	// （control.token 值 + <DataDir>/allowlist.json 内容）由 gateway.Run 在会话
+	// 令牌生成后经 SetSelfProtectionExclusions 安装——令牌在 pipeline 构造时尚
+	// 不存在，而 ADR-0012 冻结了「先绑定端口再写令牌」。同一份配置同时交给
+	// BuildPipeline 与 gateway.Options（与 Pro 侧装配同形）。
+	selfProtection := gateway.SelfProtectionConfig{
+		Enabled: loaded.SelfProtection.Enabled,
+		Modes:   loaded.SelfProtection.EnabledModes(),
+	}
+
 	pipeline := deps.Pipeline
 	if pipeline == nil {
 		buildOpts := gateway.BuildOptions{
-			Detectors: loaded.Detectors.EnabledIDs(),
-			Allowlist: loaded.Allowlist,
-			Rules:     activeRulesConfig(deps.Stderr),
-			Sink:      sink,
-			Timeout:   deps.PolicyTimeout,
+			Detectors:      loaded.Detectors.EnabledIDs(),
+			Allowlist:      loaded.Allowlist,
+			Rules:          activeRulesConfig(deps.Stderr),
+			Sink:           sink,
+			Timeout:        deps.PolicyTimeout,
+			AllowlistStore: allowlistStore,
+			SelfProtection: selfProtection,
 		}
 		pipeline, err = gateway.BuildPipeline(buildOpts)
 		if err != nil {
@@ -110,21 +147,21 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 	}
 
 	opts := gateway.Options{
-		Core:          *loaded,
-		Sink:          sink,
-		Pipeline:      pipeline,
-		PolicyTimeout: deps.PolicyTimeout,
-		Stdout:        deps.Stdout,
-		Stderr:        deps.Stderr,
-		Ready:         deps.Ready,
-	}
-
-	if deps.DataDir != "" {
-		dataDir := deps.DataDir
-		opts.Setup = func(d *gateway.Deps) error {
+		Core:           *loaded,
+		Sink:           sink,
+		Pipeline:       pipeline,
+		PolicyTimeout:  deps.PolicyTimeout,
+		Stdout:         deps.Stdout,
+		Stderr:         deps.Stderr,
+		Ready:          deps.Ready,
+		AllowlistStore: allowlistStore,
+		SelfProtection: selfProtection,
+		// 固定本次会话的数据根：store 文件与 run.json/control.token 必须落在同一个
+		// 目录（此前仅在 deps.DataDir 显式指定时固定；现在 store 也需要它）。
+		Setup: func(d *gateway.Deps) error {
 			d.DataDir = dataDir
 			return nil
-		}
+		},
 	}
 	return gateway.Run(ctx, opts)
 }

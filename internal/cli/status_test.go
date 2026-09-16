@@ -174,6 +174,13 @@ func TestStatusAudit(t *testing.T) {
 			"uptime: ",
 			"requests: 1",
 			"redactions: 1",
+			// W6.5: a clean run reports zero for every self-protection,
+			// stream-guard and egress counter.
+			"self-protection interceptions: 0",
+			"allowlist mutations: 0",
+			"stream guard refusals: 0",
+			"stream guard fail-closed: 0",
+			"egress blocks: 0",
 		} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("status stdout = %q, want it to contain %q", stdout, want)
@@ -189,13 +196,18 @@ func TestStatusAudit(t *testing.T) {
 			t.Fatalf("status --json code = %d, want %d (stderr=%q)", code, ExitOK, stderr)
 		}
 		var view struct {
-			Running    bool     `json:"running"`
-			PID        int      `json:"pid"`
-			State      string   `json:"state"`
-			Addrs      []string `json:"addrs"`
-			UptimeMS   int64    `json:"uptime_ms"`
-			Requests   uint64   `json:"requests"`
-			Redactions uint64   `json:"redactions"`
+			Running                     bool     `json:"running"`
+			PID                         int      `json:"pid"`
+			State                       string   `json:"state"`
+			Addrs                       []string `json:"addrs"`
+			UptimeMS                    int64    `json:"uptime_ms"`
+			Requests                    uint64   `json:"requests"`
+			Redactions                  uint64   `json:"redactions"`
+			SelfProtectionInterceptions uint64   `json:"self_protection_interceptions"`
+			AllowlistMutations          uint64   `json:"allowlist_mutations"`
+			StreamGuardRefusals         uint64   `json:"stream_guard_refusals"`
+			StreamGuardFailClosed       uint64   `json:"stream_guard_fail_closed"`
+			EgressBlocks                uint64   `json:"egress_blocks"`
 		}
 		if err := json.Unmarshal([]byte(stdout), &view); err != nil {
 			t.Fatalf("status --json did not parse: %v (stdout=%q)", err, stdout)
@@ -206,13 +218,21 @@ func TestStatusAudit(t *testing.T) {
 		if view.Requests < 1 || view.Redactions < 1 {
 			t.Fatalf("status --json counters = requests %d redactions %d, want >= 1 each", view.Requests, view.Redactions)
 		}
+		// W6.5: this run performed no interception, mutation, streamed refusal
+		// or egress block, so every new counter must be exactly zero.
+		if view.SelfProtectionInterceptions != 0 || view.AllowlistMutations != 0 ||
+			view.StreamGuardRefusals != 0 || view.StreamGuardFailClosed != 0 || view.EgressBlocks != 0 {
+			t.Fatalf("status --json self-protection counters = %+v, want all zero on a clean run", view)
+		}
 	})
 
 	t.Run("status_fake_snapshot_text_and_json", func(t *testing.T) {
 		stub := &controlStub{
-			token:  statusToken,
-			code:   http.StatusOK,
-			status: `{"state":"running","addrs":["127.0.0.1:8787","[::1]:8787"],"uptime_ms":83000,"requests":7,"redactions":3}`,
+			token: statusToken,
+			code:  http.StatusOK,
+			status: `{"state":"running","addrs":["127.0.0.1:8787","[::1]:8787"],"uptime_ms":83000,"requests":7,"redactions":3,` +
+				`"allowlist":0,"self_protection_interceptions":5,"allowlist_mutations":2,` +
+				`"stream_guard_refusals":3,"stream_guard_fail_closed":1,"egress_blocks":4}`,
 		}
 		port := newControlStub(t, stub)
 		home := t.TempDir()
@@ -230,6 +250,13 @@ func TestStatusAudit(t *testing.T) {
 			"uptime: 1m23s",
 			"requests: 7",
 			"redactions: 3",
+			// W6.5: the self-protection, stream-guard and egress counters are
+			// rendered from the control snapshot, never hardcoded.
+			"self-protection interceptions: 5",
+			"allowlist mutations: 2",
+			"stream guard refusals: 3",
+			"stream guard fail-closed: 1",
+			"egress blocks: 4",
 		} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("status stdout = %q, want it to contain %q", stdout, want)
@@ -244,13 +271,18 @@ func TestStatusAudit(t *testing.T) {
 			t.Fatalf("status --json code = %d, want %d", code, ExitOK)
 		}
 		var view struct {
-			Running    bool     `json:"running"`
-			PID        int      `json:"pid"`
-			State      string   `json:"state"`
-			Addrs      []string `json:"addrs"`
-			UptimeMS   int64    `json:"uptime_ms"`
-			Requests   uint64   `json:"requests"`
-			Redactions uint64   `json:"redactions"`
+			Running                     bool     `json:"running"`
+			PID                         int      `json:"pid"`
+			State                       string   `json:"state"`
+			Addrs                       []string `json:"addrs"`
+			UptimeMS                    int64    `json:"uptime_ms"`
+			Requests                    uint64   `json:"requests"`
+			Redactions                  uint64   `json:"redactions"`
+			SelfProtectionInterceptions uint64   `json:"self_protection_interceptions"`
+			AllowlistMutations          uint64   `json:"allowlist_mutations"`
+			StreamGuardRefusals         uint64   `json:"stream_guard_refusals"`
+			StreamGuardFailClosed       uint64   `json:"stream_guard_fail_closed"`
+			EgressBlocks                uint64   `json:"egress_blocks"`
 		}
 		if err := json.Unmarshal([]byte(stdout), &view); err != nil {
 			t.Fatalf("status --json did not parse: %v (stdout=%q)", err, stdout)
@@ -258,6 +290,10 @@ func TestStatusAudit(t *testing.T) {
 		if !view.Running || view.PID != 4242 || view.State != "running" ||
 			view.UptimeMS != 83000 || view.Requests != 7 || view.Redactions != 3 {
 			t.Fatalf("status --json = %+v, want the stubbed snapshot", view)
+		}
+		if view.SelfProtectionInterceptions != 5 || view.AllowlistMutations != 2 ||
+			view.StreamGuardRefusals != 3 || view.StreamGuardFailClosed != 1 || view.EgressBlocks != 4 {
+			t.Fatalf("status --json self-protection counters = %+v, want the stubbed snapshot", view)
 		}
 		if len(view.Addrs) != 2 || view.Addrs[0] != "127.0.0.1:8787" || view.Addrs[1] != "[::1]:8787" {
 			t.Fatalf("status --json addrs = %v, want the stubbed addresses", view.Addrs)

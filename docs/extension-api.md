@@ -189,7 +189,7 @@ Setup -> resolve DataDir -> bind listener -> generate token + session files
 HostAllowlist -> StatsMW -> WrapDataPlane -> data plane
 ```
 
-The control path (`GET /status`; the method-less pattern keeps other methods inside the control API as a JSON 405) is wrapped `HostAllowlist -> OriginPolicy -> ControlAuth`. `StatsMW` allocates one `RequestStats` per request and installs it in the request context **before** `WrapDataPlane`, so a wrapper (the Pro audit layer) reads it through `StatsFrom`:
+The control path (`GET /status`, plus `GET|POST|DELETE /allowlist`; the method-less patterns keep other methods inside the control API as a JSON 405) is wrapped `HostAllowlist -> OriginPolicy -> ControlAuth`. `StatsMW` allocates one `RequestStats` per request and installs it in the request context **before** `WrapDataPlane`, so a wrapper (the Pro audit layer) reads it through `StatsFrom`:
 
 ```go
 // RequestStats is the per-request observation snapshot. Metadata only:
@@ -214,11 +214,17 @@ func StatsFrom(ctx context.Context) *RequestStats
 ```go
 type BuildOptions struct {
     Detectors []string        // ordered enabled detector ids
-    Allowlist []string        // forwarded to every detector
+    Allowlist []string        // static literals forwarded to every detector (union with AllowlistStore)
     Sink      audit.AuditSink // metadata-only audit rows
     Timeout   time.Duration   // <= 0 uses the default
     Tool      string          // labels the Document (for example "claude-code")
-    Rules *rules.Config       // synced signed rule pack; nil = the built-in detectors only
+    Rules     *rules.Config   // synced signed rule pack; nil = the built-in detectors only
+    // AllowlistStore is the runtime-mutable allowlist handle (C7); nil keeps
+    // the static Allowlist only. The gateway registers /allowlist from it.
+    AllowlistStore AllowlistStore
+    // SelfProtection is the change-channel guard assembly (C8); the zero value
+    // disables it.
+    SelfProtection SelfProtectionConfig
 }
 
 func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error)

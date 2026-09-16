@@ -2,8 +2,10 @@ package gateway
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/fregie/tokenhush/pkg/extension"
@@ -67,6 +69,13 @@ func pickRequest(r *http.Request) *extension.Request {
 // and becomes a 502; the resolver records the metadata-only audit row. A
 // request whose upstream base URL is malformed is also a 502 and never leaves
 // the machine. A policy Block becomes 403 without dialing upstream.
+//
+// 请求体失败策略（W1.3）：pipeline 的 transform 对不可解析的 body 返回原
+// body + proxy.ErrUnwalkableBody，不自行裁决。本层是唯一能读 Content-Type
+// 的地方，因此在此判定：声明为 JSON（application/json*，或缺失 Content-Type
+// 但 body 有 JSON 征兆）→ 本地 400，上游零字节；显式非 JSON → 直通原 body
+// （pipeline 文档化的行为）。400 而非 403：坏 JSON 是客户端错误，不是策略
+// 裁决；500 会把客户端错误藏成服务端错误。
 func (d *dataPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.deps.Requests.Add(1)
 	stats := StatsFrom(r.Context())
@@ -110,7 +119,14 @@ func (d *dataPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	transformed, err := d.pipeline.RequestTransform()(body)
-	if err != nil {
+	switch {
+	case err == nil:
+	case errors.Is(err, proxy.ErrUnwalkableBody) && requestDeclaresJSON(r, body):
+		http.Error(w, "request body is not valid JSON", http.StatusBadRequest)
+		return
+	case errors.Is(err, proxy.ErrUnwalkableBody):
+		// 显式非 JSON：使用 pipeline 返回的原 body（逐字节不变）继续直通。
+	default:
 		if !d.pipeline.TransformErrorHandler()(w, err) {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		}
@@ -182,4 +198,50 @@ func readClientBody(r *http.Request) ([]byte, error) {
 	}
 	defer func() { _ = r.Body.Close() }()
 	return io.ReadAll(r.Body)
+}
+
+// requestDeclaresJSON 判定一个 transform 无法解析的请求体是否必须 fail-closed
+// （W1.3，机制冻结）：Content-Type 声明为 JSON（application/json*，大小写不敏感、
+// 允许 ;charset=... 参数）→ 是；Content-Type 缺失或为空值 → 由 body 的 JSON 征兆
+// 决定；显式非 JSON 的 Content-Type → 否（保持文档化的非 JSON 直通，不得被征兆
+// 覆盖）。
+//
+// 判定只能在这一层：BodyTransform 只拿得到 []byte（与 Forwarder.ServeHTTP 的
+// Content-Encoding 415 守卫同一理由：只有 HTTP 层能读 header）。
+func requestDeclaresJSON(r *http.Request, body []byte) bool {
+	if contentType := r.Header.Get("Content-Type"); strings.TrimSpace(contentType) != "" {
+		return isJSONContentType(contentType)
+	}
+	return jsonSymptoms(body)
+}
+
+// isJSONContentType reports whether a Content-Type value declares JSON: the
+// media type (parameters such as ;charset=utf-8 stripped) carries the
+// case-insensitive `application/json` prefix. The prefix accepts both
+// `application/json` and structured-suffix types such as
+// `application/json-patch+json`, matching the `application/json*` rule.
+func isJSONContentType(contentType string) bool {
+	mediaType := contentType
+	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
+		mediaType = mediaType[:i]
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(mediaType)), "application/json")
+}
+
+// jsonSymptoms reports whether a body looks like JSON: the first byte that is
+// not ASCII whitespace (space, tab, CR, LF) is `{`, `[` or `"`. An empty or
+// all-whitespace body has no symptoms. Whether a symptomatic body must be
+// parsed at all is not decided here; see requestDeclaresJSON.
+func jsonSymptoms(body []byte) bool {
+	for _, b := range body {
+		switch b {
+		case ' ', '\t', '\n', '\r':
+			continue
+		case '{', '[', '"':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
 }

@@ -188,7 +188,7 @@ Setup -> 解析 DataDir -> 绑定监听器 -> 生成 token + 会话文件
 HostAllowlist -> StatsMW -> WrapDataPlane -> data plane
 ```
 
-控制路径（`GET /status`；无方法模式让其他方法留在控制 API 内返回 JSON 405）包裹为 `HostAllowlist -> OriginPolicy -> ControlAuth`。`StatsMW` 为每个请求分配一个 `RequestStats`，并在 `WrapDataPlane` **之前**放入请求 context，因此外层包裹器（Pro 审计层）可用 `StatsFrom` 读取：
+控制路径（`GET /status`，以及 `GET|POST|DELETE /allowlist`；无方法模式让其他方法留在控制 API 内返回 JSON 405）包裹为 `HostAllowlist -> OriginPolicy -> ControlAuth`。`StatsMW` 为每个请求分配一个 `RequestStats`，并在 `WrapDataPlane` **之前**放入请求 context，因此外层包裹器（Pro 审计层）可用 `StatsFrom` 读取：
 
 ```go
 // RequestStats 是按请求的观测快照。只含元数据：检测器 id 与字节数，
@@ -212,11 +212,16 @@ func StatsFrom(ctx context.Context) *RequestStats
 ```go
 type BuildOptions struct {
     Detectors []string        // 有序的启用检测器 id
-    Allowlist []string        // 转发给每个检测器
+    Allowlist []string        // 静态字面量，转发给每个检测器（与 AllowlistStore 并集生效）
     Sink      audit.AuditSink // 仅元数据审计行
     Timeout   time.Duration   // <= 0 时用默认值
     Tool      string          // 标注 Document（例如 "claude-code"）
-    Rules *rules.Config       // 已同步的签名规则包；nil = 仅内置检测器
+    Rules     *rules.Config   // 已同步的签名规则包；nil = 仅内置检测器
+    // AllowlistStore 是运行时可变更白名单句柄（C7）；nil = 仅静态 Allowlist。
+    // gateway 用它注册 /allowlist。
+    AllowlistStore AllowlistStore
+    // SelfProtection 是变更通道自保护装配（C8）；零值 = 关闭。
+    SelfProtection SelfProtectionConfig
 }
 
 func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error)

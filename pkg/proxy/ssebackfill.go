@@ -36,6 +36,17 @@ type pathState struct {
 	changed bool
 	active  bool
 	lastSeq int
+
+	// W6.4 tool-call guard state. It lives on the path — never in a side map —
+	// so forceFlush and Flush, which only walk b.paths, see it: an undecided
+	// guard path must never be released as original bytes. guardArmed marks a
+	// path whose final reference token is `arguments`; guardAccum is the
+	// bounded (SSEGuardCap) accumulation the match decision uses; guardDecided
+	// and guardHit record that decision. See sseguard.go.
+	guardArmed   bool
+	guardDecided bool
+	guardHit     bool
+	guardAccum   []byte
 }
 
 // Write makes pathState the BackfillWriter destination; it never fails.
@@ -78,6 +89,23 @@ type sseBackfiller struct {
 	touched   []*pathState
 	heldBytes int
 	err       error
+	// onWalkFailure, when set, observes a payload the emit-time walker cannot
+	// parse (the desync guard in emit). It receives the walker error, never
+	// payload bytes, and the fallback — write the original event verbatim — is
+	// unchanged. Nil is a no-op; see setWalkFailureObserver.
+	onWalkFailure func(error)
+	// guardDetect and onGuardRefusal are the W6.4 tool-call guard: when
+	// guardDetect is set, every tool-call arguments path accumulates its
+	// fragments under SSEGuardCap and a refusal is reported through
+	// onGuardRefusal. Nil is a complete no-op; see setToolCallGuard.
+	guardDetect    func(text string) (class string, matched bool)
+	onGuardRefusal func(class, reason string)
+	// guardDetectEncoded is the W6.4 matcher for the Encoded (valid-JSON)
+	// arguments shape: the whole arguments value arrives in one event, so the
+	// guard must feed the parent and match it with the buffered path's
+	// concatenation logic. Nil leaves that shape unarmed; see
+	// setToolCallGuardEncoded.
+	guardDetectEncoded func(content []byte) (class string, matched bool)
 }
 
 // newSSEBackfiller returns a backfiller writing rewritten SSE bytes to dst.
@@ -92,6 +120,18 @@ func newSSEBackfiller(dst io.Writer, maxPlaceholderLen int, replace protocol.Rep
 		held:    make(map[int]*heldEvent),
 		paths:   make(map[string]*pathState),
 	}
+}
+
+// setWalkFailureObserver installs the optional observer for payloads the
+// emit-time walker cannot parse. It exists so the pipeline can count and report
+// the otherwise-silent fallback without widening newSSEBackfiller's signature
+// (tests construct backfillers directly). A nil backfiller or a nil fn are
+// no-ops; fn receives the walker error, never the payload.
+func (b *sseBackfiller) setWalkFailureObserver(fn func(error)) {
+	if b == nil {
+		return
+	}
+	b.onWalkFailure = fn
 }
 
 // Write feeds p to the SSE decoder and processes every completed record. It
@@ -175,6 +215,9 @@ func (b *sseBackfiller) processEvent(ev protocol.SSEEvent) error {
 	}
 	for _, leaf := range leaves {
 		if leaf.Encoded {
+			if err := b.feedGuardEncoded(leaf.Path, []byte(leaf.Content), seq); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := b.feed(leaf.Path, kindJSON, []byte(leaf.Content), seq); err != nil {
@@ -199,6 +242,7 @@ func (b *sseBackfiller) feed(key string, kind pathKind, chunk []byte, seq int) e
 		p.run = p.run[:0]
 		p.merged.Reset()
 		p.changed = false
+		b.guardReset(p)
 	}
 	if p.lastSeq != seq {
 		p.lastSeq = seq
@@ -206,15 +250,70 @@ func (b *sseBackfiller) feed(key string, kind pathKind, chunk []byte, seq int) e
 		b.held[seq].openRefs++
 		b.touched = append(b.touched, p)
 	}
+	if b.guardConsume(p, chunk) {
+		// A refused tool call: this chunk still counts as a contributor (so the
+		// notice can replace the whole run and the events stay held) but none of
+		// its bytes may reach the output.
+		return nil
+	}
 	_, err := p.w.Write(chunk)
 	return err
+}
+
+// feedGuardEncoded feeds one Encoded arguments parent — a whole valid-JSON
+// arguments value delivered in a single event — into the guard. protocol.Walk
+// skips such a parent for the placeholder writer, so a guard that armed only the
+// terminal `.../arguments` leaf never saw the mainstream OpenAI streaming shape
+// and the command leaked verbatim. The parent content is matched with the
+// buffered path's concatenation logic (guardDetectEncoded), so a command split
+// across its nested leaves is still caught, and the refusal is recorded against
+// the parent path so emit replaces the whole arguments value. The content is
+// never written to the placeholder window: the nested terminal leaves keep their
+// existing per-leaf backfill.
+func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) error {
+	if b.guardDetect == nil || b.guardDetectEncoded == nil || !isMutationChannelArgumentsPath(key) {
+		return nil
+	}
+	p := b.paths[key]
+	if p == nil || p.kind != kindJSON {
+		p = b.newPathState(key, kindJSON)
+		b.paths[key] = p
+	}
+	if !p.active {
+		p.active = true
+		p.run = p.run[:0]
+		p.merged.Reset()
+		p.changed = false
+		b.guardReset(p)
+	}
+	if p.lastSeq != seq {
+		p.lastSeq = seq
+		p.run = append(p.run, seq)
+		b.held[seq].openRefs++
+		b.touched = append(b.touched, p)
+	}
+	if p.guardDecided {
+		return nil
+	}
+	n := min(len(content), SSEGuardCap)
+	p.guardAccum = append(p.guardAccum[:0], content[:n]...)
+	if class, matched := b.guardDetectEncoded(content); matched {
+		p.guardDecided, p.guardHit = true, true
+		b.noteGuardRefusal(class, sseGuardReasonMatch)
+		return nil
+	}
+	if n >= SSEGuardCap {
+		p.guardDecided, p.guardHit = true, true
+		b.noteGuardRefusal("", sseGuardReasonCap)
+	}
+	return nil
 }
 
 // newPathState builds a path's state and its placeholder writer. The wrapper is
 // the single point where the changed flag is decided: out != token, never
 // "replace was called".
 func (b *sseBackfiller) newPathState(key string, kind pathKind) *pathState {
-	p := &pathState{key: key, kind: kind, lastSeq: -1}
+	p := &pathState{key: key, kind: kind, lastSeq: -1, guardArmed: b.guardArms(kind, key)}
 	p.w = protocol.NewBackfillWriter(p, b.maxLen, func(tok string) string {
 		out := b.replace(tok)
 		if out != tok {
@@ -226,15 +325,21 @@ func (b *sseBackfiller) newPathState(key string, kind pathKind) *pathState {
 }
 
 // afterEvent performs every release at the event boundary: a path whose window
-// is empty is decided and released. It then enforces the holdback bound and
-// emits whatever is now drainable.
+// is empty and whose guard decision is made is decided and released. A guarded
+// path without a decision is held — it may still receive the fragment that makes
+// a command match — and is only resolved by a path change, the cap, or
+// forceFlush/Flush. It then enforces the holdback bound and emits whatever is
+// now drainable.
 func (b *sseBackfiller) afterEvent() error {
 	for _, p := range b.touched {
-		if p.active && p.w.Buffered() == 0 {
+		if p.active && p.w.Buffered() == 0 && p.guardReleasable() {
 			b.releasePath(p)
 		}
 	}
 	b.touched = b.touched[:0]
+	if err := b.guardClose(); err != nil {
+		return err
+	}
 	if b.heldBytes > sseBackfillMaxHoldbackBytes {
 		if err := b.forceFlush(); err != nil {
 			return err
@@ -249,6 +354,21 @@ func (b *sseBackfiller) afterEvent() error {
 // replacement exactly once. When nothing changed, no edit is recorded and every
 // contributing event keeps its original bytes.
 func (b *sseBackfiller) releasePath(p *pathState) {
+	// W6.4: a guarded path is written back with the refusal notice unless the
+	// guard decided it clean. A path released without a decision — forceFlush
+	// or stream end — is refused here, fail-closed, and counted. The refusal is
+	// expressed as a merged-content edit, never as a Write error, so the stream
+	// keeps flowing; giving the last contributing event the notice and every
+	// earlier one an empty string keeps the client's delta concatenation exact.
+	if p.guardArmed && (!p.guardDecided || p.guardHit) {
+		if !p.guardDecided {
+			p.guardDecided, p.guardHit = true, true
+			b.noteGuardRefusal("", sseGuardReasonUndecided)
+		}
+		p.changed = true
+		p.merged.Reset()
+		p.merged.WriteString(mutationChannelRefusalNotice)
+	}
 	if p.changed {
 		last := p.run[len(p.run)-1]
 		content := p.merged.String()

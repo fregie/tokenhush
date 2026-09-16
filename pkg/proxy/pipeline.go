@@ -27,6 +27,21 @@ var ErrNilPipeline = errors.New("proxy: nil pipeline")
 // outbound or backfill inbound data.
 var ErrNilEngine = errors.New("proxy: pipeline requires a placeholder engine")
 
+// ErrUnwalkableBody reports that the outbound request body is not a JSON
+// document this build can leaf-walk (non-JSON text, invalid UTF-8, malformed
+// or over-nested JSON). transformRequest returns the original body unchanged
+// together with this sentinel, wrapping the walker's own error so errors.Is
+// still reaches protocol.ErrMalformedJSON, protocol.ErrNestingDepth or
+// protocol.ErrEncodedDepth.
+//
+// The sentinel is deliberately not a decision. BodyTransform receives only
+// []byte and cannot see the request headers, so whether an unparseable body is
+// a client error (declared JSON) or legitimate non-JSON traffic (passthrough)
+// is decided by the HTTP layer in pkg/gateway/dataplane.go, the only layer
+// that can read Content-Type — the same reasoning Forwarder.ServeHTTP
+// documents for its Content-Encoding guard.
+var ErrUnwalkableBody = errors.New("proxy: request body is not a JSON document the walker can parse")
+
 // Audit metadata for content-policy warnings written by the pipeline.
 const (
 	auditProviderPipeline = "pipeline"
@@ -50,6 +65,21 @@ type PipelineConfig struct {
 	Sink audit.AuditSink
 	// Tool labels the content Document (for example "claude-code").
 	Tool string
+	// The fields below carry the C8 self-protection seam only: NewPipeline
+	// stores them for W6.1–W6.4, which own every interception, force-redaction,
+	// pattern-match and SSE-guard behaviour. Every zero value is a complete
+	// no-op (identical bytes on the wire as before the seam existed).
+	//
+	// SelfProtectionEnabled arms the C8 mutation-channel interception (W6.1+).
+	SelfProtectionEnabled bool
+	// SelfProtectionModes lists the enabled interception categories (W6.2+).
+	SelfProtectionModes []string
+	// Exclusions carries the narrow exclusion set force-redacted and never
+	// restored by C8 (W6.1+). Nil is a no-op.
+	Exclusions [][]byte
+	// ControlToken is the session control-token value consumed by C8 (W6.1+).
+	// Empty is a no-op.
+	ControlToken string
 }
 
 // Pipeline composes the W4.1 registry, W4.2 policy, W4.3 detectors, W4.4
@@ -79,10 +109,71 @@ type Pipeline struct {
 	sink     audit.AuditSink
 	tool     string
 
+	// C8 self-protection seam copied from PipelineConfig at construction time.
+	// W6.1–W6.4 consume these fields; W0.3 only carries them, and their zero
+	// values are a complete no-op.
+	selfProtectionEnabled bool
+	selfProtectionModes   []string
+	exclusions            [][]byte
+	controlToken          string
+
+	// exclusionValues is the effective C8 exclusion set: constructed with the
+	// pipeline and replaceable at runtime through SetSelfProtectionExclusions
+	// (the gateway installs the session control-token value and the current
+	// <DataDir>/allowlist.json content once the token exists, and refreshes it
+	// on every allowlist mutation). It is an atomic pointer because a refresh
+	// runs on a control-plane goroutine while request goroutines read it.
+	exclusionValues atomic.Pointer[exclusionSet]
+
+	// channelContext is the runtime C8 mutation-channel context — the bound
+	// control port and the absolute <DataDir>/allowlist.json path — installed
+	// through SetSelfProtectionChannel once the gateway has bound the listener
+	// and resolved the data root, because neither value exists at pipeline
+	// construction time. W6.2's classifier (DetectMutationChannel) reads it on
+	// the response path; the zero value leaves the control-port class and the
+	// exact-path class inert. An atomic pointer for the same reason as
+	// exclusionValues: the gateway installs it while request goroutines read.
+	channelContext atomic.Pointer[MutationChannelContext]
+
 	// reporter, when set, receives one masked event per replaced span and per
 	// policy block. It is an atomic pointer so a reporter installed before Run
 	// is read race-free by every request goroutine. See SetRedactionReporter.
 	reporter atomic.Pointer[RedactionReporter]
+
+	// responseWalkFailures counts client-bound response bodies the
+	// response-path walker could not parse: the buffered skip in
+	// transformResponse plus the SSE emit-time desync guard in
+	// ssebackfill_rewrite.go. It is a metadata-only signal (no content); each
+	// increment also emits one RedactionEvent via noteResponseWalkFailure.
+	// Both sites deliberately keep forwarding byte-identically instead of
+	// failing closed — see transformResponse for the asymmetry with the
+	// request path.
+	responseWalkFailures atomic.Uint64
+
+	// egressBlocks counts outbound request bodies the W2.3 egress re-check
+	// blocked because they still carried a secret the engine had already
+	// mapped to a placeholder under a covered encoding. It is a metadata-only
+	// signal (no content); each increment also emits one egress_blocked
+	// RedactionEvent via blockEgress. See egress.go.
+	egressBlocks atomic.Uint64
+
+	// streamGuardRefusals counts streamed tool calls the W6.4 SSE guard refused:
+	// a W6.2 pattern match after accumulation, the SSEGuardCap, or a release
+	// without a decision. streamGuardFailClosed counts the subset refused
+	// without a match (cap/undecided). Both are metadata-only — no content, no
+	// path — and are the counters W6.5 surfaces; each refusal also emits one
+	// RedactionActionMutationChannelBlocked event via noteStreamingGuardRefusal.
+	// See sseguard.go.
+	streamGuardRefusals   atomic.Uint64
+	streamGuardFailClosed atomic.Uint64
+
+	// selfProtectionInterceptions counts tool calls the W6.3 full-buffered
+	// response guard refused: every rewrite of an offending tool call's
+	// arguments to the refusal notice. It is a metadata-only counter (no
+	// content) and backs /status (W6.5); each refusal also writes one
+	// metadata-only audit row via noteBufferedGuardRefusal. The streaming
+	// path's refusals stay in streamGuardRefusals/streamGuardFailClosed.
+	selfProtectionInterceptions atomic.Uint64
 }
 
 // NewPipeline builds the pipeline. It fails when cfg.Engine is nil, because no
@@ -99,13 +190,45 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 	if policy == nil {
 		policy = extension.NewPolicy(registry, extension.PolicyConfig{})
 	}
-	return &Pipeline{
+	pipeline := &Pipeline{
 		registry: registry,
 		policy:   policy,
 		engine:   cfg.Engine,
 		sink:     cfg.Sink,
 		tool:     cfg.Tool,
-	}, nil
+
+		selfProtectionEnabled: cfg.SelfProtectionEnabled,
+		selfProtectionModes:   cfg.SelfProtectionModes,
+		exclusions:            cfg.Exclusions,
+		controlToken:          cfg.ControlToken,
+	}
+	// W6.1 consumes the W0.3 seam at construction: while self-protection is
+	// armed, the effective exclusion set (Exclusions plus the non-empty control
+	// token) is derived once and installed on the engine, so the inbound
+	// direction refuses to restore those values forever. A production assembly
+	// usually supplies an empty set here because the session token does not
+	// exist yet, then installs the real set through
+	// SetSelfProtectionExclusions once the gateway has generated it. Disabled or
+	// empty is a complete no-op, preserving the pre-seam behaviour byte for
+	// byte.
+	if pipeline.selfProtectionEnabled {
+		pipeline.SetSelfProtectionExclusions(exclusionValues(pipeline.exclusions, pipeline.controlToken))
+	}
+	return pipeline, nil
+}
+
+// ResponseWalkFailures reports how many client-bound response bodies the
+// response-path walker could not parse since the pipeline was built: the
+// buffered response skip plus the SSE emit-time desync guard. Each failure
+// also emits one metadata-only RedactionEvent (see
+// RedactionActionResponseWalkFailed and RedactionActionSSEWalkFailed). The
+// count carries no content and is safe to expose (for example on a status
+// endpoint). A nil receiver returns 0.
+func (p *Pipeline) ResponseWalkFailures() uint64 {
+	if p == nil {
+		return 0
+	}
+	return p.responseWalkFailures.Load()
 }
 
 // BlockedError reports that a content policy decision rejected the request or
@@ -130,29 +253,56 @@ func (p *Pipeline) RequestTransform() BodyTransform {
 	return p.transformRequest
 }
 
-// TransformErrorHandler maps a BlockedError produced by RequestTransform to a
-// 403, so a policy block is a clear client error instead of the forwarder's
-// default 500. Any other transform error returns false and keeps the default
-// fail-closed 500.
+// TransformErrorHandler maps a BlockedError or an EgressBlockedError produced
+// by RequestTransform to a 403, so a policy or egress block is a clear client
+// error instead of the forwarder's default 500. Any other transform error
+// returns false and keeps the default fail-closed 500. The EgressBlockedError
+// branch is additive: the *BlockedError response stays byte-identical.
 func (p *Pipeline) TransformErrorHandler() TransformErrorFunc {
 	return func(w http.ResponseWriter, err error) bool {
 		var blocked *BlockedError
-		if !errors.As(err, &blocked) {
-			return false
+		if errors.As(err, &blocked) {
+			http.Error(w, "blocked by content policy", http.StatusForbidden)
+			return true
 		}
-		http.Error(w, "blocked by content policy", http.StatusForbidden)
-		return true
+		var egress *EgressBlockedError
+		if errors.As(err, &egress) {
+			http.Error(w, "outbound body still carries a redacted secret", http.StatusForbidden)
+			return true
+		}
+		return false
 	}
 }
 
 // transformRequest is the outbound path: Walk -> inspect -> policy -> redact.
 //
-// A body that is not a JSON document this build can leaf-walk (empty, non-JSON,
-// invalid UTF-8, malformed or over-nested) is forwarded unchanged. V1 routes
-// only known JSON API paths, and the resolver rejects unknown paths before they
-// reach the pipeline; passing non-JSON through keeps legitimate non-JSON
-// traffic working instead of breaking it. The limitation is recorded in the
-// W4.5 learnings.
+// An empty body returns (body, nil): there is nothing to inspect.
+//
+// A body that is not a JSON document this build can leaf-walk (non-JSON text,
+// invalid UTF-8, malformed or over-nested JSON) is returned byte-identical
+// together with ErrUnwalkableBody, which wraps the walker's own error.
+// This transform decides nothing about such a body and never corrupts it:
+// whether it is a client error or legitimate non-JSON traffic depends on the
+// request headers, which only the HTTP layer can read (BodyTransform takes
+// only []byte). pkg/gateway/dataplane.go matches the sentinel with errors.Is
+// and fails closed with 400 when the request declares JSON (Content-Type:
+// application/json* or, absent a Content-Type, a body with JSON symptoms);
+// otherwise it forwards the returned body unchanged, preserving the
+// long-documented non-JSON passthrough (V1 routes known JSON API paths, and
+// the resolver rejects unknown paths before they reach the pipeline).
+//
+// A Forwarder built with a non-nil transform (production does not do this:
+// pkg/gateway/dataplane.go passes a nil transform and runs this transform at
+// the HTTP layer instead) maps the sentinel through the generic
+// transform-failure chain to a 500 with zero upstream bytes. That path is
+// intentionally unchanged: it is already fail-closed.
+//
+// The body this function is about to return then passes the W2.3 egress
+// re-check (egress.go): if it still carries a secret the engine has mapped to a
+// placeholder, under any encoding redact.NormalizeCandidates covers, the
+// request is blocked with *EgressBlockedError instead of being returned. The
+// re-check runs after the redaction step and is unreachable for a body that
+// failed the walk — egress.go states that boundary without overstating it.
 func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	if p == nil {
 		return nil, ErrNilPipeline
@@ -162,24 +312,67 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	}
 	walked, err := protocol.Walk(body)
 	if err != nil {
-		return body, nil
+		return body, fmt.Errorf("%w: %w", ErrUnwalkableBody, err)
+	}
+	// W6.1 prepend step. It runs BEFORE p.policy.Evaluate — and therefore before
+	// every detector and the allowlist suppression inside detector.Inspect — and
+	// rewrites the body the rest of this transform operates on, so the
+	// exclusion-set placeholders are registered in byPlaceholder and written
+	// back on every decision branch (including the default Allow branch, which
+	// otherwise returns the body untouched). See forceRedactExclusions.
+	body, walked, err = p.forceRedactExclusions(body, walked)
+	if err != nil {
+		return nil, err
 	}
 	decision, err := p.policy.Evaluate(contentDocument(extension.RequestContent, p.tool, walked))
 	if err != nil {
 		return nil, fmt.Errorf("proxy: evaluate request content: %w", err)
 	}
+	// Key-position fail-closed (W1.2) runs after the value evaluation but
+	// before the value decision is applied, so a key hit can never be masked by
+	// a successful value redact. Keys are never rewritten: a surviving finding
+	// blocks fail-closed, otherwise the value decision below applies unchanged.
+	// See keyguard.go for the frozen post-filter mechanism, the allowlist
+	// interaction and the recorded pure-hex limitation.
+	keyFindings, err := p.keyFindings(body)
+	if err != nil {
+		return nil, err
+	}
+	if len(keyFindings) > 0 {
+		keyDecision := extension.Decision{
+			Phase:    extension.RequestContent,
+			Action:   extension.Block,
+			Findings: keyFindings,
+		}
+		p.reportBlock(keyDecision)
+		return nil, &BlockedError{Phase: extension.RequestContent, Findings: keyFindings}
+	}
+	var out []byte
 	switch decision.Action {
 	case extension.Block:
 		p.reportBlock(decision)
 		return nil, &BlockedError{Phase: decision.Phase, Findings: decision.Findings}
 	case extension.Redact:
-		return p.redactBody(body, walked, decision.Findings)
+		redacted, err := p.redactBody(body, walked, decision.Findings)
+		if err != nil {
+			return nil, err
+		}
+		out = redacted
 	case extension.Warn:
 		p.recordWarn(decision)
-		return body, nil
+		out = body
 	default:
-		return body, nil
+		out = body
 	}
+	// W2.3 egress re-check. The step order is frozen: walk → value policy →
+	// key guard → redact/replace → egress re-check → return. It runs on the
+	// exact bytes this transform is about to hand the forwarder, in every
+	// non-block branch, because an encoded value can sit in a field no
+	// detector redacted. On a hit nothing is returned for forwarding.
+	if err := p.egressRecheck(out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // redactBody rewrites the detected spans of every terminal leaf to core
@@ -238,6 +431,17 @@ func redactionSpans(walked []protocol.Leaf, findings []extension.Finding) map[in
 // inspect -> policy -> ResponseContent transformers -> core backfill last. A
 // non-JSON response skips inspection and transformers but still gets backfill,
 // because a placeholder can appear in a plain-text error or non-JSON body.
+//
+// The response path deliberately does NOT fail closed when the walker cannot
+// parse the body, unlike the request path (W1.3: a body declaring JSON reports
+// ErrUnwalkableBody and the HTTP layer answers 400). Response and SSE are both
+// client-bound (inbound) directions, so an unparseable body cannot exfiltrate
+// anything to the upstream, and failing closed would break legitimate
+// plain-text error bodies and `data: [DONE]`/ping SSE streams. The skipped
+// walk is instead made observable: it increments ResponseWalkFailures and
+// emits one metadata-only RedactionActionResponseWalkFailed event (never any
+// bytes, keys or paths — see RedactionEvent). Observability replaces the
+// silence; the bytes forwarded are unchanged.
 func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 	if p == nil {
 		return nil, ErrNilPipeline
@@ -246,6 +450,16 @@ func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 		return body, nil
 	}
 	if walked, err := protocol.Walk(body); err == nil {
+		// W6.3 mutation-channel guard. It rewrites the offending tool call's
+		// arguments to the refusal notice and returns the fresh walk; the value
+		// policy, ResponseContent transformers and backfill below then run on
+		// its output, so the frozen transformers -> backfill order is intact. A
+		// match is never a whole-response error: the body keeps flowing, with
+		// only the offending call(-s) rewritten.
+		body, walked, err = p.guardResponseToolCalls(body, walked)
+		if err != nil {
+			return nil, err
+		}
 		decision, evalErr := p.policy.Evaluate(contentDocument(extension.ResponseContent, tool, walked))
 		if evalErr != nil {
 			return nil, fmt.Errorf("proxy: evaluate response content: %w", evalErr)
@@ -260,6 +474,8 @@ func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		p.noteResponseWalkFailure(RedactionActionResponseWalkFailed)
 	}
 	return p.backfill(body), nil
 }
@@ -527,6 +743,20 @@ func (w *pipelineResponseWriter) WriteHeader(status int) {
 			w.Header().Del("Content-Length")
 			w.dst.WriteHeader(status)
 			w.backfill = newSSEBackfiller(w.dst, w.pipeline.engine.MaxPlaceholderLen(), w.pipeline.engine.BackfillFunc())
+			// W6.4: arm the streaming tool-call guard when self-protection is
+			// on. DetectMutationChannel additionally honours the enabled mode
+			// list, so a class switched off stays a no-op.
+			if w.pipeline.selfProtectionEnabled {
+				w.backfill.setToolCallGuard(w.pipeline.DetectMutationChannel, w.pipeline.noteStreamingGuardRefusal)
+				w.backfill.setToolCallGuardEncoded(w.pipeline.matchEncodedArguments)
+			}
+			// Wire the emit-time desync guard so an unparseable payload is
+			// counted and reported instead of silent; the fallback (write the
+			// original event verbatim) is unchanged. Response/SSE is
+			// deliberately not fail-closed — see transformResponse.
+			w.backfill.setWalkFailureObserver(func(error) {
+				w.pipeline.noteResponseWalkFailure(RedactionActionSSEWalkFailed)
+			})
 		} else {
 			w.mode = modeBuffered
 		}

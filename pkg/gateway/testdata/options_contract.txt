@@ -10,8 +10,10 @@
 # Format: <StructName> <FieldName> <reflect.Type.String()>
 
 BuildOptions Allowlist []string
+BuildOptions AllowlistStore gateway.AllowlistStore
 BuildOptions Detectors []string
 BuildOptions Rules *rules.Config
+BuildOptions SelfProtection gateway.SelfProtectionConfig
 BuildOptions Sink audit.AuditSink
 BuildOptions Timeout time.Duration
 BuildOptions Tool string
@@ -21,6 +23,7 @@ Deps Redactions *atomic.Uint64
 Deps Requests *atomic.Uint64
 Deps Token string
 
+Options AllowlistStore gateway.AllowlistStore
 Options Core config.Config
 Options CostSink extension.CostSink
 Options Mount func(*http.ServeMux, *gateway.Deps)
@@ -28,6 +31,7 @@ Options Pipeline *proxy.Pipeline
 Options PolicyTimeout time.Duration
 Options Ready func(gateway.RunInfo)
 Options Router extension.Router
+Options SelfProtection gateway.SelfProtectionConfig
 Options Setup func(*gateway.Deps) error
 Options Sink audit.AuditSink
 Options Stderr io.Writer

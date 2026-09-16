@@ -10,7 +10,10 @@ import (
 )
 
 const (
-	testService = "tokenhush/audit"
+	// testService mirrors the current Pro audit vault coordinate. Its exact
+	// value is arbitrary for these command-construction tests, but it is kept
+	// aligned with production so the fixtures never name a stale namespace.
+	testService = "tokenhush-pro/audit"
 	testAccount = "hmac-key"
 	// Includes spaces, non-ASCII and a newline: the worst case for leaking
 	// through argv and the case the keychain would mangle if not encoded.

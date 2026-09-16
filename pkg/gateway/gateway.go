@@ -9,11 +9,11 @@
 // (audit store, control session, entitlement, web UI) behind the lifecycle
 // hooks in Options.
 //
-// The assembly contract (Deps, Options, BuildOptions, RequestStats) is frozen
-// by ADR-0012 in the tokenhush-pro repository. pkg/gateway/testdata/
-// options_contract.txt plus TestOptionsContractDoc pin the exported struct
-// fields against accidental drift. The package itself is experimental until
-// v1.0.
+// The assembly contract (Deps, Options, BuildOptions, RequestStats) plus the
+// C7/C8 seam types (AllowlistStore, SelfProtectionConfig) is frozen by ADR-0012
+// in the tokenhush-pro repository. pkg/gateway/testdata/options_contract.txt
+// plus TestOptionsContractDoc pin the exported struct fields against
+// accidental drift. The package itself is experimental until v1.0.
 package gateway
 
 import (
@@ -22,9 +22,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
+	"github.com/fregie/tokenhush/pkg/allowlist"
 	"github.com/fregie/tokenhush/pkg/audit"
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/extension"
@@ -36,6 +38,18 @@ import (
 // unexported constant in pkg/proxy; the control API applies the Go 1.22
 // method pattern (GET only) once a request reaches it.
 const controlStatusPath = "/status"
+
+// controlAllowlistPath is the control-plane allowlist CRUD route. It mirrors
+// the unexported constant in pkg/proxy and is registered for GET/POST/DELETE
+// plus the method-less spelling (see buildHandler).
+const controlAllowlistPath = "/allowlist"
+
+// controlAuditProvider labels the audit rows produced by control-plane
+// mutations, following the metadata-only row convention of the Pro daemon's
+// lifecycle and plugin rows (Provider names the subsystem, Path names the
+// operation, Method names the action, Client names the source and Detectors
+// carries the resulting entry count as a tag).
+const controlAuditProvider = "control"
 
 // Tuning shared by every embedded gateway. The detector timeout is
 // deliberately generous: the built-in detectors are configured FailClosed, so
@@ -70,6 +84,37 @@ type Deps struct {
 type RunInfo struct {
 	Addrs []string
 	Port  int
+}
+
+// AllowlistStore 是运行时可变更白名单（C7）的存储接缝：句柄由调用方创建，
+// 同一实例同时交给 BuildPipeline 与 Options，使检测器与 /allowlist 端点看到
+// 同一份快照。nil 表示仅使用静态配置（与引入本接缝之前的行为一致）。
+//
+// 接口归属 pkg/gateway：pkg/allowlist 以结构化方式实现它（Go 接口结构化满足，
+// 无需 import pkg/gateway），从而避免 pkg/allowlist → pkg/gateway 的反向依赖。
+type AllowlistStore interface {
+	// Entries 返回当前生效的全部条目（静态种子 ∪ 动态条目）。
+	Entries() []string
+	// Add 新增一条条目；重复或非法条目返回错误。
+	Add(entry string) error
+	// Remove 移除一条条目；不存在时返回错误。
+	Remove(entry string) error
+}
+
+// SelfProtectionConfig 是变更通道自保护（C8）的装配配置：窄口径排除集、
+// control token 值与拦截类别。零值 = 关闭，即与引入本配置之前的行为一致。
+type SelfProtectionConfig struct {
+	// Enabled 是自保护总开关；false（零值）= 关闭。
+	Enabled bool
+	// Modes 是启用的拦截类别，取值 cli-command / control-port / file-write；
+	// nil/空 = 调用方默认集。
+	Modes []string
+	// Exclusions 是窄口径排除集的值：control.token 的值 +
+	// <DataDir>/allowlist.json 的完整内容。这些值在请求方向强制脱敏且永不
+	// 回填，且不可被白名单豁免；白名单条目值刻意不在其中（否则会抵消 C7）。
+	Exclusions [][]byte
+	// ControlToken 是当前会话 control token 的值；""（零值）= 不接线。
+	ControlToken string
 }
 
 // Options is the frozen assembly contract. The zero value is not usable: Core
@@ -112,6 +157,12 @@ type Options struct {
 	// Ready is called once the listeners are bound and the session files are
 	// on disk; it is how a test learns the bound ephemeral port.
 	Ready func(RunInfo)
+	// AllowlistStore 是 C7 的运行时白名单句柄，供 buildHandler 注册 /allowlist
+	// 端点并读写同一份快照；nil = 仅静态配置（零值即旧行为）。
+	AllowlistStore AllowlistStore
+	// SelfProtection 是 C8 的装配配置（窄口径排除集 + control token），供
+	// buildHandler 侧可见；零值 = 关闭（零值即旧行为）。
+	SelfProtection SelfProtectionConfig
 }
 
 // Run assembles and runs one gateway session until ctx is cancelled.
@@ -183,6 +234,15 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	deps.Token = token
 
+	// W6.1/W6.2: the session token is generated here, AFTER the caller built
+	// the pipeline (ADR-0012 freezes "bind before writing the token", so the
+	// token cannot exist at construction time). Install the C8 state now: the
+	// narrow exclusion set (token value plus the current
+	// <DataDir>/allowlist.json content) and the runtime mutation-channel
+	// context (the bound port plus the allowlist file path). A missing file
+	// contributes nothing and never fails startup.
+	installSelfProtection(opts.Pipeline, deps.Token, port, dataDir, opts.AllowlistStore, opts.Stderr)
+
 	state := RunState{
 		PID:       os.Getpid(),
 		Port:      port,
@@ -235,16 +295,51 @@ func invokeTeardown(opts Options, deps *Deps) {
 // registered for GET explicitly; the method-less pattern keeps a non-GET
 // method on the control path inside the control API (JSON 405) instead of
 // letting it fall through to the data plane.
+//
+// C7/C8 装配接缝：opts.AllowlistStore 与 opts.SelfProtection 在本函数内就地可用，
+// 供 W5.3 直接注册 /allowlist 端点（不经 Options.Mount 的惰性端口机制——监听端口
+// 与 deps.Token 已由 Run 在调用前就绪）。/allowlist 与 /status 采用同一双注册
+// 模式：具体方法路由保证正确方法可达，无方法注册保证 PUT 等方法留在控制面并
+// 由 ControlAPI 的内部 mux 产出 JSON 405，而不是落到 "/" catch-all 数据面。
 func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt time.Time) http.Handler {
-	control := proxy.NewControlAPI(func() proxy.ControlStatus {
-		return proxy.ControlStatus{
-			State:      proxy.ControlStateRunning,
-			Addrs:      append([]string(nil), addrs...),
-			UptimeMS:   time.Since(startedAt).Milliseconds(),
-			Requests:   deps.Requests.Load(),
-			Redactions: deps.Redactions.Load(),
-		}
-	})
+	// W6.5: allowlist mutations are counted here, next to the audited mutation
+	// callback, because the ADR-0012 golden freezes Options/Deps/BuildOptions
+	// and forbids a new assembly field. The closure lives as long as the
+	// handler, so the counter is per-session like the pipeline's counters.
+	var allowlistMutations atomic.Uint64
+	control := proxy.NewControlAPI(
+		func() proxy.ControlStatus {
+			return proxy.ControlStatus{
+				State:      proxy.ControlStateRunning,
+				Addrs:      append([]string(nil), addrs...),
+				UptimeMS:   time.Since(startedAt).Milliseconds(),
+				Requests:   deps.Requests.Load(),
+				Redactions: deps.Redactions.Load(),
+				Allowlist:  allowlistEntryCount(opts.AllowlistStore),
+				// The pipeline accessors are nil-safe, so a gateway assembled
+				// without a pipeline reports zero rather than panicking.
+				SelfProtectionInterceptions: opts.Pipeline.SelfProtectionInterceptions(),
+				AllowlistMutations:          allowlistMutations.Load(),
+				StreamGuardRefusals:         opts.Pipeline.StreamGuardRefusals(),
+				StreamGuardFailClosed:       opts.Pipeline.StreamGuardFailClosed(),
+				EgressBlocks:                opts.Pipeline.EgressBlocks(),
+			}
+		},
+		proxy.WithControlAllowlist(opts.AllowlistStore),
+		proxy.WithControlAudit(func(ev proxy.ControlAuditEvent) {
+			allowlistMutations.Add(1)
+			recordAllowlistMutation(opts.Sink, ev)
+			// W6.1/W6.2: a runtime allowlist mutation rewrites
+			// <DataDir>/allowlist.json, so refresh the C8 exclusion set to the
+			// file's new bytes (the channel context is re-installed from the
+			// same bound port and data root). The callback runs synchronously
+			// after a successful mutation, before the HTTP response, so the
+			// refreshed set is observable by the next request. A refresh
+			// failure is metadata-only and non-fatal: the mutation already
+			// succeeded.
+			installSelfProtection(opts.Pipeline, deps.Token, port, deps.DataDir, opts.AllowlistStore, opts.Stderr)
+		}),
+	)
 	guardedControl := proxy.HostAllowlist(port)(
 		proxy.OriginPolicy(proxy.ControlAuth(func() string { return deps.Token })(control)))
 
@@ -260,9 +355,103 @@ func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt 
 	mux := http.NewServeMux()
 	mux.Handle("GET "+controlStatusPath, guardedControl)
 	mux.Handle(controlStatusPath, guardedControl)
+	mux.Handle("GET "+controlAllowlistPath, guardedControl)
+	mux.Handle("POST "+controlAllowlistPath, guardedControl)
+	mux.Handle("DELETE "+controlAllowlistPath, guardedControl)
+	mux.Handle(controlAllowlistPath, guardedControl)
 	if opts.Mount != nil {
 		opts.Mount(mux, deps)
 	}
 	mux.Handle("/", dataPlane)
 	return mux
+}
+
+// allowlistEntryCount returns the current effective entry count for /status.
+// A nil store (C7 not wired) reports 0; the values themselves never appear in
+// the status payload.
+func allowlistEntryCount(store AllowlistStore) int {
+	if store == nil {
+		return 0
+	}
+	return len(store.Entries())
+}
+
+// recordAllowlistMutation writes one metadata-only audit row for a successful
+// control-plane allowlist change. A nil sink is a no-op (core passes
+// audit.NoopSink{}). The entry value is deliberately not recorded: the row
+// carries the action, the source identifier and the resulting entry count, and
+// the store's entries never leave memory through the audit seam.
+func recordAllowlistMutation(sink audit.AuditSink, ev proxy.ControlAuditEvent) {
+	if sink == nil {
+		return
+	}
+	_ = sink.Record(audit.Record{
+		TS:        time.Now().UnixMilli(),
+		Provider:  controlAuditProvider,
+		Method:    ev.Action,
+		Path:      controlAllowlistPath,
+		Client:    ev.Source,
+		Detectors: []string{fmt.Sprintf("entries:%d", ev.Count)},
+	})
+}
+
+// allowlistContentSource is the optional C7 store extension the gateway uses to
+// read the persisted allowlist file's current bytes. It is a separate,
+// structural interface rather than a method on the frozen AllowlistStore
+// contract, so the ADR-0012 seam is unchanged; pkg/allowlist.Store implements
+// it. A store that does not implement it simply contributes no file-content
+// exclusion (the token value is still installed).
+type allowlistContentSource interface {
+	RawContent() ([]byte, error)
+}
+
+// selfProtectionExclusionValues assembles the frozen C8 narrow exclusion set:
+// the session control-token value plus the allowlist store's current file
+// content. Exactly those two values — never allowlist entry values, which would
+// cancel C7. A missing file contributes nothing. The store's RawContent is
+// bounded and reports an over-bound or unreadable file as an error, so the
+// caller can warn; the token is still returned so the exclusion is never
+// silently dropped in full.
+func selfProtectionExclusionValues(token string, store AllowlistStore) ([][]byte, error) {
+	values := make([][]byte, 0, 2)
+	if token != "" {
+		values = append(values, []byte(token))
+	}
+	source, ok := store.(allowlistContentSource)
+	if !ok {
+		return values, nil
+	}
+	content, err := source.RawContent()
+	if err != nil {
+		return values, err
+	}
+	if len(content) > 0 {
+		values = append(values, content)
+	}
+	return values, nil
+}
+
+// installSelfProtection derives and installs the C8 mutation-channel state on
+// the pipeline: the narrow exclusion set (the session control-token value plus
+// the allowlist store's current file content) and the runtime channel context
+// (the bound control-plane port plus the absolute <DataDir>/allowlist.json
+// path). It is called once the session token exists — the listener is bound
+// and the data root resolved by then, so port and path are in scope — and
+// again after every allowlist mutation, keeping the same state W6.1/W6.2 read
+// current. A content-read failure is reported on warn (never fatal: startup
+// and the mutation must not fail because the exclusion refresh could not read
+// the file) and a nil pipeline is a no-op.
+func installSelfProtection(pipeline *proxy.Pipeline, token string, port int, dataDir string, store AllowlistStore, warn io.Writer) {
+	if pipeline == nil {
+		return
+	}
+	values, err := selfProtectionExclusionValues(token, store)
+	if err != nil && warn != nil {
+		fmt.Fprintf(warn, "tokenhush: self-protection: read allowlist file content: %v\n", err)
+	}
+	pipeline.SetSelfProtectionExclusions(values)
+	pipeline.SetSelfProtectionChannel(proxy.MutationChannelContext{
+		ControlPort:   port,
+		AllowlistPath: filepath.Join(dataDir, allowlist.FileName),
+	})
 }
