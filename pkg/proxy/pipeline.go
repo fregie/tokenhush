@@ -117,6 +117,13 @@ type Pipeline struct {
 	exclusions            [][]byte
 	controlToken          string
 
+	// exclusionValues is the effective C8 exclusion set derived at construction
+	// from exclusions plus controlToken. It is empty unless self-protection is
+	// enabled and a value was supplied, so the zero-value seam stays a complete
+	// no-op. W6.1's force-redaction matches against it and the engine refuses to
+	// restore it.
+	exclusionValues [][]byte
+
 	// reporter, when set, receives one masked event per replaced span and per
 	// policy block. It is an atomic pointer so a reporter installed before Run
 	// is read race-free by every request goroutine. See SetRedactionReporter.
@@ -154,7 +161,7 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 	if policy == nil {
 		policy = extension.NewPolicy(registry, extension.PolicyConfig{})
 	}
-	return &Pipeline{
+	pipeline := &Pipeline{
 		registry: registry,
 		policy:   policy,
 		engine:   cfg.Engine,
@@ -165,7 +172,19 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 		selfProtectionModes:   cfg.SelfProtectionModes,
 		exclusions:            cfg.Exclusions,
 		controlToken:          cfg.ControlToken,
-	}, nil
+	}
+	// W6.1 consumes the W0.3 seam at construction: while self-protection is
+	// armed, the effective exclusion set (Exclusions plus the non-empty control
+	// token) is derived once and installed on the engine, so the inbound
+	// direction refuses to restore those values forever. Disabled or empty is a
+	// complete no-op, preserving the pre-seam behaviour byte for byte.
+	if pipeline.selfProtectionEnabled {
+		pipeline.exclusionValues = exclusionValues(cfg.Exclusions, cfg.ControlToken)
+		if len(pipeline.exclusionValues) > 0 {
+			pipeline.engine.ExcludeFromBackfill(pipeline.exclusionValues...)
+		}
+	}
+	return pipeline, nil
 }
 
 // ResponseWalkFailures reports how many client-bound response bodies the
@@ -264,6 +283,16 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	walked, err := protocol.Walk(body)
 	if err != nil {
 		return body, fmt.Errorf("%w: %w", ErrUnwalkableBody, err)
+	}
+	// W6.1 prepend step. It runs BEFORE p.policy.Evaluate — and therefore before
+	// every detector and the allowlist suppression inside detector.Inspect — and
+	// rewrites the body the rest of this transform operates on, so the
+	// exclusion-set placeholders are registered in byPlaceholder and written
+	// back on every decision branch (including the default Allow branch, which
+	// otherwise returns the body untouched). See forceRedactExclusions.
+	body, walked, err = p.forceRedactExclusions(body, walked)
+	if err != nil {
+		return nil, err
 	}
 	decision, err := p.policy.Evaluate(contentDocument(extension.RequestContent, p.tool, walked))
 	if err != nil {
