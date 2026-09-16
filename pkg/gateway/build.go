@@ -57,7 +57,7 @@ func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
 	policy := extension.NewPolicy(registry, extension.PolicyConfig{
 		Sink:     opts.Sink,
 		Timeout:  timeout,
-		Failures: failClosedDetectors(opts.Detectors),
+		Failures: failClosedDetectors(opts.Detectors, opts.Rules != nil),
 	})
 	engine, err := redact.NewPlaceholderEngine()
 	if err != nil {
@@ -110,15 +110,22 @@ func detectorOptions(allowlist []string) []redact.Option {
 	return []redact.Option{redact.WithAllowlist(allowlist...)}
 }
 
-// failClosedDetectors marks every enabled built-in detector FailClosed. The
-// detectors scan attacker-influenced bodies; under the advisory FailOpenWarn
-// default a timeout on a large body would silently drop the finding and leak
-// the secret upstream. FailClosed turns a detector timeout or error into a
-// Block instead.
-func failClosedDetectors(detectors []string) map[string]extension.FailurePolicy {
+// failClosedDetectors marks every enabled built-in detector FailClosed and,
+// when rulesActive is true, the remote-rule interpreter (rules.DefaultPluginID)
+// as well. The detectors scan attacker-influenced bodies; under the advisory
+// FailOpenWarn default a timeout on a large body would silently drop the
+// finding and leak the secret upstream. FailClosed turns a detector timeout or
+// error into a Block instead. The remote interpreter needs the same guarantee:
+// its rule pack also scans attacker-influenced bodies, and a failed inspection
+// must not silently let the secret upstream. With no active pack the
+// interpreter is not registered, so its key is absent (absent == FailOpenWarn).
+func failClosedDetectors(detectors []string, rulesActive bool) map[string]extension.FailurePolicy {
 	failures := make(map[string]extension.FailurePolicy, len(builtinDetectors))
 	for _, id := range detectors {
 		failures[id] = extension.FailClosed
+	}
+	if rulesActive {
+		failures[rules.DefaultPluginID] = extension.FailClosed
 	}
 	return failures
 }
