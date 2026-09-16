@@ -176,7 +176,7 @@ Every tool `tokenhush env` onboards must send a request path the gateway routes.
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` |
 | Windows | `%AppData%\tokenhush\` |
 
-The file is named `tokenhush.yaml`. Override its path with `tokenhush run --config PATH`, or move config and data together with `TOKENHUSH_HOME`. It is read at **startup**, so restart the gateway after editing. `tokenhush doctor` validates the config and the port. For `listen`, `detectors`, `allowlist`, and `log`, see the [`tokenhush.yaml` reference](#tokenhushyaml-reference).
+The file is named `tokenhush.yaml`. Override its path with `tokenhush run --config PATH`, or move config and data together with `TOKENHUSH_HOME`. It is read at **startup**, so restart the gateway after editing. `tokenhush doctor` validates the config and the port. For `listen`, `detectors`, `allowlist`, `self_protection`, and `log`, see the [`tokenhush.yaml` reference](#tokenhushyaml-reference).
 
 ### Limits
 
@@ -205,7 +205,11 @@ detectors:
   private_keys: true   # PEM private-key headers
   luhn: true           # card numbers (Luhn)
   email: true          # email addresses
-allowlist: []          # literals that are never redacted
+allowlist: []          # literals never redacted; the runtime allowlist adds to them (union)
+self_protection:       # change-channel guard; on by default
+  enabled: true        # false is an explicit opt-out
+  modes: [cli-command, control-port, file-write]
+  exclude_paths: []    # extra files whose contents are never restored
 log:
   level: info          # debug | info | warn | error
 upstreams:             # host or path prefix -> upstream base URL
@@ -218,7 +222,8 @@ Key points:
 - `listen.host` takes loopback only; the gateway **never** binds `0.0.0.0` or an empty host. It binds `127.0.0.1` always and `[::1]` as well when the host has an IPv6 loopback; on a host without one it serves `127.0.0.1` only and logs a notice.
 - Six deterministic, high-precision detectors: key prefixes, high-entropy strings, JWT, PEM private-key headers, Luhn card numbers, email. A match becomes a stable placeholder like `__PII_email_9f2c8a4b6d1e__`, so upstream never sees the raw value.
 - `prefixes` → detector id `prefix`; `private_keys` → `private_key` (see `pkg/config` comments).
-- `allowlist` holds literals never redacted.
+- `allowlist` holds literals never redacted. Static entries stay supported alongside the runtime allowlist: at startup they seed the runtime store and this key keeps being read, so the effective allowlist is the **union** of the two — never a replacement. Each entry must be non-empty, free of control characters, and at most 4096 bytes.
+- `self_protection` guards the change channel (the `tokenhush allowlist` CLI, the loopback control port, and direct writes to the allowlist file) and ships enabled with all three modes. `enabled: false` or a shortened `modes:` list is an explicit opt-out. `exclude_paths` names extra files whose full contents join the exclusion set that is never restored; each entry follows the same 4096-byte and no-control-character rule.
 - The core config has no `audit:` key: a config that still contains one fails to load. The audit block lives in the private Pro layer; the public core keeps only the metadata-only audit seam.
 - `upstreams:` maps a host or path prefix to your OpenAI-compatible upstream. Unmatched requests use built-ins: `/v1/messages` routes to Anthropic; `/v1/chat/completions` and `/v1/responses` route to OpenAI. `GET /v1/models` is the single **named exception**: a non-data-bearing model-discovery call that defaults to OpenAI, which an `upstreams:` override can still move. Every other unknown path returns an explicit error (`ErrUnknownUpstream`), never a silent misroute; see [security.md](security.md#named-routing-exceptions).
 

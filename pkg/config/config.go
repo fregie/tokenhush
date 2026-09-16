@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"unicode"
 
 	"github.com/goccy/go-yaml"
 )
@@ -15,6 +16,12 @@ import (
 // short, hand-written file; anything bigger is either a mistake or hostile and
 // fails fast with ErrTooLarge.
 const maxConfigBytes = 1 << 20 // 1 MiB
+
+// maxConfigEntryBytes bounds one allowlist or exclude_paths entry. Entries are
+// literals and file paths, not documents, so anything longer is a mistake or
+// hostile and is rejected rather than truncated. maxConfigBytes still bounds
+// the file as a whole.
+const maxConfigEntryBytes = 4096
 
 // Canonical detector ids, matching docs/configuration.md. Note the deliberate mismatch
 // with the YAML keys: `prefixes`/`private_keys` in the file map to the ids
@@ -28,13 +35,38 @@ const (
 	DetectorEmail       = "email"
 )
 
+// Canonical self-protection mode ids, matching the `self_protection.modes`
+// values in docs/tool-setup.md. Unlike the detectors there is no key/id
+// mismatch to remember: the YAML names and the ids are identical.
+const (
+	SelfProtectionModeCLICommand  = "cli-command"
+	SelfProtectionModeControlPort = "control-port"
+	SelfProtectionModeFileWrite   = "file-write"
+)
+
+// canonicalSelfProtectionModes is the frozen order used by
+// SelfProtection.EnabledModes and the accepted value set of `modes:`.
+var canonicalSelfProtectionModes = [...]string{
+	SelfProtectionModeCLICommand,
+	SelfProtectionModeControlPort,
+	SelfProtectionModeFileWrite,
+}
+
 // Config is a fully loaded and validated V1 configuration.
 type Config struct {
 	Listen    Listen    `yaml:"listen"`
 	Detectors Detectors `yaml:"detectors"`
+	// Allowlist holds literals that are never redacted. The key keeps being
+	// read after the runtime allowlist store exists: at startup these entries
+	// seed the store and both sources stay active, so the effective allowlist
+	// is the union of the static and runtime entries, never a replacement.
+	// Matching stays byte-exact contains (pkg/redact).
 	Allowlist []string  `yaml:"allowlist"`
 	Log       Log       `yaml:"log"`
 	Upstreams Upstreams `yaml:"upstreams"`
+	// SelfProtection is the change-channel guard; Default() returns it
+	// hardened (enabled, all three modes).
+	SelfProtection SelfProtection `yaml:"self_protection"`
 }
 
 // Listen is the loopback listener. Host is restricted to 127.0.0.1, ::1 or
@@ -76,6 +108,48 @@ func (d Detectors) EnabledIDs() []string {
 	return ids
 }
 
+// SelfProtection mirrors the `self_protection:` block: the change-channel
+// guard that keeps a model from weakening redaction through tool calls. It is
+// hardening by default, so a config file that omits the block keeps every
+// interception mode on; only an explicit `enabled: false` (or a shortened
+// `modes:` list) opts out.
+//
+// ExcludePaths names extra files whose full contents join the runtime
+// exclusion set (alongside the control token and <DataDir>/allowlist.json).
+// The files are read by the gateway at startup; pkg/config only carries and
+// validates the paths.
+type SelfProtection struct {
+	Enabled      bool     `yaml:"enabled"`
+	Modes        []string `yaml:"modes"`
+	ExcludePaths []string `yaml:"exclude_paths"`
+}
+
+// EnabledModes returns the active interception categories in canonical
+// docs/tool-setup.md order, so the gateway never has to know the YAML shapes.
+// A disabled SelfProtection has no enabled modes; values outside the frozen
+// set are rejected by validate and ignored here.
+func (s SelfProtection) EnabledModes() []string {
+	if !s.Enabled {
+		return nil
+	}
+	var modes []string
+	for _, mode := range canonicalSelfProtectionModes {
+		if s.hasMode(mode) {
+			modes = append(modes, mode)
+		}
+	}
+	return modes
+}
+
+func (s SelfProtection) hasMode(mode string) bool {
+	for _, m := range s.Modes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
+}
+
 // Log configures the daemon log level.
 type Log struct {
 	Level string `yaml:"level"`
@@ -95,6 +169,14 @@ func Default() Config {
 		},
 		Allowlist: []string{},
 		Log:       Log{Level: "info"},
+		SelfProtection: SelfProtection{
+			Enabled: true,
+			Modes: []string{
+				SelfProtectionModeCLICommand,
+				SelfProtectionModeControlPort,
+				SelfProtectionModeFileWrite,
+			},
+		},
 	}
 }
 
@@ -199,7 +281,87 @@ func (c *Config) validate(path string) error {
 			Err:    ErrInvalidLogLevel,
 		}
 	}
+	if err := c.SelfProtection.validate(path); err != nil {
+		return err
+	}
+	return validateAllowlist(path, c.Allowlist)
+}
+
+// validate rejects unusable self_protection values: modes outside the frozen
+// set, duplicate modes, and exclude_paths entries that are empty, contain
+// control characters, or exceed maxConfigEntryBytes. `enabled: false` is an
+// explicit user choice and is accepted without a warning.
+func (s SelfProtection) validate(path string) error {
+	seen := make(map[string]struct{}, len(s.Modes))
+	for i, mode := range s.Modes {
+		if !isSelfProtectionMode(mode) {
+			return &Error{
+				Path:   path,
+				Field:  "self_protection.modes",
+				Reason: fmt.Sprintf("mode %d %q is not one of %s", i, mode, strings.Join(canonicalSelfProtectionModes[:], "|")),
+				Err:    ErrInvalidSelfProtection,
+			}
+		}
+		if _, duplicate := seen[mode]; duplicate {
+			return &Error{
+				Path:   path,
+				Field:  "self_protection.modes",
+				Reason: fmt.Sprintf("mode %q is duplicated", mode),
+				Err:    ErrInvalidSelfProtection,
+			}
+		}
+		seen[mode] = struct{}{}
+	}
+	for i, entry := range s.ExcludePaths {
+		if reason, bad := entryProblem(entry); bad {
+			return &Error{
+				Path:   path,
+				Field:  "self_protection.exclude_paths",
+				Reason: fmt.Sprintf("entry %d %s", i, reason),
+				Err:    ErrInvalidSelfProtection,
+			}
+		}
+	}
 	return nil
+}
+
+func isSelfProtectionMode(mode string) bool {
+	for _, known := range canonicalSelfProtectionModes {
+		if mode == known {
+			return true
+		}
+	}
+	return false
+}
+
+// validateAllowlist rejects unusable `allowlist:` entries as a typed error; it
+// does not change matching semantics, which stay byte-exact contains in
+// pkg/redact.
+func validateAllowlist(path string, entries []string) error {
+	for i, entry := range entries {
+		if reason, bad := entryProblem(entry); bad {
+			return &Error{
+				Path:   path,
+				Field:  "allowlist",
+				Reason: fmt.Sprintf("entry %d %s", i, reason),
+				Err:    ErrInvalidAllowlist,
+			}
+		}
+	}
+	return nil
+}
+
+// entryProblem reports why an allowlist or exclude_paths entry is unusable.
+func entryProblem(entry string) (string, bool) {
+	switch {
+	case entry == "":
+		return "must not be empty", true
+	case strings.IndexFunc(entry, unicode.IsControl) >= 0:
+		return "must not contain control characters", true
+	case len(entry) > maxConfigEntryBytes:
+		return fmt.Sprintf("must be at most %d bytes, got %d", maxConfigEntryBytes, len(entry)), true
+	}
+	return "", false
 }
 
 // isLoopbackHost reports whether host is one of the three forms the listener

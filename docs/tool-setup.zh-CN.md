@@ -176,7 +176,7 @@ upstreams:
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` |
 | Windows | `%AppData%\tokenhush\` |
 
-文件名为 `tokenhush.yaml`。用 `tokenhush run --config PATH` 覆盖路径，或用 `TOKENHUSH_HOME` 同时搬走配置与数据目录。它在**启动时**读取，改完请重启网关。`tokenhush doctor` 会校验配置与端口。`listen`、`detectors`、`allowlist`、`log` 见 [`tokenhush.yaml` 参考](#tokenhushyaml-参考)。
+文件名为 `tokenhush.yaml`。用 `tokenhush run --config PATH` 覆盖路径，或用 `TOKENHUSH_HOME` 同时搬走配置与数据目录。它在**启动时**读取，改完请重启网关。`tokenhush doctor` 会校验配置与端口。`listen`、`detectors`、`allowlist`、`self_protection`、`log` 见 [`tokenhush.yaml` 参考](#tokenhushyaml-参考)。
 
 ### 限制
 
@@ -205,7 +205,11 @@ detectors:
   private_keys: true   # PEM 私钥头
   luhn: true           # 卡号（Luhn）
   email: true          # 电子邮件地址
-allowlist: []          # 永不脱敏的字面量
+allowlist: []          # 永不脱敏的字面量；运行时白名单与其并集生效
+self_protection:       # 变更通道自保护；默认开启
+  enabled: true        # false 为显式退出
+  modes: [cli-command, control-port, file-write]
+  exclude_paths: []    # 额外文件，其内容永不还原
 log:
   level: info          # debug | info | warn | error
 upstreams:             # 主机或路径前缀 -> 上游基础 URL
@@ -218,7 +222,8 @@ upstreams:             # 主机或路径前缀 -> 上游基础 URL
 - `listen.host` 只接受环回地址。网关**绝不**绑定 `0.0.0.0` 或空主机。它始终绑 `127.0.0.1`；主机有 IPv6 环回时同时绑 `[::1]`，没有时只服务 `127.0.0.1` 并打印提示。
 - 六个确定性检测器，高精度：密钥前缀、高熵字符串、JWT、PEM 私钥头、Luhn 卡号、电子邮件。命中生成稳定占位符，如 `__PII_email_9f2c8a4b6d1e__`，上游拿不到原始值。
 - `prefixes` 对应检测器 id `prefix`，`private_keys` 对应 `private_key`（见 `pkg/config` 注释）。
-- `allowlist` 放永不脱敏的字面量。
+- `allowlist` 放永不脱敏的字面量。运行时白名单出现后静态条目仍然生效：启动时它们作为种子导入运行时 store，且本键继续被读取——最终生效集合是两者的**并集**，而不是替换。每条必须非空、不含控制字符、长度不超过 4096 字节。
+- `self_protection` 保护变更通道（`tokenhush allowlist` CLI、环回控制端口、直写白名单文件），默认开启且三个模式全开。`enabled: false` 或缩短 `modes:` 列表是显式退出。`exclude_paths` 指定额外文件，其完整内容并入永不还原的排除集；每条同样遵循非空、无控制字符、不超过 4096 字节的规则。
 - 核心配置里没有 `audit:` 键：仍带该键的配置会加载失败。审计块位于私有 Pro 层；公开核心只保留仅元数据的审计接缝。
 - `upstreams:` 把主机或路径前缀映射到你的 OpenAI 兼容上游。没配到的请求走内置路由：`/v1/messages` 去 Anthropic；`/v1/chat/completions` 和 `/v1/responses` 去 OpenAI。`GET /v1/models` 是唯一的**具名例外**：模型发现调用不携带用户数据，默认去 OpenAI，`upstreams:` 覆盖仍可改走别处。其他任何未知路径都明确报错（`ErrUnknownUpstream`），不会静默错路由；见 [security.zh-CN.md](security.zh-CN.md#具名路由例外清单)。
 
