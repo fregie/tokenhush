@@ -15,21 +15,30 @@ import (
 // The benchmark measures the unit the re-check's cost rides on: the whole
 // request transform (walk -> detectors -> policy -> redact), not a no-op
 // stand-in, so the overhead is relative to the transform's real cost. The two
-// scenarios are the two cheap paths W2.5 adds:
+// asserted scenarios are the two cheap paths W2.5 adds:
 //
 //   - NoSecrets: the engine has never mapped a secret (KnownSecrets is empty),
 //     the fallback case, so the re-check must return before doing any work.
 //   - CleanBodyWithSecrets: the engine knows a secret and the body is a
 //     realistic long-context provider request with no hit, so the body-size
 //     bound keeps the re-check off the normalisation pass.
+//   - CleanSmallBodyWithSecrets: the same engine over a short body, below the
+//     size bound, so the re-check actually runs its normalisation pass. This
+//     case is deliberately NOT asserted: its delta is large (that pass costs
+//     tens of milliseconds regardless of body size), and bench_egress.sh
+//     reports it as an explicitly informational metric so the asserted <15%
+//     bound on the case above cannot be read as "the enabled path is cheap".
 //
-// The baseline for both is the same binary with the test-only
+// The baseline for all three is the same binary with the test-only
 // egressRecheckDisabled switch set to true (the zero-overhead path); the
 // checked path runs with its default false. pkg/proxy/bench_egress.sh captures
-// both files and asserts the plan's bounds (<5% and <15%).
+// both files, asserts the plan's bounds (<5% and <15%) on the first two cases
+// and reports the third as INFO (not a bound).
 const (
 	// benchTypicalBodyKiB is a typical short chat/completion request: below the
-	// body-size bound, so NoSecrets exercises the empty-secret short-circuit.
+	// body-size bound, so NoSecrets exercises the empty-secret short-circuit
+	// and CleanSmallBodyWithSecrets exercises the full normalisation pass (the
+	// re-check's below-threshold cost).
 	benchTypicalBodyKiB = 4
 
 	// benchLongContextBodyKiB is a realistic long-context request (a coding
@@ -150,6 +159,8 @@ func benchTransform(b *testing.B, pipe *Pipeline, body []byte) {
 // BenchmarkEgressRecheck is the W2.5 benchmark: the whole request transform,
 // with and without a known secret, measured against the zero-overhead baseline
 // (egressRecheckDisabled = true) captured by pkg/proxy/bench_egress.sh.
+// CleanSmallBodyWithSecrets is the informational below-threshold companion: the
+// script prints it as INFO, never as a bound.
 //
 //	go test ./pkg/proxy/ -run '^$' -bench BenchmarkEgressRecheck -benchtime 2s -count 6
 func BenchmarkEgressRecheck(b *testing.B) {
@@ -160,6 +171,22 @@ func BenchmarkEgressRecheck(b *testing.B) {
 
 	b.Run("CleanBodyWithSecrets", func(b *testing.B) {
 		body := benchProviderBody(b, benchLongContextBodyKiB)
+		engine := benchEngine(b)
+		engine.Placeholder(egressSecret(), "api_key")
+		benchTransform(b, benchPipeline(b, engine), body)
+	})
+
+	// CleanSmallBodyWithSecrets prices the re-check when it actually runs: the
+	// engine knows a secret and the body is short, so the size bound does not
+	// apply and the normalisation pass is paid. It is informational only (see
+	// the file comment); the guard keeps it that way: if this fixture ever grew
+	// past the bound, the metric would silently become the skipped path again.
+	b.Run("CleanSmallBodyWithSecrets", func(b *testing.B) {
+		body := benchProviderBody(b, benchTypicalBodyKiB)
+		if egressRecheckMaxBodyBytes != 0 && len(body) > egressRecheckMaxBodyBytes {
+			b.Fatalf("fixture is %d bytes, above egressRecheckMaxBodyBytes=%d: the below-threshold metric would measure the skipped path",
+				len(body), egressRecheckMaxBodyBytes)
+		}
 		engine := benchEngine(b)
 		engine.Placeholder(egressSecret(), "api_key")
 		benchTransform(b, benchPipeline(b, engine), body)

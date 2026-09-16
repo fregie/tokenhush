@@ -58,8 +58,14 @@ var egressRecheckDisabled = false
 // comfortably above realistic LLM request bodies (typically a few KB to a few
 // tens of KB) while keeping that tail off the hot path: see
 // BenchmarkEgressRecheck and pkg/proxy/bench_egress.sh for the measured cost.
-// This is a documented gap of the same class as the normaliser's own cap; W6.6
-// owns the public write-up of it.
+//
+// The bound is what keeps the asserted benchmark deltas small, and it must not
+// be read as "the enabled path is cheap": below the bound, with any known
+// secret, the re-check still pays that tens-of-milliseconds normalisation pass.
+// bench_egress.sh reports the below-threshold cost as an explicitly
+// informational metric (BenchmarkEgressRecheck/CleanSmallBodyWithSecrets),
+// never as a bound. This is a documented gap of the same class as the
+// normaliser's own cap; W6.6 owns the public write-up of it.
 //
 // Zero disables the bound (every non-empty body is normalised). That is the
 // falsification point bench_egress.sh flips to show the bound is load-bearing;
