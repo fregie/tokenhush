@@ -4,11 +4,14 @@
 # BuildOptions and RequestStats, sorted. Compared by TestOptionsContractDoc,
 # which reflects over the live structs. Add, remove, rename or retype a field
 # here or in code and the test fails; change the ADR first, then this golden.
+# BuildOptions Rules (*rules.Config) is the ADR-0012 增补 A1 amendment
+# (2026-09-16); nil means built-in detectors only.
 #
 # Format: <StructName> <FieldName> <reflect.Type.String()>
 
 BuildOptions Allowlist []string
 BuildOptions Detectors []string
+BuildOptions Rules *rules.Config
 BuildOptions Sink audit.AuditSink
 BuildOptions Timeout time.Duration
 BuildOptions Tool string

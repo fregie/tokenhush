@@ -8,6 +8,7 @@ import (
 	"github.com/fregie/tokenhush/pkg/extension"
 	"github.com/fregie/tokenhush/pkg/proxy"
 	"github.com/fregie/tokenhush/pkg/redact"
+	"github.com/fregie/tokenhush/pkg/rules"
 )
 
 // builtinDetectors maps a canonical detector id to its constructor. The ids
@@ -34,6 +35,8 @@ type BuildOptions struct {
 	Timeout time.Duration
 	// Tool labels the content Document (for example "claude-code").
 	Tool string
+	// Rules 是已同步的签名规则包；nil = 仅内置检测器（等价于本字段引入前的行为）。
+	Rules *rules.Config
 }
 
 // BuildPipeline assembles the content pipeline for one session: the enabled
