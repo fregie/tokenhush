@@ -1,0 +1,21 @@
+# Known uncovered mutation-channel classes for the C8 self-protection guard.
+#
+# This file is the documentation artifact: the security documentation (W6.6)
+# cites the classes below, and KnownUncoveredMutationChannels in pkg/proxy
+# mirrors them. A test asserts the accessor and this file stay byte-for-byte
+# equal, so neither side can drift from the other.
+#
+# The mutation-channel detector is high-confidence interception (best-effort),
+# not a closed guarantee. An entry here marks a boundary of the explicitly
+# enumerated pattern set (see MutationChannelPatternInventory); it is not a
+# claim that everything else is covered.
+#
+# One class per line. Blank lines and lines starting with '#' are comments.
+base64- or otherwise encoded command text (the shell decodes it at run time; only the literal command shape is matched)
+indirect execution through a script file (the detector sees the argument text, not the file's contents)
+multi-step assembly across separate tool calls (no single candidate carries the full command)
+a command split across several leaves of one tool call (each leaf is shorter than the command shape)
+fragments assembled at run time by an interpreter (for example string concatenation inside python -c)
+shell wrappers and interpreters deliberately not enumerated (for example ssh to a remote host, xargs, or expect)
+write mechanisms outside the enumerated write-signal list (for example an editor save, a custom program, or a CLI not listed)
+indirect path spellings for the data directory (for example a symlink or a bind mount; the basename form is covered)

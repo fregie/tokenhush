@@ -125,6 +125,16 @@ type Pipeline struct {
 	// runs on a control-plane goroutine while request goroutines read it.
 	exclusionValues atomic.Pointer[exclusionSet]
 
+	// channelContext is the runtime C8 mutation-channel context — the bound
+	// control port and the absolute <DataDir>/allowlist.json path — installed
+	// through SetSelfProtectionChannel once the gateway has bound the listener
+	// and resolved the data root, because neither value exists at pipeline
+	// construction time. W6.2's classifier (DetectMutationChannel) reads it on
+	// the response path; the zero value leaves the control-port class and the
+	// exact-path class inert. An atomic pointer for the same reason as
+	// exclusionValues: the gateway installs it while request goroutines read.
+	channelContext atomic.Pointer[MutationChannelContext]
+
 	// reporter, when set, receives one masked event per replaced span and per
 	// policy block. It is an atomic pointer so a reporter installed before Run
 	// is read race-free by every request goroutine. See SetRedactionReporter.

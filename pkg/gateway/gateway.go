@@ -22,9 +22,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"time"
 
+	"github.com/fregie/tokenhush/pkg/allowlist"
 	"github.com/fregie/tokenhush/pkg/audit"
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/extension"
@@ -232,12 +234,14 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	deps.Token = token
 
-	// W6.1: the session token is generated here, AFTER the caller built the
-	// pipeline (ADR-0012 freezes "bind before writing the token", so the token
-	// cannot exist at construction time). Install the C8 narrow exclusion set
-	// now: the token value plus the current <DataDir>/allowlist.json content.
-	// A missing file contributes nothing and never fails startup.
-	installSelfProtectionExclusions(opts.Pipeline, deps.Token, opts.AllowlistStore, opts.Stderr)
+	// W6.1/W6.2: the session token is generated here, AFTER the caller built
+	// the pipeline (ADR-0012 freezes "bind before writing the token", so the
+	// token cannot exist at construction time). Install the C8 state now: the
+	// narrow exclusion set (token value plus the current
+	// <DataDir>/allowlist.json content) and the runtime mutation-channel
+	// context (the bound port plus the allowlist file path). A missing file
+	// contributes nothing and never fails startup.
+	installSelfProtection(opts.Pipeline, deps.Token, port, dataDir, opts.AllowlistStore, opts.Stderr)
 
 	state := RunState{
 		PID:       os.Getpid(),
@@ -312,13 +316,15 @@ func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt 
 		proxy.WithControlAllowlist(opts.AllowlistStore),
 		proxy.WithControlAudit(func(ev proxy.ControlAuditEvent) {
 			recordAllowlistMutation(opts.Sink, ev)
-			// W6.1: a runtime allowlist mutation rewrites
+			// W6.1/W6.2: a runtime allowlist mutation rewrites
 			// <DataDir>/allowlist.json, so refresh the C8 exclusion set to the
-			// file's new bytes. The callback runs synchronously after a
-			// successful mutation, before the HTTP response, so the refreshed
-			// set is observable by the next request. A refresh failure is
-			// metadata-only and non-fatal: the mutation already succeeded.
-			installSelfProtectionExclusions(opts.Pipeline, deps.Token, opts.AllowlistStore, opts.Stderr)
+			// file's new bytes (the channel context is re-installed from the
+			// same bound port and data root). The callback runs synchronously
+			// after a successful mutation, before the HTTP response, so the
+			// refreshed set is observable by the next request. A refresh
+			// failure is metadata-only and non-fatal: the mutation already
+			// succeeded.
+			installSelfProtection(opts.Pipeline, deps.Token, port, deps.DataDir, opts.AllowlistStore, opts.Stderr)
 		}),
 	)
 	guardedControl := proxy.HostAllowlist(port)(
@@ -412,12 +418,17 @@ func selfProtectionExclusionValues(token string, store AllowlistStore) ([][]byte
 	return values, nil
 }
 
-// installSelfProtectionExclusions derives and installs the C8 exclusion set on
-// the pipeline. It is called once the session token exists and again after every
-// allowlist mutation. A read failure is reported on warn (never fatal: startup
+// installSelfProtection derives and installs the C8 mutation-channel state on
+// the pipeline: the narrow exclusion set (the session control-token value plus
+// the allowlist store's current file content) and the runtime channel context
+// (the bound control-plane port plus the absolute <DataDir>/allowlist.json
+// path). It is called once the session token exists — the listener is bound
+// and the data root resolved by then, so port and path are in scope — and
+// again after every allowlist mutation, keeping the same state W6.1/W6.2 read
+// current. A content-read failure is reported on warn (never fatal: startup
 // and the mutation must not fail because the exclusion refresh could not read
 // the file) and a nil pipeline is a no-op.
-func installSelfProtectionExclusions(pipeline *proxy.Pipeline, token string, store AllowlistStore, warn io.Writer) {
+func installSelfProtection(pipeline *proxy.Pipeline, token string, port int, dataDir string, store AllowlistStore, warn io.Writer) {
 	if pipeline == nil {
 		return
 	}
@@ -426,4 +437,8 @@ func installSelfProtectionExclusions(pipeline *proxy.Pipeline, token string, sto
 		fmt.Fprintf(warn, "tokenhush: self-protection: read allowlist file content: %v\n", err)
 	}
 	pipeline.SetSelfProtectionExclusions(values)
+	pipeline.SetSelfProtectionChannel(proxy.MutationChannelContext{
+		ControlPort:   port,
+		AllowlistPath: filepath.Join(dataDir, allowlist.FileName),
+	})
 }
