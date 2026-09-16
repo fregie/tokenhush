@@ -48,6 +48,24 @@ func (p *Pipeline) EgressBlocks() uint64 {
 // be a default-insecure control).
 var egressRecheckDisabled = false
 
+// egressRecheckMaxBodyBytes bounds the body size the outbound re-check will
+// normalise, in the same spirit as redact.NormalizeMaxInputBytes (the
+// normaliser's own cap, which declines oversized input rather than truncating
+// it): a larger body skips the re-check instead of paying the normalisation
+// pass. The pass costs tens of milliseconds on realistic text — it saturates
+// the normaliser's candidate caps regardless of input size — so it must not
+// run on the oversized tail. Half the normaliser's cap, 128 KiB, sits
+// comfortably above realistic LLM request bodies (typically a few KB to a few
+// tens of KB) while keeping that tail off the hot path: see
+// BenchmarkEgressRecheck and pkg/proxy/bench_egress.sh for the measured cost.
+// This is a documented gap of the same class as the normaliser's own cap; W6.6
+// owns the public write-up of it.
+//
+// Zero disables the bound (every non-empty body is normalised). That is the
+// falsification point bench_egress.sh flips to show the bound is load-bearing;
+// production never sets it to zero.
+const egressRecheckMaxBodyBytes = redact.NormalizeMaxInputBytes / 2
+
 // egressRecheck runs the W2.3 outbound re-check over body, the bytes the
 // request transform is about to return, and returns nil when nothing was found.
 // It is the single named entry point W2.5 times and bounds.
@@ -58,9 +76,11 @@ var egressRecheckDisabled = false
 // via blockEgress (one counter increment plus one metadata-only event), so a
 // hit aborts before the caller can forward anything.
 //
-// The cheap path is deliberate: an engine that knows no secrets skips the whole
-// normalisation pass (KnownSecrets is an allocation-free snapshot for an empty
-// engine), and an empty body has nothing to carry.
+// The cheap paths are deliberate, cheapest first: an empty body has nothing to
+// carry, a body above egressRecheckMaxBodyBytes returns before any allocation
+// (the documented cost bound), and an engine that knows no secrets returns
+// without normalising anything (KnownSecrets is an allocation-free snapshot
+// for an empty engine).
 //
 // Boundary (for W6.6; do not overstate it): this function sees only a body the
 // walker could parse, because transformRequest returns ErrUnwalkableBody before
@@ -75,6 +95,9 @@ func (p *Pipeline) egressRecheck(body []byte) error {
 		return nil
 	}
 	if p == nil || p.engine == nil || len(body) == 0 {
+		return nil
+	}
+	if egressRecheckMaxBodyBytes != 0 && len(body) > egressRecheckMaxBodyBytes {
 		return nil
 	}
 	secrets := p.engine.KnownSecrets()
