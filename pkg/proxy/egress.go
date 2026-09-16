@@ -141,12 +141,23 @@ func (p *Pipeline) egressRecheck(body []byte) error {
 // plaintext occurrence can only be present when redaction deliberately left it
 // (allowlist suppression, or a recorded detector exclusion); an attacker
 // cannot resurrect one to smuggle a transformed copy past the check.
+//
+// One visible-plaintext case is NOT exempt: a known secret sitting inside a
+// high_entropy structural-identifier run (redact.StructuralIdentifierContains).
+// That exemption is a blanket skip, not the positive verdict the paragraph above
+// relies on, so it must not buy a secret a free pass — without this check the
+// exemption would be a new exfiltration path for every secret the engine knows.
+// Blocking here is fail-closed and narrower than the pure-hex exclusion, which
+// remains a recorded limitation.
 func egressSecretsVisibleInBody(body, candidate []byte, secrets [][]byte) bool {
 	for _, secret := range secrets {
 		if !bytes.Contains(candidate, secret) {
 			continue
 		}
 		if !bytes.Contains(body, secret) {
+			return false
+		}
+		if redact.StructuralIdentifierContains(body, secret) {
 			return false
 		}
 	}

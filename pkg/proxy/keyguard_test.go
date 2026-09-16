@@ -65,6 +65,18 @@ func kgEmailKey() string {
 	return "user" + "@" + "example.com"
 }
 
+// kgLuhn15Digits and kgLuhn19Digits return Luhn-valid 15- and 19-digit runs, the
+// bounds of the credit-card length window. At key positions they pin the
+// bare-numeric-id exemption: a 14-19 digit structural id used as an object key
+// is not blocked, while the same run as a value is still redacted.
+func kgLuhn15Digits() string {
+	return "378282246310005"
+}
+
+func kgLuhn19Digits() string {
+	return "4000000000000000006"
+}
+
 // kgKeyTypes is the frozen key-position detector set written out literally, so
 // a production change to the filter fails these tests instead of silently
 // redefining them.
@@ -273,6 +285,8 @@ func TestPipelineFalsePositiveKeys(t *testing.T) {
 	}{
 		{"structural_keys", []byte(`{"model":"claude-test","role":"user","content":"hello","type":"text","name":"read_file","index":0,"finish_reason":"stop","tool_use_id":"toolu_01ABC"}`)},
 		{"luhn_valid_16_digit_key", kgKeyBody(t, kgLuhnDigits(), "x")},
+		{"luhn_valid_15_digit_key", kgKeyBody(t, kgLuhn15Digits(), "x")},
+		{"luhn_valid_19_digit_key", kgKeyBody(t, kgLuhn19Digits(), "x")},
 		{"email_shaped_key", kgKeyBody(t, kgEmailKey(), "x")},
 		{"provider_request_sample", kgProviderRequestSample(t)},
 		{"double_encoded_structural_keys", kgDoubleEncodedBody(t, "model")},
@@ -293,13 +307,16 @@ func TestPipelineFalsePositiveKeys(t *testing.T) {
 	// same address are redacted at value positions, so the key-position
 	// pass-through above is the filter, not a missing detector.
 	t.Run("excluded_detectors_are_live_on_values", func(t *testing.T) {
-		body := kgJSON(t, map[string]string{"card": kgLuhnDigits(), "mail": kgEmailKey()})
+		body := kgJSON(t, map[string]string{"card": kgLuhnDigits(), "amex": kgLuhn15Digits(), "mail": kgEmailKey()})
 		got, err := transform(body)
 		if err != nil {
 			t.Fatalf("transform: %v", err)
 		}
 		if bytes.Contains(got, []byte(kgLuhnDigits())) {
 			t.Errorf("luhn detector did not redact the digits as a value: %s", got)
+		}
+		if bytes.Contains(got, []byte(kgLuhn15Digits())) {
+			t.Errorf("luhn detector did not redact the 15-digit run as a value: %s", got)
 		}
 		if bytes.Contains(got, []byte(kgEmailKey())) {
 			t.Errorf("email detector did not redact the address as a value: %s", got)
