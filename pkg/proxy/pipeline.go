@@ -117,12 +117,13 @@ type Pipeline struct {
 	exclusions            [][]byte
 	controlToken          string
 
-	// exclusionValues is the effective C8 exclusion set derived at construction
-	// from exclusions plus controlToken. It is empty unless self-protection is
-	// enabled and a value was supplied, so the zero-value seam stays a complete
-	// no-op. W6.1's force-redaction matches against it and the engine refuses to
-	// restore it.
-	exclusionValues [][]byte
+	// exclusionValues is the effective C8 exclusion set: constructed with the
+	// pipeline and replaceable at runtime through SetSelfProtectionExclusions
+	// (the gateway installs the session control-token value and the current
+	// <DataDir>/allowlist.json content once the token exists, and refreshes it
+	// on every allowlist mutation). It is an atomic pointer because a refresh
+	// runs on a control-plane goroutine while request goroutines read it.
+	exclusionValues atomic.Pointer[exclusionSet]
 
 	// reporter, when set, receives one masked event per replaced span and per
 	// policy block. It is an atomic pointer so a reporter installed before Run
@@ -176,13 +177,14 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 	// W6.1 consumes the W0.3 seam at construction: while self-protection is
 	// armed, the effective exclusion set (Exclusions plus the non-empty control
 	// token) is derived once and installed on the engine, so the inbound
-	// direction refuses to restore those values forever. Disabled or empty is a
-	// complete no-op, preserving the pre-seam behaviour byte for byte.
+	// direction refuses to restore those values forever. A production assembly
+	// usually supplies an empty set here because the session token does not
+	// exist yet, then installs the real set through
+	// SetSelfProtectionExclusions once the gateway has generated it. Disabled or
+	// empty is a complete no-op, preserving the pre-seam behaviour byte for
+	// byte.
 	if pipeline.selfProtectionEnabled {
-		pipeline.exclusionValues = exclusionValues(cfg.Exclusions, cfg.ControlToken)
-		if len(pipeline.exclusionValues) > 0 {
-			pipeline.engine.ExcludeFromBackfill(pipeline.exclusionValues...)
-		}
+		pipeline.SetSelfProtectionExclusions(exclusionValues(cfg.Exclusions, cfg.ControlToken))
 	}
 	return pipeline, nil
 }

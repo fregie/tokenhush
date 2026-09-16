@@ -98,6 +98,16 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		return err
 	}
 
+	// C8 自保护的装配配置（加固默认）：Enabled/Modes 来自配置，排除集的两个值
+	// （control.token 值 + <DataDir>/allowlist.json 内容）由 gateway.Run 在会话
+	// 令牌生成后经 SetSelfProtectionExclusions 安装——令牌在 pipeline 构造时尚
+	// 不存在，而 ADR-0012 冻结了「先绑定端口再写令牌」。同一份配置同时交给
+	// BuildPipeline 与 gateway.Options（与 Pro 侧装配同形）。
+	selfProtection := gateway.SelfProtectionConfig{
+		Enabled: loaded.SelfProtection.Enabled,
+		Modes:   loaded.SelfProtection.EnabledModes(),
+	}
+
 	pipeline := deps.Pipeline
 	if pipeline == nil {
 		pipeline, err = gateway.BuildPipeline(gateway.BuildOptions{
@@ -106,6 +116,7 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 			Sink:           sink,
 			Timeout:        deps.PolicyTimeout,
 			AllowlistStore: allowlistStore,
+			SelfProtection: selfProtection,
 		})
 		if err != nil {
 			return err
@@ -125,6 +136,7 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 		Stderr:         deps.Stderr,
 		Ready:          deps.Ready,
 		AllowlistStore: allowlistStore,
+		SelfProtection: selfProtection,
 		// 固定本次会话的数据根：store 文件与 run.json/control.token 必须落在同一个
 		// 目录（此前仅在 deps.DataDir 显式指定时固定；现在 store 也需要它）。
 		Setup: func(d *gateway.Deps) error {

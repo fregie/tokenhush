@@ -53,6 +53,13 @@ const (
 
 	// warnPrefix is the stable, greppable prefix of every degradation warning.
 	warnPrefix = "tokenhush: allowlist: "
+
+	// rawContentMaxBytes bounds RawContent's read of the persisted file. The
+	// store writes a tiny document, so this is a defence-in-depth cap against a
+	// corrupted or hostile file, not a realistic limit; a file at or above the
+	// bound is reported as an error rather than silently truncated (a truncated
+	// value would not match the file a reader sees).
+	rawContentMaxBytes = 1 << 20
 )
 
 // Store is the runtime-mutable allowlist. It is safe for concurrent use: all
@@ -141,6 +148,50 @@ func (s *Store) Entries() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.entries)
+}
+
+// RawContent returns the current bytes of the persisted file exactly as a
+// reader would see them (the same bytes persist wrote), or (nil, nil) when the
+// file does not exist yet. It is the C8 exclusion source: the gateway excludes
+// the allowlist file's current content so a model cannot read or replay the
+// file itself. The value is deliberately the on-disk document, not a
+// re-serialisation: it must be byte-identical to what an attacker reading the
+// file would obtain, and the persisted document holds runtime entries only.
+//
+// The read runs under s.mu, so it never observes a half-written file (writes
+// are atomic temp+rename) and never interleaves with Add/Remove. It is bounded
+// by rawContentMaxBytes and reports an over-bound file as an error instead of
+// truncating it. A nil store returns (nil, nil).
+func (s *Store) RawContent() ([]byte, error) {
+	if s == nil {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	file, err := os.Open(s.path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("%s: open for content read: %w", s.path, err)
+	}
+	defer func() { _ = file.Close() }()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("%s: stat for content read: %w", s.path, err)
+	}
+	if info.Size() > rawContentMaxBytes {
+		return nil, fmt.Errorf("%s: %d bytes exceeds the %d-byte content bound",
+			s.path, info.Size(), rawContentMaxBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, rawContentMaxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("%s: content read: %w", s.path, err)
+	}
+	if len(data) > rawContentMaxBytes {
+		return nil, fmt.Errorf("%s: exceeds the %d-byte content bound", s.path, rawContentMaxBytes)
+	}
+	return data, nil
 }
 
 // Add inserts a runtime entry and persists the runtime set atomically. An

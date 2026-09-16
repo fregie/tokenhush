@@ -232,6 +232,13 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	deps.Token = token
 
+	// W6.1: the session token is generated here, AFTER the caller built the
+	// pipeline (ADR-0012 freezes "bind before writing the token", so the token
+	// cannot exist at construction time). Install the C8 narrow exclusion set
+	// now: the token value plus the current <DataDir>/allowlist.json content.
+	// A missing file contributes nothing and never fails startup.
+	installSelfProtectionExclusions(opts.Pipeline, deps.Token, opts.AllowlistStore, opts.Stderr)
+
 	state := RunState{
 		PID:       os.Getpid(),
 		Port:      port,
@@ -305,6 +312,13 @@ func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt 
 		proxy.WithControlAllowlist(opts.AllowlistStore),
 		proxy.WithControlAudit(func(ev proxy.ControlAuditEvent) {
 			recordAllowlistMutation(opts.Sink, ev)
+			// W6.1: a runtime allowlist mutation rewrites
+			// <DataDir>/allowlist.json, so refresh the C8 exclusion set to the
+			// file's new bytes. The callback runs synchronously after a
+			// successful mutation, before the HTTP response, so the refreshed
+			// set is observable by the next request. A refresh failure is
+			// metadata-only and non-fatal: the mutation already succeeded.
+			installSelfProtectionExclusions(opts.Pipeline, deps.Token, opts.AllowlistStore, opts.Stderr)
 		}),
 	)
 	guardedControl := proxy.HostAllowlist(port)(
@@ -360,4 +374,56 @@ func recordAllowlistMutation(sink audit.AuditSink, ev proxy.ControlAuditEvent) {
 		Client:    ev.Source,
 		Detectors: []string{fmt.Sprintf("entries:%d", ev.Count)},
 	})
+}
+
+// allowlistContentSource is the optional C7 store extension the gateway uses to
+// read the persisted allowlist file's current bytes. It is a separate,
+// structural interface rather than a method on the frozen AllowlistStore
+// contract, so the ADR-0012 seam is unchanged; pkg/allowlist.Store implements
+// it. A store that does not implement it simply contributes no file-content
+// exclusion (the token value is still installed).
+type allowlistContentSource interface {
+	RawContent() ([]byte, error)
+}
+
+// selfProtectionExclusionValues assembles the frozen C8 narrow exclusion set:
+// the session control-token value plus the allowlist store's current file
+// content. Exactly those two values — never allowlist entry values, which would
+// cancel C7. A missing file contributes nothing. The store's RawContent is
+// bounded and reports an over-bound or unreadable file as an error, so the
+// caller can warn; the token is still returned so the exclusion is never
+// silently dropped in full.
+func selfProtectionExclusionValues(token string, store AllowlistStore) ([][]byte, error) {
+	values := make([][]byte, 0, 2)
+	if token != "" {
+		values = append(values, []byte(token))
+	}
+	source, ok := store.(allowlistContentSource)
+	if !ok {
+		return values, nil
+	}
+	content, err := source.RawContent()
+	if err != nil {
+		return values, err
+	}
+	if len(content) > 0 {
+		values = append(values, content)
+	}
+	return values, nil
+}
+
+// installSelfProtectionExclusions derives and installs the C8 exclusion set on
+// the pipeline. It is called once the session token exists and again after every
+// allowlist mutation. A read failure is reported on warn (never fatal: startup
+// and the mutation must not fail because the exclusion refresh could not read
+// the file) and a nil pipeline is a no-op.
+func installSelfProtectionExclusions(pipeline *proxy.Pipeline, token string, store AllowlistStore, warn io.Writer) {
+	if pipeline == nil {
+		return
+	}
+	values, err := selfProtectionExclusionValues(token, store)
+	if err != nil && warn != nil {
+		fmt.Fprintf(warn, "tokenhush: self-protection: read allowlist file content: %v\n", err)
+	}
+	pipeline.SetSelfProtectionExclusions(values)
 }

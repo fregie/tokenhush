@@ -13,6 +13,53 @@ import (
 // finding type, so the token renders as __PII_self_protection_<digest>__.
 const selfProtectionExclusionType = "self_protection"
 
+// exclusionSet is the immutable value published through
+// Pipeline.exclusionValues. Publishing a whole new value is what makes a
+// runtime refresh race-free: readers Load once per request and see either the
+// old or the new set, never a mix.
+type exclusionSet struct {
+	values [][]byte
+}
+
+// SetSelfProtectionExclusions installs the current C8 narrow exclusion set: the
+// session control-token value plus the current <DataDir>/allowlist.json content
+// (exactly those two values; never allowlist entry values). The gateway calls
+// it once the session token exists, and again whenever the allowlist changes,
+// so the same state the force-redaction step reads stays current.
+//
+// It replaces the previously installed set (the construction-time
+// PipelineConfig.Exclusions/ControlToken are merged in only at construction),
+// copies every value so the caller keeps ownership, drops empty values and
+// de-duplicates. It is safe on a nil receiver and a no-op when self-protection
+// is disabled or the input is empty. Calls are safe concurrently with
+// in-flight requests and with each other: the set is published through an
+// atomic pointer, and the engine's never-backfill registration only grows (it
+// takes its own lock), so a value once excluded stays excluded.
+func (p *Pipeline) SetSelfProtectionExclusions(values [][]byte) {
+	if p == nil || !p.selfProtectionEnabled {
+		return
+	}
+	current := exclusionValues(values, "")
+	p.exclusionValues.Store(&exclusionSet{values: current})
+	if len(current) > 0 {
+		p.engine.ExcludeFromBackfill(current...)
+	}
+}
+
+// selfProtectionValues returns the currently installed exclusion set, or nil.
+// The returned slices must be treated as read-only: they are shared with every
+// concurrent reader of the same published set.
+func (p *Pipeline) selfProtectionValues() [][]byte {
+	if p == nil {
+		return nil
+	}
+	set := p.exclusionValues.Load()
+	if set == nil {
+		return nil
+	}
+	return set.values
+}
+
 // exclusionValues merges the two frozen exclusion-set sources (the
 // PipelineConfig.Exclusions values and the session control-token value),
 // dropping empty entries and de-duplicating while preserving first-seen order.
@@ -59,7 +106,11 @@ func exclusionValues(exclusions [][]byte, controlToken string) [][]byte {
 // It is a no-op (identical body and walk) when self-protection is disabled, the
 // exclusion set is empty, or nothing matched.
 func (p *Pipeline) forceRedactExclusions(body []byte, walked []protocol.Leaf) ([]byte, []protocol.Leaf, error) {
-	if p == nil || !p.selfProtectionEnabled || len(p.exclusionValues) == 0 {
+	if p == nil || !p.selfProtectionEnabled {
+		return body, walked, nil
+	}
+	values := p.selfProtectionValues()
+	if len(values) == 0 {
 		return body, walked, nil
 	}
 	rewriter := &leafRewriter{
@@ -102,7 +153,7 @@ func (p *Pipeline) applyExclusionPlaceholders(content []byte) ([]byte, bool) {
 // and de-duplicated at construction.
 func (p *Pipeline) exclusionSpans(content []byte) []redact.Redaction {
 	var spans []redact.Redaction
-	for _, value := range p.exclusionValues {
+	for _, value := range p.selfProtectionValues() {
 		if len(value) == 0 || len(value) > len(content) {
 			continue
 		}
