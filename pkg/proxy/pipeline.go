@@ -432,6 +432,16 @@ func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 		return body, nil
 	}
 	if walked, err := protocol.Walk(body); err == nil {
+		// W6.3 mutation-channel guard. It rewrites the offending tool call's
+		// arguments to the refusal notice and returns the fresh walk; the value
+		// policy, ResponseContent transformers and backfill below then run on
+		// its output, so the frozen transformers -> backfill order is intact. A
+		// match is never a whole-response error: the body keeps flowing, with
+		// only the offending call(-s) rewritten.
+		body, walked, err = p.guardResponseToolCalls(body, walked)
+		if err != nil {
+			return nil, err
+		}
 		decision, evalErr := p.policy.Evaluate(contentDocument(extension.ResponseContent, tool, walked))
 		if evalErr != nil {
 			return nil, fmt.Errorf("proxy: evaluate response content: %w", evalErr)

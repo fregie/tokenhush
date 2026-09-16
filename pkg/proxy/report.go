@@ -26,6 +26,14 @@ const (
 	// the plaintext upstream. The event carries the matched placeholder token
 	// in Placeholder and nothing else.
 	RedactionActionEgressBlocked = "egress_blocked"
+	// RedactionActionMutationChannelBlocked marks one client-bound tool call
+	// whose arguments reached the C8 mutation channel and were rewritten to the
+	// refusal notice (W6.3, buffered response path). The response itself is
+	// still delivered per tool call, so this is not a RedactionActionBlock. The
+	// event carries only the matched channel class in Type — never the
+	// arguments, a JSON path or any byte of the refused content. It is the
+	// metadata hook W6.5 turns into an audit row and a status counter.
+	RedactionActionMutationChannelBlocked = "mutation_channel_blocked"
 )
 
 // Redaction directions for RedactionEvent.Direction.
@@ -167,5 +175,22 @@ func (p *Pipeline) noteResponseWalkFailure(action string) {
 		Action:    action,
 		Direction: RedactionDirectionResponse,
 		Phase:     extension.ResponseContent.String(),
+	})
+}
+
+// reportMutationChannelBlock emits one metadata-only event for a tool call the
+// C8 guard rewrote to the refusal notice. W6.5 consumes this event for its
+// audit row and status counter; W6.3 adds no counter of its own. The matched
+// channel class is metadata, and no arguments, path or content byte is
+// reported.
+func (p *Pipeline) reportMutationChannelBlock(class string) {
+	if p == nil {
+		return
+	}
+	p.report(RedactionEvent{
+		Action:    RedactionActionMutationChannelBlocked,
+		Direction: RedactionDirectionResponse,
+		Phase:     extension.ResponseContent.String(),
+		Type:      class,
 	})
 }
