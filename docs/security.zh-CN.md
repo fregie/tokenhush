@@ -80,6 +80,61 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 **决策留痕。** 选择新增独立的 `WalkKeys` API，而不是把键位塞进 `protocol.Walk` 的 `Leaf` 契约，是一项刻意的决定（加固计划中的 O3 决策）。否决“扩展 `Leaf`”的理由是：那会改动 `pkg/extension` 的 V1 稳定公开面，并破坏“叶子=值”契约（`architecture.zh-CN.md`）。键位机制由 `pkg/protocol` 测试与 `pkg/proxy` 的键位测试锁定；外围加固工作所依赖的跨仓装配契约冻结在私有 Pro 仓库的 ADR-0012 增补 A2。
 
+## 🔒 变更通道自保护
+
+白名单是运行期唯一能对某个具体值停止脱敏的入口，因此变更它的通道（加固计划中的组件 C8）受到守护。守护是 **high-confidence interception（best-effort，高置信拦截）**：它只认一组固定、显式枚举的模式，攻击者若把命令编码、拆分、包装或间接调用，就能绕过。它**不是**封闭保证，本节任何一句都不应被读成封闭保证。白名单始终只能由人类操作者经已鉴权的环回控制面变更；模型发起的、伸向该通道的工具调用在尽力而为的基础上被拒绝。
+
+**变更通道。** 有三条路径能改白名单，守护的目标即这三条：
+
+- `tokenhush allowlist` CLI（`tokenhush allowlist list|add|remove`）；
+- 环回控制面（控制端口上的 `GET`/`POST`/`DELETE /allowlist`）；
+- 直接写 `<DataDir>/allowlist.json`。
+
+**守护做什么。** 变更通道检测运行在响应方向，针对模型发起的工具调用参数。模式集是显式、可枚举、可审计的（`pkg/proxy` 的 `MutationChannelPatternInventory()`）。
+
+- 全缓冲路径逐工具调用检查其 `arguments` 字符串（含其嵌套叶）；命中时**只把该次工具调用**的参数改写为明确的拒绝说明。同一响应里的其它工具调用不受影响，也不返回整响应 `403`。
+- 流式（SSE）路径按 path 累积某个工具调用的流式参数，**上界为 `SSEGuardCap`（64 KiB）**，再做同样的逐工具调用拒绝；命中之后到达的分片被丢弃。该上界刻意小于回填保留量（`sseBackfillMaxHoldbackBytes`，256 KiB），以保证判定真实可达。
+- 守护由 `self_protection.enabled` 与 `self_protection.modes` 门控；`enabled: false` 是显式退出。
+
+**排除集。** 两个值在**出站方向、检测器运行之前**被强制脱敏（因此白名单无法豁免它们），且**绝不在入站方向被还原**：
+
+- 本次会话的 control token 值，在 token 生成后安装，并在每次白名单变更后刷新；
+- `<DataDir>/allowlist.json` 的字节。
+
+这一对窄口径值是通用回填行为唯一的例外；其它任何值的回填行为逐字节未变。排除集**刻意不含**白名单条目的值，因此操作者已放行的值仍会通过。
+
+**可观测性。** 每次拒绝与每次白名单变更都只留元数据，不含明文、不含条目值；`tokenhush status` 暴露以下计数：`self_protection_interceptions`、`allowlist_mutations`、`stream_guard_refusals`、`stream_guard_fail_closed`、`egress_blocks`。
+
+### 已知限制与不覆盖类别（汇总）
+
+这是本次加固工作已知边界的**唯一汇总清单**。其中没有任何一条被写成已闭合；全文口径是 **high-confidence interception（高置信拦截）**。机器可读来源：`pkg/proxy` 的 `KnownUncoveredMutationChannels()` 与 `MutationChannelPatternInventory()`（镜像于 `pkg/proxy/testdata/known_uncovered_mutations.txt`），以及 `pkg/redact` 的 `KnownUncoveredEncodings()`（镜像于 `pkg/redact/testdata/known_uncovered_encodings.txt`）。下方「已知限制」一节记录的检测器层面边界同样继续生效。
+
+**变更通道自保护**
+
+1. **base64 及其它编码命令。** 守护只匹配字面命令形状，匹配前不解码命令，因此由 shell 在运行期解码（base64、hex 或任何其它编码）的命令文本不在覆盖内。
+2. **经脚本文件间接执行。** 守护看到的是参数文本，不是文件内容，因此命令若只存在于工具调用所引用的脚本文件里，不在覆盖内。
+3. **多步拼接。** 跨多次工具调用拼出的命令，没有任何单个候选携带完整命令形状。同一次工具调用内跨多个叶拆出的命令同样不在流式路径的覆盖内（该路径只拼接该 path 的原始分片）；全缓冲路径额外尝试对该次调用的嵌套叶做无分隔拼接与单空格拼接，但那只是针对常见拆分形态的启发式，不是闭合。
+4. **OpenAI `arguments` 字符串字段之外的参数。** 守护作用域要求 JSON Pointer 末段恰为 `arguments`。Anthropic 形态的 `input` 对象字段名与形状都不同，两条路径都不扫描。
+5. **交错流与缺少终止事件。** SSE 上，若某个工具调用的 arguments path 与另一 path 的事件交错，它可能被提前判为干净。流在 arguments path 仍活跃时结束且无终止事件，则该次调用按拒绝处理（fail-closed）。
+6. **未枚举的包装器与写手段。** 模式集刻意不枚举所有 shell 包装器或解释器（例如 `ssh`、`xargs`、`expect`），也不枚举所有写手段（例如编辑器保存、自写程序或未列出的 CLI）。对数据目录只覆盖文档化的路径拼写；symlink、bind mount 之类间接拼写不在覆盖内。
+7. **无法解析的响应体。** 响应体若无法被 walker 解析，守护不在其上运行（见下方响应路径策略）。
+8. **保守的误报。** 同一次工具调用的多个嵌套叶若恰好拼成命令形状，该次调用会被拒绝。方向是 fail-closed、按工具调用、非整响应阻断，代价可接受。
+
+**出站复核（编码）**
+
+9. **覆盖是一组固定的解码器枚举，而非语法。** 每一种被覆盖的形态对应 `NormalizeCandidates` 解码器集合中的一项；刻意**不**覆盖的类别包括：任意多层自定义或非标准编码、深于 `NormalizeMaxRounds`（4）的嵌套、大于 `NormalizeMaxInputBytes`（256 KiB，完全不扫描）的输入、`od -tu1` 未加 `-v` 的输出（连续十六个相同字节会折叠为 `*`）、超过 `NormalizeMaxCandidateBytes`（8192）时跨候选窗口切割的 payload、有口令或加密的容器、隐写或有损变换，以及抽取器无法界定的拆分。
+10. **体积上界。** 出站复核对大于 `egressRecheckMaxBodyBytes`（128 KiB）的 body 跳过。超过该上界的 body 仍会出站且不经复核；这是已文档化的边界，绝不是放行。
+11. **非 JSON 请求体。** 显式非 JSON 的请求保持文档化的逐字节直通且不运行 walk，因此出站复核不对其运行。
+
+**键位扫描**
+
+12. **`high_entropy` 对纯 hex 的排除同样作用于键域。** 纯 hex 的密钥置于对象键不会被拦，与值域是同一排除。
+
+**失败策略与已接受代价**
+
+13. **响应与 SSE 路径刻意不 fail-closed。** 无法解析的响应体仍逐字节转发、回填照旧；该跳过被计数（`Pipeline.ResponseWalkFailures()`）并以仅元数据事件上报，但不阻断。
+14. **超 cap 的合法工具调用被拒绝。** 流式工具调用的参数累积到 `SSEGuardCap`（64 KiB）仍未完成判定时，该次调用按拒绝处理（fail-closed）并计数（`stream_guard_fail_closed`）。这是已接受的代价，绝不是放行。
+
 ## ⚠️ 已知限制
 
 如实列出，以免此处任何一句被读成已闭合的保证。全文的诚实口径是**高置信拦截**。

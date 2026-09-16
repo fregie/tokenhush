@@ -78,6 +78,61 @@ Object keys are **not** `Leaf`s and never enter the document model defined by `p
 
 **Decision record.** Adding a separate `WalkKeys` API, instead of extending `protocol.Walk`'s `Leaf` contract with key positions, is a deliberate decision (the O3 decision in the hardening plan). Extending `Leaf` was rejected because it would change `pkg/extension`'s V1-stable public surface and break the "leaf = value" contract (`architecture.md`). The key-position mechanism is pinned by `pkg/protocol` tests and by `pkg/proxy`'s key tests; the cross-repo assembly contract for the surrounding hardening work is frozen in the private Pro repository's ADR-0012 amendment A2.
 
+## 🔒 Mutation-channel self-protection
+
+The allowlist is the one runtime affordance that can stop a specific value from being redacted, so the channel that changes it (component C8 in the hardening plan) is guarded. The guard is **high-confidence interception, best-effort**: it recognises a fixed, explicitly enumerated pattern set, and an adversary who encodes, splits, wraps or indirectly invokes the channel can evade it. It is **not** a closed guarantee, and nothing in this section should be read as one. The allowlist remains changeable only by the human operator, through the authenticated loopback control plane; a model-originated tool call that reaches for that channel is refused on a best-effort basis.
+
+**The change channel.** Three ways to change the allowlist, all of which the guard aims at:
+
+- the `tokenhush allowlist` CLI (`tokenhush allowlist list|add|remove`);
+- the loopback control plane (`GET`/`POST`/`DELETE /allowlist` on the control port);
+- a direct write to `<DataDir>/allowlist.json`.
+
+**What the guard does.** Mutation-channel detection runs on the response side, over model-originated tool-call arguments. The pattern set is explicit, enumerable and auditable (`MutationChannelPatternInventory()` in `pkg/proxy`).
+
+- On the buffered path it inspects each tool call's `arguments` string, including its nested leaves, and on a match rewrites **only that tool call's** arguments to an explicit refusal notice. Other tool calls in the same response are untouched, and no response-wide `403` is returned.
+- On the streaming (SSE) path it accumulates a tool call's streamed arguments **per path, bounded by `SSEGuardCap` (64 KiB)**, then applies the same per-tool-call refusal; fragments that arrive after a hit are dropped. The cap is deliberately smaller than the backfill holdback (`sseBackfillMaxHoldbackBytes`, 256 KiB) so the decision is reachable.
+- The guard is gated by `self_protection.enabled` and `self_protection.modes`; `enabled: false` is an explicit opt-out.
+
+**The exclusion set.** Two values are force-redacted on the outbound direction, **before the detectors run** (so the allowlist cannot exempt them), and are **never restored inbound**:
+
+- the session's control-token value, installed once the token exists and refreshed on every allowlist mutation;
+- the bytes of `<DataDir>/allowlist.json`.
+
+This narrow pair is the only exception to the general backfill behaviour; every other value's backfill behaviour is byte-for-byte unchanged. The set deliberately does **not** contain allowlist entry values, so a value the operator has allowed still passes through.
+
+**Observability.** Every refusal and every allowlist change is recorded as metadata only, with no plaintext and no entry values, and `tokenhush status` exposes the counts: `self_protection_interceptions`, `allowlist_mutations`, `stream_guard_refusals`, `stream_guard_fail_closed` and `egress_blocks`.
+
+### Known limits and uncovered classes (aggregate)
+
+This is the single aggregate list for the hardening work's known boundaries. None of it is closed; the register throughout is **high-confidence interception**. The machine-readable sources are `KnownUncoveredMutationChannels()` and `MutationChannelPatternInventory()` in `pkg/proxy` (mirrored in `pkg/proxy/testdata/known_uncovered_mutations.txt`), and `KnownUncoveredEncodings()` in `pkg/redact` (mirrored in `pkg/redact/testdata/known_uncovered_encodings.txt`). The detector-focused boundaries recorded under "Known limitations" below stay in force as well.
+
+**Mutation-channel self-protection**
+
+1. **Base64 and other encoded commands.** The guard matches the literal command shape. It does not decode the command before matching, so command text a shell decodes at run time (base64, hex, or any other encoding) is not covered.
+2. **Indirect execution through a script file.** The guard sees the argument text, not the file's contents, so a command that lives inside a script the tool call merely names is not covered.
+3. **Multi-step assembly.** A command assembled across separate tool calls has no single candidate carrying the full command shape. A command split across several leaves of one tool call is likewise not covered on the streaming path, which joins only that path's raw fragments; the buffered path additionally tries no-separator and single-space joins of a call's nested leaves, but that is a heuristic for the common split shapes, not a closure.
+4. **Arguments outside the OpenAI `arguments` string field.** The guard scopes on a JSON Pointer whose last segment is exactly `arguments`. An Anthropic-shaped `input` object, which has a different field name and shape, is not scanned on either path.
+5. **Interleaved streams and absent terminators.** On SSE, a tool call whose arguments path is interleaved with another path's events can be judged clean early. A stream that ends without a terminator while an arguments path is still active is refused (fail-closed).
+6. **Unenumerated wrappers and write mechanisms.** The pattern set deliberately does not enumerate every shell wrapper or interpreter (for example `ssh`, `xargs` or `expect`), nor every write mechanism (for example an editor save, a custom program or an unlisted CLI). For the data directory, only the documented path spellings are covered; an indirect spelling such as a symlink or a bind mount is not.
+7. **Unparseable response bodies.** If a response body cannot be walked, the guard does not run on it (see the response-path policy below).
+8. **A conservative false positive.** When nested leaves of one tool call join into a command shape by coincidence, the call is refused. The direction is fail-closed, per tool call and not a response-wide block, so the cost is accepted.
+
+**Outbound re-check (encodings)**
+
+9. **Coverage is a fixed decoder enumeration, not a grammar.** Each covered form is one entry in the decoder set of `NormalizeCandidates`; the classes deliberately **not** covered include arbitrary multi-layer custom or non-standard encodings, nesting deeper than `NormalizeMaxRounds` (4), inputs larger than `NormalizeMaxInputBytes` (256 KiB, which are not scanned at all), `od -tu1` output produced without `-v` (where a run of sixteen identical bytes collapses to `*`), a payload that straddles a candidate window above `NormalizeMaxCandidateBytes` (8192), password-protected or encrypted containers, steganographic or lossy transforms, and splits the extractor cannot bound.
+10. **Body-size bound.** The outbound re-check is skipped for a body larger than `egressRecheckMaxBodyBytes` (128 KiB). A body above that bound still egresses, without a re-check; this is a documented boundary, never a pass.
+11. **Non-JSON request bodies.** A request that is explicitly non-JSON keeps the documented byte-for-byte passthrough and runs no walk, so the outbound re-check does not run for it.
+
+**Key-position scanning**
+
+12. **`high_entropy`'s pure-hex exclusion also applies in the key domain.** A secret that is pure hex and placed in an object key is not blocked, the same exclusion as in the value domain.
+
+**Failure policy and accepted cost**
+
+13. **The response and SSE path is deliberately not fail-closed.** An unparseable response body is forwarded byte for byte and backfill still runs; the skip is counted (`Pipeline.ResponseWalkFailures()`) and reported as a metadata-only event, but it is not blocked.
+14. **An over-cap legal tool call is refused.** When a streamed tool call's arguments reach `SSEGuardCap` (64 KiB) without a decision, the tool call is refused fail-closed and counted (`stream_guard_fail_closed`). This is an accepted cost, never a pass.
+
 ## ⚠️ Known limitations
 
 Stated plainly, so nothing here reads as a closed guarantee. The honest register throughout is **high-confidence interception**.
