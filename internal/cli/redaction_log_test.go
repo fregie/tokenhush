@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,101 @@ import (
 	"testing"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/proxy"
 )
+
+// TestRedactionLogRendersEveryAction pins the four-action rendering. A
+// walk-failure event must never be rendered as a redaction: the response body
+// was forwarded unchanged, so the line says exactly that and prints none of the
+// empty detector fields. The pre-existing redact and block lines must stay
+// byte-identical.
+func TestRedactionLogRendersEveryAction(t *testing.T) {
+	cases := []struct {
+		name        string
+		event       proxy.RedactionEvent
+		want        string
+		walkFailure bool
+	}{
+		{
+			name: "response_walk_failed",
+			event: proxy.RedactionEvent{
+				Action:    proxy.RedactionActionResponseWalkFailed,
+				Direction: proxy.RedactionDirectionResponse,
+				Phase:     "response_content",
+			},
+			want:        "tokenhush: unparseable response body skipped: response_walk_failed (forwarded unchanged)\n",
+			walkFailure: true,
+		},
+		{
+			name: "sse_walk_failed",
+			event: proxy.RedactionEvent{
+				Action:    proxy.RedactionActionSSEWalkFailed,
+				Direction: proxy.RedactionDirectionResponse,
+				Phase:     "response_content",
+			},
+			want:        "tokenhush: unparseable response body skipped: sse_walk_failed (forwarded unchanged)\n",
+			walkFailure: true,
+		},
+		{
+			name: "redact_line_unchanged",
+			event: proxy.RedactionEvent{
+				Action:    proxy.RedactionActionRedact,
+				Direction: proxy.RedactionDirectionRequest,
+				Phase:     "request_content",
+				Type:      "api_key",
+				Length:    24,
+				Masked:    "sk-p<masked>",
+			},
+			want: "tokenhush: redacted request api_key (len=24) sk-p<masked>\n",
+		},
+		{
+			name: "block_line_unchanged",
+			event: proxy.RedactionEvent{
+				Action:    proxy.RedactionActionBlock,
+				Direction: proxy.RedactionDirectionRequest,
+				Phase:     "request_content",
+				Type:      "api_key",
+			},
+			want: "tokenhush: blocked request by content policy: api_key\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			newRedactionLogger(&buf).Report(tc.event)
+			line := buf.String()
+			if line != tc.want {
+				t.Fatalf("rendered line = %q, want %q", line, tc.want)
+			}
+			if !tc.walkFailure {
+				return
+			}
+			if strings.Contains(line, "redacted") {
+				t.Fatalf("walk-failure line claims a redaction: %q", line)
+			}
+			if !strings.Contains(line, tc.event.Action) {
+				t.Fatalf("line %q does not name the action constant %q", line, tc.event.Action)
+			}
+			if !strings.Contains(line, "forwarded unchanged") {
+				t.Fatalf("line %q does not state the body was forwarded unchanged", line)
+			}
+			if strings.Contains(line, "(len=") {
+				t.Fatalf("line %q prints an empty-field artifact", line)
+			}
+			if strings.Contains(line, "  ") {
+				t.Fatalf("line %q has a stray double space", line)
+			}
+		})
+	}
+
+	// Verbatim rendering demo for the evidence file (`go test -v`).
+	for _, tc := range cases {
+		var buf bytes.Buffer
+		newRedactionLogger(&buf).Report(tc.event)
+		t.Logf("rendered[%s] = %q", tc.name, buf.String())
+	}
+}
 
 // TestRedactionLogMasksSecret drives the default-on redaction log through the
 // real daemon and a captured process stream. It is the counterpart to

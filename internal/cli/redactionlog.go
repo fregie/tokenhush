@@ -11,7 +11,10 @@ import (
 // redactionLogger renders the pipeline's RedactionEvents as one masked line
 // each on the daemon's diagnostics stream. A redact line carries the detector
 // type, the matched byte length and the masked value (never the value); a block
-// line carries only the detector type, because a block aborts before egress.
+// line carries only the detector type, because a block aborts before egress. A
+// walk-failure line names the action and says the body was forwarded unchanged:
+// it must never claim a redaction, and it prints none of the empty detector
+// fields (a walk failure skips the response body, it does not redact it).
 //
 // The pipeline calls Report from concurrent request goroutines, so a mutex
 // serialises whole-line writes, and a recover guard keeps a rendering bug from
@@ -39,6 +42,8 @@ func (l *redactionLogger) Report(ev proxy.RedactionEvent) {
 	switch ev.Action {
 	case proxy.RedactionActionBlock:
 		fmt.Fprintf(l.w, "tokenhush: blocked %s by content policy: %s\n", ev.Direction, ev.Type)
+	case proxy.RedactionActionResponseWalkFailed, proxy.RedactionActionSSEWalkFailed:
+		fmt.Fprintf(l.w, "tokenhush: unparseable %s body skipped: %s (forwarded unchanged)\n", ev.Direction, ev.Action)
 	default:
 		fmt.Fprintf(l.w, "tokenhush: redacted %s %s (len=%d) %s\n",
 			ev.Direction, ev.Type, ev.Length, ev.Masked)
