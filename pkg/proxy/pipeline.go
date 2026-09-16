@@ -196,6 +196,25 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("proxy: evaluate request content: %w", err)
 	}
+	// Key-position fail-closed (W1.2) runs after the value evaluation but
+	// before the value decision is applied, so a key hit can never be masked by
+	// a successful value redact. Keys are never rewritten: a surviving finding
+	// blocks fail-closed, otherwise the value decision below applies unchanged.
+	// See keyguard.go for the frozen post-filter mechanism, the allowlist
+	// interaction and the recorded pure-hex limitation.
+	keyFindings, err := p.keyFindings(body)
+	if err != nil {
+		return nil, err
+	}
+	if len(keyFindings) > 0 {
+		keyDecision := extension.Decision{
+			Phase:    extension.RequestContent,
+			Action:   extension.Block,
+			Findings: keyFindings,
+		}
+		p.reportBlock(keyDecision)
+		return nil, &BlockedError{Phase: extension.RequestContent, Findings: keyFindings}
+	}
 	switch decision.Action {
 	case extension.Block:
 		p.reportBlock(decision)
