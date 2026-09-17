@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("event: delta\nid: 7\ndata: {\"a\":1}\ndata: tail\n\n")

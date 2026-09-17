@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"token\":\"c2VjcmV0\",\"payload\":\"eyJhbGciOiJIUzI1NiJ9\"}")

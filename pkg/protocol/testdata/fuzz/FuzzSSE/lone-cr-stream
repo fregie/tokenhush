@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("data: cr\rid: 3\rdata: lf\n\n")

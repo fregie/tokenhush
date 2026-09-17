@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"messages\":[{\"role\":\"user\",\"content\":{\"text\":\"hello\"}}],\"token\":\"c2VjcmV0\"}")
