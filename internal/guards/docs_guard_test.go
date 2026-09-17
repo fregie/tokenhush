@@ -15,8 +15,9 @@
 //
 // "Structural" means: command registrations are read from the AST, the
 // security registers are parsed as markdown tables and compared as sets
-// against the frozen register below, and each registered owner file must
-// exist. A grep for a name alone would satisfy none of these.
+// against the frozen register below, each registered owner file must exist
+// and declare the named test its row advertises. A grep for a name alone
+// would satisfy none of these.
 package guards
 
 import (
@@ -290,6 +291,23 @@ func docsInvariantViolations(text string) []string {
 	return out
 }
 
+// docsDeclaredTests parses the Go file at path and returns the set of its
+// top-level function names. The invariant table is the audit's ground truth,
+// so a named test that is not declared at its owner path is a violation.
+func docsDeclaredTests(path string) (map[string]bool, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	names := map[string]bool{}
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil {
+			names[fn.Name.Name] = true
+		}
+	}
+	return names, nil
+}
+
 // docsResidualRiskViolations compares the residual-risk table in security.md
 // with the frozen register. Name must match exactly, and every registered
 // detail fragment must appear inside that risk's own explanation cell.
@@ -506,8 +524,18 @@ func TestDocsGuardProductTree(t *testing.T) {
 	}
 
 	for _, invariant := range d8Invariants {
-		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(invariant.File))); err != nil {
+		owner := filepath.Join(root, filepath.FromSlash(invariant.File))
+		if _, err := os.Stat(owner); err != nil {
 			t.Errorf("invariant %d owner file %s is missing: %v", invariant.Number, invariant.File, err)
+			continue
+		}
+		declared, err := docsDeclaredTests(owner)
+		if err != nil {
+			t.Errorf("invariant %d owner file %s: %v", invariant.Number, invariant.File, err)
+			continue
+		}
+		if !declared[invariant.Test] {
+			t.Errorf("invariant %d named test %s is not declared in %s", invariant.Number, invariant.Test, invariant.File)
 		}
 	}
 

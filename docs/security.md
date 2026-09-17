@@ -53,8 +53,10 @@ What each one means in practice:
 2. **No request/response plaintext on disk; metadata only.** The audit seam is a
    single write method and writes metadata-only records; the default sink is a
    no-op that persists nothing. The redaction log is masked, stderr-only and
-   never persisted. An end-to-end on-disk scan completes this invariant in the
-   final acceptance wave.
+   never persisted. The named sink-level test `TestInvariant2NoPlaintextOnDisk`
+   lives in `pkg/audit/invariants_test.go`; the run-level half,
+   `TestOndiskGuardRunLevelPlaintext` in `internal/guards/ondisk_guard_test.go`,
+   drives the real binary and scans everything the run could have written.
 3. **No root certificate, no MITM by default.** tokenhush never terminates TLS.
    The absence guard scans production Go source for every shape a
    certificate-install or MITM path would need — TLS listeners, key pairs, cert

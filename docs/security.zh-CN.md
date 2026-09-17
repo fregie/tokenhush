@@ -45,7 +45,10 @@
    且已携带已知占位符的 body 原样转发。
 2. **请求/响应明文不落盘；只落元数据。** 审计 seam 只有一个写方法，只写元数据记录；
    默认 sink 是 no-op，不持久化任何东西。脱敏日志经过掩码、只写 stderr、永不落盘。
-   端到端的磁盘扫描在最终验收波中补齐这条不变量。
+   具名 sink 级测试 `TestInvariant2NoPlaintextOnDisk` 位于
+   `pkg/audit/invariants_test.go`；运行级另一半 `TestOndiskGuardRunLevelPlaintext`
+   位于 `internal/guards/ondisk_guard_test.go`，驱动真实二进制并扫描该次运行可能
+   写入的一切。
 3. **默认无根证书、无 MITM。** tokenhush 从不终止 TLS。absence 守卫扫描生产 Go
    源码中证书安装或 MITM 路径所需的每一种形状——TLS 监听器、密钥对、证书池、
    `tls.Config` 与 `http.Server` 字面量、内嵌证书、MITM 风格的配置键——一旦出现

@@ -1,8 +1,9 @@
 // On-disk guard: no request or response plaintext may land on disk. The
 // scanner is exercised with a runtime-generated secret so the guard can never
-// match its own source; the sink-level half lives in
-// pkg/audit/invariants_test.go and the run-level half below drives the real
-// binary end to end and scans everything the run could have written.
+// match its own source; the sink-level half is TestInvariant2NoPlaintextOnDisk
+// in pkg/audit/invariants_test.go and the run-level half below
+// (TestOndiskGuardRunLevelPlaintext) drives the real binary end to end and
+// scans everything the run could have written.
 package guards
 
 import (
@@ -209,12 +210,15 @@ func freeLoopbackPort(t *testing.T) int {
 	return port
 }
 
-// TestInvariant2NoPlaintextOnDisk is the run-level half of invariant 2: it
+// TestOndiskGuardRunLevelPlaintext is the run-level half of invariant 2: it
 // starts the real binary against a loopback echo upstream, drives one request
 // carrying a runtime-generated secret through the live gateway, and scans both
 // the directory the run wrote and the repository tree for that secret in
-// plaintext. The planted file proves the run-level scan has teeth.
-func TestInvariant2NoPlaintextOnDisk(t *testing.T) {
+// plaintext. It is complementary to - not a substitute for - the sink-level
+// named test TestInvariant2NoPlaintextOnDisk in pkg/audit/invariants_test.go,
+// which the invariant table names at that path. The planted file proves the
+// run-level scan has teeth.
+func TestOndiskGuardRunLevelPlaintext(t *testing.T) {
 	secret := invariant2Secret(t)
 	repo := repoRoot(t)
 
