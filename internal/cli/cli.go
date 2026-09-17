@@ -125,29 +125,31 @@ func ruleIDs(findings []filter.AttributedFinding) []string {
 
 // redactRequest is the outbound substitution seam: it walks the request body,
 // takes the request-phase decision and rewrites every redact span to this
-// session's placeholder. A body the walker cannot read is returned unchanged,
-// because the data plane has already refused a declared-JSON body that fails
-// to walk; here it can only be legitimate non-JSON traffic. Each substitution
-// is logged masked (stderr only) and recorded in the session backfiller, the
-// only place the reverse mapping exists.
-func (g *gateway) redactRequest(body []byte) ([]byte, error) {
+// session's placeholder. It reports how many substitutions it actually
+// applied, so the assembler can count exactly that number. A body the walker
+// cannot read is returned unchanged with zero substitutions, because the data
+// plane has already refused a declared-JSON body that fails to walk; here it
+// can only be legitimate non-JSON traffic. Each substitution is logged masked
+// (stderr only) and recorded in the session backfiller, the only place the
+// reverse mapping exists.
+func (g *gateway) redactRequest(body []byte) ([]byte, int, error) {
 	leaves, err := protocol.Walk(body)
 	if err != nil {
-		return body, nil
+		return body, 0, nil
 	}
 	decision, err := g.policy.Decide(leaves, filter.ScopeRequest)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	if decision.Refusal != nil || decision.Action == filter.ActionBlock {
 		// Never client-visible: the data plane answers 403 before the body
 		// reaches the forwarder, so this only fires outside the plane.
-		return nil, fmt.Errorf("cli: request blocked by content policy")
+		return nil, 0, fmt.Errorf("cli: request blocked by content policy")
 	}
 	if decision.Action != filter.ActionRedact {
-		return body, nil
+		return body, 0, nil
 	}
-	out := body
+	out, substitutions := body, 0
 	for _, substitution := range decision.Substitutions {
 		if substitution.LeafIndex < 0 || substitution.LeafIndex >= len(leaves) {
 			continue
@@ -159,14 +161,15 @@ func (g *gateway) redactRequest(body []byte) ([]byte, error) {
 		secret := value[substitution.Start:substitution.End]
 		placeholder, err := g.backfiller.Mint(g.writer, secret, substitution.Category)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = bytes.ReplaceAll(out, secret, []byte(placeholder))
+		substitutions++
 		if g.logRedactions && g.stderr != nil {
 			fmt.Fprintf(g.stderr, "tokenhush: redacted request %s (len=%d) %s\n", substitution.Category, len(secret), maskSecret(string(secret), substitution.Category))
 		}
 	}
-	return out, nil
+	return out, substitutions, nil
 }
 
 // Masking policy of the redaction log: an opaque credential type reveals a

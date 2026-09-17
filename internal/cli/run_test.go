@@ -357,9 +357,12 @@ func TestRedactionLogGoesToStderrInTheFrozenFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildGateway: %v", err)
 	}
-	redacted, err := gateway.redactRequest(body)
+	redacted, substitutions, err := gateway.redactRequest(body)
 	if err != nil {
 		t.Fatalf("redactRequest: %v", err)
+	}
+	if substitutions != 1 {
+		t.Errorf("redactRequest applied %d substitutions, want 1", substitutions)
 	}
 	if bytes.Contains(redacted, []byte(secret)) {
 		t.Fatalf("the secret survived the outbound transform: %s", redacted)
@@ -387,7 +390,7 @@ func TestRedactionLogIsSilencedByFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildGateway: %v", err)
 	}
-	redacted, err := gateway.redactRequest(body)
+	redacted, _, err := gateway.redactRequest(body)
 	if err != nil {
 		t.Fatalf("redactRequest: %v", err)
 	}

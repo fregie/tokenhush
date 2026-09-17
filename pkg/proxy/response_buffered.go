@@ -127,6 +127,15 @@ func (c *Counters) RuleBlocks() int64 { return c.value(counterRuleBlocks) }
 // walked and were forwarded byte-identically instead.
 func (c *Counters) WalkSkips() int64 { return c.value(counterWalkSkips) }
 
+// CountRequest records one served request. It is the assembler's increment
+// seam: the unexported helper stays for the proxy's own callers.
+func (c *Counters) CountRequest() { c.countRequest() }
+
+// CountRedactions records n request-phase substitutions in one increment. A
+// non-positive n is ignored, so the monotonic total never moves backwards; the
+// caller passes exactly the number the redaction transform reported applying.
+func (c *Counters) CountRedactions(n int) { c.countRedactions(n) }
+
 // NewCounters returns a zeroed counter set.
 func NewCounters() *Counters { return &Counters{} }
 
@@ -135,6 +144,13 @@ func (c *Counters) countRequest() { c.bump(counterRequests) }
 
 // countRedaction records one request-phase substitution.
 func (c *Counters) countRedaction() { c.bump(counterRedactions) }
+
+// countRedactions records n request-phase substitutions; n <= 0 is a no-op.
+func (c *Counters) countRedactions(n int) {
+	if c != nil && n > 0 {
+		c.counts[counterRedactions].Add(int64(n))
+	}
+}
 
 // countContentPolicyBlock records one content-policy refusal.
 func (c *Counters) countContentPolicyBlock() { c.bump(counterContentPolicyBlocks) }
