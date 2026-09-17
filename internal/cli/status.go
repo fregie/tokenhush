@@ -234,6 +234,7 @@ type statusUpView struct {
 	StreamGuardRefusals         uint64   `json:"stream_guard_refusals"`
 	StreamGuardFailClosed       uint64   `json:"stream_guard_fail_closed"`
 	EgressBlocks                uint64   `json:"egress_blocks"`
+	ContentPolicyBlocks         uint64   `json:"content_policy_blocks"`
 	License                     string   `json:"license,omitempty"`
 }
 
@@ -315,6 +316,7 @@ func statusCommand(args []string, stdout, stderr io.Writer) int {
 		StreamGuardRefusals:         status.StreamGuardRefusals,
 		StreamGuardFailClosed:       status.StreamGuardFailClosed,
 		EgressBlocks:                status.EgressBlocks,
+		ContentPolicyBlocks:         status.ContentPolicyBlocks,
 		License:                     license,
 	}
 	if asJSON {
@@ -338,6 +340,7 @@ func writeStatusText(w io.Writer, view statusUpView) {
 	fmt.Fprintf(w, "  stream guard refusals: %d\n", view.StreamGuardRefusals)
 	fmt.Fprintf(w, "  stream guard fail-closed: %d\n", view.StreamGuardFailClosed)
 	fmt.Fprintf(w, "  egress blocks: %d\n", view.EgressBlocks)
+	fmt.Fprintf(w, "  content policy blocks: %d\n", view.ContentPolicyBlocks)
 	if view.License != "" {
 		fmt.Fprintln(w, view.License)
 	}

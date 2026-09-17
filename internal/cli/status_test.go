@@ -181,6 +181,7 @@ func TestStatusAudit(t *testing.T) {
 			"stream guard refusals: 0",
 			"stream guard fail-closed: 0",
 			"egress blocks: 0",
+			"content policy blocks: 0",
 		} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("status stdout = %q, want it to contain %q", stdout, want)
@@ -208,6 +209,7 @@ func TestStatusAudit(t *testing.T) {
 			StreamGuardRefusals         uint64   `json:"stream_guard_refusals"`
 			StreamGuardFailClosed       uint64   `json:"stream_guard_fail_closed"`
 			EgressBlocks                uint64   `json:"egress_blocks"`
+			ContentPolicyBlocks         uint64   `json:"content_policy_blocks"`
 		}
 		if err := json.Unmarshal([]byte(stdout), &view); err != nil {
 			t.Fatalf("status --json did not parse: %v (stdout=%q)", err, stdout)
@@ -221,7 +223,8 @@ func TestStatusAudit(t *testing.T) {
 		// W6.5: this run performed no interception, mutation, streamed refusal
 		// or egress block, so every new counter must be exactly zero.
 		if view.SelfProtectionInterceptions != 0 || view.AllowlistMutations != 0 ||
-			view.StreamGuardRefusals != 0 || view.StreamGuardFailClosed != 0 || view.EgressBlocks != 0 {
+			view.StreamGuardRefusals != 0 || view.StreamGuardFailClosed != 0 || view.EgressBlocks != 0 ||
+			view.ContentPolicyBlocks != 0 {
 			t.Fatalf("status --json self-protection counters = %+v, want all zero on a clean run", view)
 		}
 	})
@@ -232,7 +235,7 @@ func TestStatusAudit(t *testing.T) {
 			code:  http.StatusOK,
 			status: `{"state":"running","addrs":["127.0.0.1:8787","[::1]:8787"],"uptime_ms":83000,"requests":7,"redactions":3,` +
 				`"allowlist":0,"self_protection_interceptions":5,"allowlist_mutations":2,` +
-				`"stream_guard_refusals":3,"stream_guard_fail_closed":1,"egress_blocks":4}`,
+				`"stream_guard_refusals":3,"stream_guard_fail_closed":1,"egress_blocks":4,"content_policy_blocks":6}`,
 		}
 		port := newControlStub(t, stub)
 		home := t.TempDir()
@@ -257,6 +260,9 @@ func TestStatusAudit(t *testing.T) {
 			"stream guard refusals: 3",
 			"stream guard fail-closed: 1",
 			"egress blocks: 4",
+			// The content-policy counter is rendered from the snapshot too: a
+			// non-zero value proves the printer is not a hardcoded zero.
+			"content policy blocks: 6",
 		} {
 			if !strings.Contains(stdout, want) {
 				t.Fatalf("status stdout = %q, want it to contain %q", stdout, want)
@@ -283,6 +289,7 @@ func TestStatusAudit(t *testing.T) {
 			StreamGuardRefusals         uint64   `json:"stream_guard_refusals"`
 			StreamGuardFailClosed       uint64   `json:"stream_guard_fail_closed"`
 			EgressBlocks                uint64   `json:"egress_blocks"`
+			ContentPolicyBlocks         uint64   `json:"content_policy_blocks"`
 		}
 		if err := json.Unmarshal([]byte(stdout), &view); err != nil {
 			t.Fatalf("status --json did not parse: %v (stdout=%q)", err, stdout)
@@ -292,7 +299,8 @@ func TestStatusAudit(t *testing.T) {
 			t.Fatalf("status --json = %+v, want the stubbed snapshot", view)
 		}
 		if view.SelfProtectionInterceptions != 5 || view.AllowlistMutations != 2 ||
-			view.StreamGuardRefusals != 3 || view.StreamGuardFailClosed != 1 || view.EgressBlocks != 4 {
+			view.StreamGuardRefusals != 3 || view.StreamGuardFailClosed != 1 || view.EgressBlocks != 4 ||
+			view.ContentPolicyBlocks != 6 {
 			t.Fatalf("status --json self-protection counters = %+v, want the stubbed snapshot", view)
 		}
 		if len(view.Addrs) != 2 || view.Addrs[0] != "127.0.0.1:8787" || view.Addrs[1] != "[::1]:8787" {

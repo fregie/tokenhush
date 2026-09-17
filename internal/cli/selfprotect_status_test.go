@@ -119,6 +119,7 @@ type w65StatusCounters struct {
 	StreamGuardRefusals         uint64 `json:"stream_guard_refusals"`
 	StreamGuardFailClosed       uint64 `json:"stream_guard_fail_closed"`
 	EgressBlocks                uint64 `json:"egress_blocks"`
+	ContentPolicyBlocks         uint64 `json:"content_policy_blocks"`
 }
 
 // w65ReadStatus runs `tokenhush status --json` in-process against the live
@@ -137,9 +138,9 @@ func w65ReadStatus(t *testing.T) w65StatusCounters {
 	if !got.Running {
 		t.Fatalf("status --json = %+v, want a running gateway", got)
 	}
-	t.Logf("W65_STATUS requests=%d redactions=%d interceptions=%d mutations=%d stream=%d fail_closed=%d egress=%d",
+	t.Logf("W65_STATUS requests=%d redactions=%d interceptions=%d mutations=%d stream=%d fail_closed=%d egress=%d content_policy=%d",
 		got.Requests, got.Redactions, got.SelfProtectionInterceptions, got.AllowlistMutations,
-		got.StreamGuardRefusals, got.StreamGuardFailClosed, got.EgressBlocks)
+		got.StreamGuardRefusals, got.StreamGuardFailClosed, got.EgressBlocks, got.ContentPolicyBlocks)
 	return got
 }
 
@@ -166,6 +167,7 @@ func w65AssertTextStatus(t *testing.T, want string, counters w65StatusCounters) 
 		fmt.Sprintf("stream guard refusals: %d", counters.StreamGuardRefusals),
 		fmt.Sprintf("stream guard fail-closed: %d", counters.StreamGuardFailClosed),
 		fmt.Sprintf("egress blocks: %d", counters.EgressBlocks),
+		fmt.Sprintf("content policy blocks: %d", counters.ContentPolicyBlocks),
 	} {
 		if !strings.Contains(stdout, line) {
 			t.Fatalf("status stdout = %q, want it to contain %q (%s)", stdout, line, want)
@@ -325,6 +327,49 @@ func TestStatusSelfProtectionCounters(t *testing.T) {
 				got.SelfProtectionInterceptions, got.AllowlistMutations)
 		}
 		w65AssertTextStatus(t, "egress block", got)
+	})
+
+	t.Run("content_policy_block_increments_status", func(t *testing.T) {
+		upstream := &w65StaticUpstream{contentType: "application/json", body: []byte(`{"ok":true}`)}
+		upstreamSrv := httptest.NewServer(upstream)
+		t.Cleanup(upstreamSrv.Close)
+
+		// A tiny byte budget turns a legal request into a content-policy
+		// refusal without touching any detector or timeout behavior.
+		cfg := w65DaemonConfig(upstreamSrv.URL)
+		cfg.Detectors.ScanBudgetBytes = 64
+
+		dataDir := t.TempDir()
+		t.Setenv("TOKENHUSH_HOME", dataDir)
+		base, _, stop := startTestDaemon(t, cfg, RunDeps{
+			DataDir:             dataDir,
+			Stdout:              io.Discard,
+			Stderr:              io.Discard,
+			DisableRedactionLog: true,
+		})
+		defer func() { _ = stop() }()
+
+		body := `{"input":"` + strings.Repeat("A", 256) + `"}`
+		resp := postBody(t, base+"/v1/messages", "application/json", body, nil)
+		clientBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read client body: %v", err)
+		}
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("over-budget request status = %d, want %d (body %q)", resp.StatusCode, http.StatusForbidden, clientBody)
+		}
+		if !strings.Contains(string(clientBody), proxy.TypeScanBudgetExceeded) {
+			t.Fatalf("403 body = %q, want the labelled %q class", clientBody, proxy.TypeScanBudgetExceeded)
+		}
+		if got := upstream.hits.Load(); got != 0 {
+			t.Fatalf("upstream dialed %d time(s), want 0 (refused before egress)", got)
+		}
+
+		got := w65ReadStatus(t)
+		if got.ContentPolicyBlocks != 1 {
+			t.Errorf("content_policy_blocks = %d, want 1", got.ContentPolicyBlocks)
+		}
+		w65AssertTextStatus(t, "content-policy block", got)
 	})
 
 	t.Run("interception_log_is_truthful_about_the_refusal", func(t *testing.T) {

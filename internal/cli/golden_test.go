@@ -40,6 +40,10 @@ var (
 	// goldenDigestRe strips the per-session random HMAC digest from a
 	// placeholder token, leaving the grammar and detector type pinned.
 	goldenDigestRe = regexp.MustCompile(`(__PII_[a-z][a-z0-9_]*_)[0-9a-f]{8,}__`)
+	// goldenTextUptimeRe strips the moving uptime from the human status line.
+	goldenTextUptimeRe = regexp.MustCompile(`(?m)^  uptime: .*$`)
+	// goldenTextPIDRe strips the process id from the human status line.
+	goldenTextPIDRe = regexp.MustCompile(`(?m)^  pid: \d+$`)
 )
 
 // normalizeGolden rewrites one captured output so only the volatile runtime
@@ -49,6 +53,8 @@ func normalizeGolden(s, dataDir, tokenPath, secret string) string {
 	s = strings.ReplaceAll(s, tokenPath, "<DATADIR>/control.token")
 	s = strings.ReplaceAll(s, dataDir, "<DATADIR>")
 	s = goldenUptimeRe.ReplaceAllString(s, `"uptime_ms":<UPTIME>`)
+	s = goldenTextUptimeRe.ReplaceAllString(s, "  uptime: <UPTIME>")
+	s = goldenTextPIDRe.ReplaceAllString(s, "  pid: <PID>")
 	s = goldenPortRe.ReplaceAllString(s, "$1:<PORT>")
 	s = goldenDigestRe.ReplaceAllString(s, "${1}<DIGEST>__")
 	s = strings.ReplaceAll(s, secret, "<SECRET>")
@@ -122,6 +128,14 @@ func TestGoldenBaseline(t *testing.T) {
 		t.Fatalf("status code = %d, want %d", statusResp.StatusCode, http.StatusOK)
 	}
 
+	// The human status view is pinned too, so the golden catches a printer
+	// that drops a counter line (content_policy_blocks included).
+	t.Setenv("TOKENHUSH_HOME", dataDir)
+	statusText, statusTextErr, statusTextCode := cliRun(t, "status")
+	if statusTextCode != ExitOK {
+		t.Fatalf("status text code = %d, want %d (stderr=%q)", statusTextCode, ExitOK, statusTextErr)
+	}
+
 	// /audit is not a core control endpoint. It falls through to the data
 	// plane, resolves to no upstream and becomes a 502 — the baseline must not
 	// accept an empty/200 audit payload as the fallback.
@@ -153,13 +167,15 @@ func TestGoldenBaseline(t *testing.T) {
 	fmt.Fprintf(&b, "# Compared by TestGoldenBaseline. All lines are byte-exact after\n")
 	fmt.Fprintf(&b, "# normalizing only these runtime-volatile values:\n")
 	fmt.Fprintf(&b, "#   <PORT>     ephemeral loopback port\n")
-	fmt.Fprintf(&b, "#   <UPTIME>   GET /status uptime_ms\n")
+	fmt.Fprintf(&b, "#   <UPTIME>   GET /status uptime_ms and the text `uptime:` line\n")
+	fmt.Fprintf(&b, "#   <PID>      gateway pid on the text `pid:` line\n")
 	fmt.Fprintf(&b, "#   <DATADIR>  per-test temp data directory\n")
 	fmt.Fprintf(&b, "#   <DIGEST>   per-session random HMAC digest inside a placeholder\n")
 	fmt.Fprintf(&b, "#   <SECRET>   synthetic credential the request carried\n")
 	fmt.Fprintf(&b, "# Regenerate after an intentional change:\n")
 	fmt.Fprintf(&b, "#   go test ./internal/cli -run TestGoldenBaseline -update-golden\n")
 	fmt.Fprintf(&b, "\n[status] HTTP %d\n%s", statusResp.StatusCode, norm(string(statusRaw)))
+	fmt.Fprintf(&b, "\n[status-text]\n%s", norm(statusText))
 	fmt.Fprintf(&b, "\n[startup]\n%s", norm(startup.String()))
 	fmt.Fprintf(&b, "\n[audit-fallback] HTTP %d Content-Type: %s\n%s",
 		auditResp.StatusCode, auditResp.Header.Get("Content-Type"), norm(string(auditRaw)))

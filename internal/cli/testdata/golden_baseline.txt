@@ -2,7 +2,8 @@
 # Compared by TestGoldenBaseline. All lines are byte-exact after
 # normalizing only these runtime-volatile values:
 #   <PORT>     ephemeral loopback port
-#   <UPTIME>   GET /status uptime_ms
+#   <UPTIME>   GET /status uptime_ms and the text `uptime:` line
+#   <PID>      gateway pid on the text `pid:` line
 #   <DATADIR>  per-test temp data directory
 #   <DIGEST>   per-session random HMAC digest inside a placeholder
 #   <SECRET>   synthetic credential the request carried
@@ -11,6 +12,20 @@
 
 [status] HTTP 200
 {"state":"running","addrs":["127.0.0.1:<PORT>","[::1]:<PORT>"],"uptime_ms":<UPTIME>,"requests":1,"redactions":1,"allowlist":0,"self_protection_interceptions":0,"allowlist_mutations":0,"stream_guard_refusals":0,"stream_guard_fail_closed":0,"egress_blocks":0,"content_policy_blocks":0}
+
+[status-text]
+tokenhush: gateway running
+  pid: <PID>
+  address: 127.0.0.1:<PORT>, [::1]:<PORT>
+  uptime: <UPTIME>
+  requests: 1
+  redactions: 1
+  self-protection interceptions: 0
+  allowlist mutations: 0
+  stream guard refusals: 0
+  stream guard fail-closed: 0
+  egress blocks: 0
+  content policy blocks: 0
 
 [startup]
 tokenhush: gateway listening on http://127.0.0.1:<PORT>
