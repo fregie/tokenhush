@@ -200,11 +200,13 @@ listen:
   port: 8787           # 1..65535
 detectors:
   prefixes: true       # known key prefixes (sk-, AKIA, ghp_, ...)
-  high_entropy: true   # high-entropy strings
+  high_entropy: false  # OFF by default: opt in with `true` (see the precision note below)
   jwt: true            # JWTs
   private_keys: true   # PEM private-key headers
   luhn: true           # card numbers (Luhn)
   email: true          # email addresses
+  scan_budget_bytes: 33554432  # deterministic per-request scan budget (32 MiB); over it = refused, never partially scanned
+  timeout: 30s                 # wall-clock backstop per detector invocation; a large default, never hit in normal operation
 allowlist: []          # literals never redacted while listed; the runtime allowlist adds to them (union)
 self_protection:       # change-channel guard; on by default
   enabled: true        # false is an explicit opt-out
@@ -219,8 +221,9 @@ upstreams:             # host or path prefix -> upstream base URL
 Key points:
 
 - `listen.host` takes loopback only; the gateway **never** binds `0.0.0.0` or an empty host. It binds `127.0.0.1` always and `[::1]` as well when the host has an IPv6 loopback; on a host without one it serves `127.0.0.1` only and logs a notice.
-- Six deterministic, high-precision detectors: key prefixes, high-entropy strings, JWT, PEM private-key headers, Luhn card numbers, email. A match becomes a stable placeholder like `__PII_email_9f2c8a4b6d1e__`, so upstream never sees the raw value.
+- Five deterministic, high-precision detectors are on by default: key prefixes, JWT, PEM private-key headers, Luhn card numbers, email. `high_entropy` is wired but **off by default** (opt in with `high_entropy: true`); it is a weaker signal whose structural exemptions still produced false positives on real agent traffic (long tool names and session ids were redacted, breaking function calling), so the cost exceeded the benefit. A match becomes a stable placeholder like `__PII_email_9f2c8a4b6d1e__`, so upstream never sees the raw value.
 - `prefixes` → detector id `prefix`; `private_keys` → `private_key` (see `pkg/config` comments).
+- `scan_budget_bytes` (default 32 MiB) is the **deterministic** scan budget: the verdict depends only on the request/response body size, never on CPU speed or load. A body at or below it is inspected (under the wall-clock backstop); a body above it is **refused** before any detector runs — never silently allowed and never partially scanned. `timeout` (default 30s) is the generous wall-clock backstop that exists only to stop a pathological detector; normal operation never reaches it. See [security.md](security.md#failure-policy-per-path) for the full failure policy.
 - `allowlist` holds literals that are not redacted **while they are listed**. Static entries stay supported alongside the runtime allowlist: at startup they seed the runtime store and this key keeps being read, so the effective allowlist is the **union** of the two — never a replacement. Each entry must be non-empty, free of control characters, and at most 4096 bytes. The runtime allowlist is persisted at `<DataDir>/allowlist.json` (`0600`, versioned, **not** a session file) and is changed only through the loopback control plane: `tokenhush allowlist list|add|remove`, `GET|POST|DELETE /allowlist`, or the Pro Web UI. A change takes effect immediately, without a restart, and each change writes one metadata-only audit row.
 - `self_protection` guards the change channel (the `tokenhush allowlist` CLI, the loopback control port, and direct writes to the allowlist file) and ships enabled with all three modes. With `enabled: true`, `modes:` must not be an empty list (omitting the key keeps all three); `enabled: false` is the explicit opt-out. The exclusion set itself is deliberately not configurable: it is derived at runtime from the control-token value and the allowlist file content. The guard is **high-confidence interception, best-effort**, not a closure; the known uncovered channels are listed under [mutation-channel self-protection](security.md#mutation-channel-self-protection).
 - The core config has no `audit:` key: a config that still contains one fails to load. The audit block lives in the private Pro layer; the public core keeps only the metadata-only audit seam.

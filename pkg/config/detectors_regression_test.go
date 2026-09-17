@@ -10,10 +10,13 @@ import (
 // pre-existing semantics. The remote-rule floor never reads or rewrites them, so
 // this behavior must not change when remote rules are introduced.
 func TestLocalDetectorSwitchesAreUserChoice(t *testing.T) {
-	want := []string{DetectorPrefix, DetectorHighEntropy, DetectorJWT, DetectorPrivateKey, DetectorLuhn, DetectorEmail}
 	cfg := Default()
+	// high_entropy is opt-in; enable it so the exercised set is all six and the
+	// switch order stays pinned.
+	cfg.Detectors.HighEntropy = true
+	want := []string{DetectorPrefix, DetectorHighEntropy, DetectorJWT, DetectorPrivateKey, DetectorLuhn, DetectorEmail}
 	if got := cfg.Detectors.EnabledIDs(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("Default EnabledIDs = %v, want %v", got, want)
+		t.Fatalf("EnabledIDs with high_entropy enabled = %v, want %v", got, want)
 	}
 
 	cfg.Detectors.Prefix = false

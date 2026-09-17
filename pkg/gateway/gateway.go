@@ -51,13 +51,16 @@ const controlAllowlistPath = "/allowlist"
 // carries the resulting entry count as a tag).
 const controlAuditProvider = "control"
 
-// Tuning shared by every embedded gateway. The detector timeout is
-// deliberately generous: the built-in detectors are configured FailClosed, so
-// a too-short timeout would turn a large but legitimate request into a block.
-// shutdownTimeout bounds how long a cancelled context waits for in-flight
-// requests before the process files are removed.
+// Tuning shared by every embedded gateway. The detector timeout is a generous
+// wall-clock backstop: the built-in detectors are configured FailClosed, so a
+// short bound would turn a large but legitimate request into a refusal on any
+// slow or loaded machine. The deterministic limit on how much content is
+// scanned is the pipeline's byte budget (proxy.DefaultScanBudget, 32 MiB),
+// which depends only on the input size. shutdownTimeout bounds how long a
+// cancelled context waits for in-flight requests before the process files are
+// removed.
 const (
-	defaultDetectorTimeout = 5 * time.Second
+	defaultDetectorTimeout = 30 * time.Second
 	shutdownTimeout        = 5 * time.Second
 )
 
@@ -323,6 +326,7 @@ func buildHandler(opts Options, deps *Deps, port int, addrs []string, startedAt 
 				StreamGuardRefusals:         opts.Pipeline.StreamGuardRefusals(),
 				StreamGuardFailClosed:       opts.Pipeline.StreamGuardFailClosed(),
 				EgressBlocks:                opts.Pipeline.EgressBlocks(),
+				ContentPolicyBlocks:         opts.Pipeline.ContentPolicyBlocks(),
 			}
 		},
 		proxy.WithControlAllowlist(opts.AllowlistStore),

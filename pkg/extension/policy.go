@@ -30,11 +30,22 @@ const (
 	FailClosed FailurePolicy = "fail_closed"
 )
 
-// DefaultPluginTimeout bounds a single Inspector.Inspect call. A plugin that
-// exceeds it is treated as failed under its FailurePolicy. Go cannot kill a
-// runaway goroutine, so the timeout stops the wait, not the work, and the core
-// never observes the abandoned result.
-const DefaultPluginTimeout = 2 * time.Second
+// DefaultPluginTimeout is the wall-clock backstop that bounds a single
+// Inspector.Inspect call when PolicyConfig.Timeout is unset. It is deliberately
+// generous: the built-in detectors are configured FailClosed, so a short timing
+// bound would turn a large but legitimate request into a refusal on any machine
+// whose CPU is merely slow or loaded (a 16 MB body scanned by the high_entropy
+// detector was measured at ~5.5 s on an idle machine). Normal operation must
+// never reach it.
+//
+// It is a backstop only. The deterministic limit on how much content is scanned
+// is the byte budget (pkg/proxy's scan budget), which depends only on the input
+// size, never on CPU speed or load: a body at or below the budget is scanned
+// whatever the machine, and a body above it is refused before any detector runs.
+// A plugin that exceeds this backstop is treated as failed under its
+// FailurePolicy. Go cannot kill a runaway goroutine, so the timeout stops the
+// wait, not the work, and the core never observes the abandoned result.
+const DefaultPluginTimeout = 30 * time.Second
 
 // Audit metadata encoding for plugin-failure warnings. The audit seam is
 // metadata-only, so a warning row carries Provider = AuditProviderPolicy,

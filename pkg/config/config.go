@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/goccy/go-yaml"
@@ -75,7 +76,13 @@ type Listen struct {
 	Port Port   `yaml:"port"`
 }
 
-// Detectors mirrors the `detectors:` block. Every detector defaults to on.
+// Detectors mirrors the `detectors:` block. Five detectors default to on;
+// `high_entropy` defaults to **off** (a deliberate precision decision: its
+// structural exemptions still produced false positives on real agent traffic —
+// long tool names and session ids were redacted as if they were secrets, which
+// broke function calling — so it is wired but disabled unless explicitly
+// enabled). ScanBudgetBytes and Timeout tune the deterministic scan budget and
+// the wall-clock backstop; their zero values mean "use the built-in defaults".
 type Detectors struct {
 	Prefix      bool `yaml:"prefixes"`
 	HighEntropy bool `yaml:"high_entropy"`
@@ -83,6 +90,16 @@ type Detectors struct {
 	PrivateKey  bool `yaml:"private_keys"`
 	Luhn        bool `yaml:"luhn"`
 	Email       bool `yaml:"email"`
+	// ScanBudgetBytes bounds the deterministic per-request scan budget: a body
+	// larger than this is refused before any detector runs. The verdict depends
+	// only on the input size, never on CPU speed or load. 0 uses the built-in
+	// 32 MiB default. Exceeding it refuses by design and never partially scans.
+	ScanBudgetBytes int64 `yaml:"scan_budget_bytes"`
+	// Timeout is the wall-clock backstop that bounds one detector invocation.
+	// It is deliberately generous so a large legitimate body on a slow machine
+	// still completes; normal operation never reaches it. 0 uses the built-in
+	// 30s default.
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // EnabledIDs returns the canonical ids of all enabled detectors in
@@ -160,11 +177,16 @@ func Default() Config {
 		Listen: Listen{Host: "127.0.0.1", Port: 8787},
 		Detectors: Detectors{
 			Prefix:      true,
-			HighEntropy: true,
+			HighEntropy: false,
 			JWT:         true,
 			PrivateKey:  true,
 			Luhn:        true,
 			Email:       true,
+			// Mirrors pkg/proxy.DefaultScanBudget and pkg/extension's default
+			// backstop; the numbers are stated here so a config sample shows the
+			// effective defaults.
+			ScanBudgetBytes: 32 << 20,
+			Timeout:         30 * time.Second,
 		},
 		Allowlist: []string{},
 		Log:       Log{Level: "info"},

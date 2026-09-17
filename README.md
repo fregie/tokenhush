@@ -35,7 +35,7 @@ Tokenhush adds one checkpoint in front of the tool. It reads each request, repla
 ## ✨ Features
 
 - **Every field, not just the top level.** Tokenhush walks the whole request body, so nested JSON is covered, and it handles streaming responses as they arrive. It catches known key shapes (`sk-`, `AKIA`, `ghp_`, …), random-looking high-entropy strings, JWTs, PEM private keys, card numbers, and email addresses.
-- **Six built-in detectors, each switchable.** All six are on by default, and each can be turned off under `detectors:`: `prefixes` (known provider key shapes such as `sk-`, `AKIA`, `ghp_`, `glpat-`, `xox*`, `AIza`, `npm_`), `high_entropy` (random-looking strings), `jwt` (JSON Web Tokens), `private_keys` (PEM private-key headers), `luhn` (card numbers, Luhn-checked), and `email` (email addresses).
+- **Six built-in detectors, each switchable.** Five are on by default and each can be turned off under `detectors:`: `prefixes` (known provider key shapes such as `sk-`, `AKIA`, `ghp_`, `glpat-`, `xox*`, `AIza`, `npm_`), `jwt` (JSON Web Tokens), `private_keys` (PEM private-key headers), `luhn` (card numbers, Luhn-checked), and `email` (email addresses). The sixth, `high_entropy` (random-looking strings), is **off by default** — opt in with `high_entropy: true` — because its false positives on real agent traffic (long tool names and session ids) broke function calling.
 - **More rule sets, signed and verified.** `tokenhush rules sync` can pull an extra rule pack from the hosted rule service, and it's safe by construction: the pack is Ed25519-signed, and the client verifies the signature, freshness, serial (no rollback), and the signed revocation list before use. A non-weakening floor rejects any pack that disables a built-in detector, drops a required category, or auto-allows a match: a pack can never weaken the built-ins. The rule-signing key remains the trust root for whatever a pack adds — see [docs/plugins.md](docs/plugins.md) for the boundary. They load at the next start (never hot-loaded), and any problem falls back to the built-in defaults with a warning. Rule sync is one of the two requests `tokenhush privacy` lists, runs only when you invoke it, and `TOKENHUSH_NO_RULE_SYNC=1` turns it off.
 - **The same placeholder every time.** A secret turns into a token such as `__PII_email_9f2c8a4b6d1e__`. The mapping lives in memory, for this session only. A restart drops it, so you may occasionally see a placeholder in output — that's expected and safe, not a leak.
 - **Stays on your machine.** The gateway listens on loopback only: `127.0.0.1` always, plus `[::1]` when the host has an IPv6 loopback. It checks the Host header, checks Origin for browser-style requests, and locks the control API behind a per-run token stored with `0600` permissions. If something goes wrong, it stops instead of forwarding.
@@ -56,7 +56,7 @@ flowchart LR
     B -->|response with originals| A
 ```
 
-- **Outbound:** the gateway walks the JSON body, runs all six detectors, and turns each match into a session placeholder before forwarding upstream.
+- **Outbound:** the gateway walks the JSON body, runs the enabled detectors (five are on by default; `high_entropy` is opt-in), and turns each match into a session placeholder before forwarding upstream.
 - **Inbound:** placeholders are swapped back to the originals, and only your tool receives them.
 
 > [!IMPORTANT]
@@ -217,7 +217,7 @@ Data lives separately: macOS `~/Library/Application Support/tokenhush/`, Linux `
 | Key | What it controls |
 |---|---|
 | `listen` | `host` (only `127.0.0.1`, `::1`, or `localhost`; `0.0.0.0` is rejected) and `port` (1..65535, default 8787) |
-| `detectors` | Turn the six detectors on or off: `prefixes`, `high_entropy`, `jwt`, `private_keys`, `luhn`, `email` |
+| `detectors` | Detector switches: `prefixes`, `high_entropy` (off by default, opt in), `jwt`, `private_keys`, `luhn`, `email`, plus the deterministic `scan_budget_bytes` (default 32 MiB) and the `timeout` backstop (default 30s) |
 | `allowlist` | Literals that are never redacted |
 | `log` | `level`: `debug`, `info`, `warn`, or `error` |
 | `upstreams` | Map a host or path prefix to your own OpenAI-compatible upstream |

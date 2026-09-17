@@ -141,18 +141,25 @@ func (p *Pipeline) reportSpans(walked []protocol.Leaf, spans map[int][]redact.Re
 	}
 }
 
-// reportBlock emits one metadata-only event per blocked finding. A block aborts
-// before egress, so no matched value is reported: only the detector type(s) that
-// triggered the refusal. A synthetic fail-closed finding carries no span, so
-// this path never reads content.
-func (p *Pipeline) reportBlock(decision extension.Decision) {
+// reportBlock counts one content-policy Block and, when a reporter is
+// installed, emits one metadata-only event per blocked finding. It is the
+// single accounting point for block refusals: the counter increments whether or
+// not a reporter exists, so a block is never uncounted. A block aborts before
+// egress, so no matched value is reported: only the detector type(s) that
+// triggered the refusal. A synthetic fail-closed or over-budget finding carries
+// no span, so this path never reads content.
+func (p *Pipeline) reportBlock(direction string, decision extension.Decision) {
+	if p == nil {
+		return
+	}
+	p.contentPolicyBlocks.Add(1)
 	if p.reporter.Load() == nil {
 		return
 	}
 	for _, f := range decision.Findings {
 		p.report(RedactionEvent{
 			Action:    RedactionActionBlock,
-			Direction: RedactionDirectionRequest,
+			Direction: direction,
 			Phase:     decision.Phase.String(),
 			Type:      f.Type,
 		})

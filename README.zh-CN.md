@@ -17,8 +17,8 @@ AI 编码工具发出去的，远不止你正在编辑的那个文件。整个�
 Tokenhush 就装在你本机，夹在工具和模型中间。请求发出前，它先把真密钥换成无害的占位符；模型只看到占位符，你的工具照样拿回真值。它就一个小程序，只听本机，不装根证书。
 
 ```text
-工具发出      __PII_high_entropy_a82f4c9e1b60__
-云端收到      __PII_high_entropy_3d71b0c5e6a2__
+工具发出      __PII_api_key_a82f4c9e1b60__
+云端收到      __PII_api_key_3d71b0c5e6a2__
 工具拿回      __PII_api_key_9c4e2a7f1d38__
 ```
 
@@ -35,7 +35,7 @@ Tokenhush 在这些工具前面加一道检查点：每条请求进来，把像�
 ## ✨ 功能特性
 
 - **每个字段都扫，不只扫表层。** Tokenhush 会把整个请求体逐层走一遍，嵌套 JSON 也不放过；流式响应边到边处理。它能认出常见密钥前缀（`sk-`、`AKIA`、`ghp_` 等）、看起来随机的高熵字符串、JWT、PEM 私钥、卡号、邮箱。
-- **六个内置检测器，每个都能单独开关。** 六个默认全开，任何一个都能在 `detectors:` 里关掉：`prefixes`（常见厂商密钥形态，如 `sk-`、`AKIA`、`ghp_`、`glpat-`、`xox*`、`AIza`、`npm_`）、`high_entropy`（看起来随机的字符串）、`jwt`（JSON Web Token）、`private_keys`（PEM 私钥头）、`luhn`（卡号，过 Luhn 校验）、`email`（邮箱地址）。
+- **六个内置检测器，每个都能单独开关。** 默认开启五个，任何一个都能在 `detectors:` 里关掉：`prefixes`（常见厂商密钥形态，如 `sk-`、`AKIA`、`ghp_`、`glpat-`、`xox*`、`AIza`、`npm_`）、`jwt`（JSON Web Token）、`private_keys`（PEM 私钥头）、`luhn`（卡号，过 Luhn 校验）、`email`（邮箱地址）。第六个 `high_entropy`（看起来随机的字符串）**默认关闭**——用 `high_entropy: true` 显式开启——因为它在真实 agent 流量上的误报（长工具名、会话 id）会破坏函数调用。
 - **更多规则集，签名并验签。** `tokenhush rules sync` 可以从托管的规则服务拉取一份额外的规则包，而且它在设计上就是安全的：规则包用 Ed25519 签名，客户端在使用前会校验签名、时效、序列号（拒绝回滚）和签名撤销列表。一道“不削弱”底线会拒绝任何试图关闭内置检测器、删除必需类别或自动放行命中项的规则包：规则包永远无法削弱内置检测器。规则签名密钥仍是"规则包新增了什么"的信任根——边界见 [docs/plugins.md](docs/plugins.md)。它们在下次启动时生效（不做热加载），一旦有问题就带着告警退回内置默认规则。规则同步是 `tokenhush privacy` 列出的两个请求之一，只有你主动调用时才运行，`TOKENHUSH_NO_RULE_SYNC=1` 可以把它关掉。
 - **同一个密钥，永远是同一个占位符。** 密钥会变成 `__PII_email_9f2c8a4b6d1e__` 这样的令牌。映射只存在内存里，仅在本次会话有效；重启就没了。所以偶尔在输出里看到占位符是正常现象，也是安全降级，不是泄露。
 - **只在本机。** 网关仅监听环回：始终绑 `127.0.0.1`，主机有 IPv6 环回时同时绑 `[::1]`。它校验 Host，浏览器类请求还查 Origin；控制 API 用每次 `run` 随机生成的令牌保护，令牌以 `0600` 权限落盘。一旦出错，它选择停下，而不是继续转发。
@@ -56,7 +56,7 @@ flowchart LR
     B -->|还原原文的响应| A
 ```
 
-- **出站：** 网关把 JSON 请求体走一遍，跑完六个检测器，每个命中项都换成会话级占位符，再转发出去。
+- **出站：** 网关把 JSON 请求体走一遍，跑完启用的检测器（默认五个；`high_entropy` 需显式开启），每个命中项都换成会话级占位符，再转发出去。
 - **入站：** 网关把占位符换回原文，只有你的工具能看到真值。
 
 > [!IMPORTANT]
@@ -217,7 +217,7 @@ Tokenhush 读 `tokenhush.yaml`。没有文件就用默认值；未知的键会�
 | 键 | 控制什么 |
 |---|---|
 | `listen` | `host`（只允许 `127.0.0.1`、`::1`、`localhost`；`0.0.0.0` 会被拒绝）和 `port`（1..65535，默认 8787） |
-| `detectors` | 开关六个检测器：`prefixes`、`high_entropy`、`jwt`、`private_keys`、`luhn`、`email` |
+| `detectors` | 检测器开关：`prefixes`、`high_entropy`（默认关闭，需显式开启）、`jwt`、`private_keys`、`luhn`、`email`，以及确定性 `scan_budget_bytes`（默认 32 MiB）与 `timeout` 墙钟兜底（默认 30s） |
 | `allowlist` | 永不脱敏的字面量 |
 | `log` | `level`：`debug`、`info`、`warn`、`error` |
 | `upstreams` | 把主机或路径前缀映射到你自己的 OpenAI 兼容上游 |

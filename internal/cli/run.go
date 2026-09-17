@@ -116,12 +116,16 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 
 	pipeline := deps.Pipeline
 	if pipeline == nil {
+		timeout := deps.PolicyTimeout
+		if timeout <= 0 {
+			timeout = loaded.Detectors.Timeout
+		}
 		buildOpts := gateway.BuildOptions{
 			Detectors:      loaded.Detectors.EnabledIDs(),
 			Allowlist:      loaded.Allowlist,
 			Rules:          activeRulesConfig(deps.Stderr),
 			Sink:           sink,
-			Timeout:        deps.PolicyTimeout,
+			Timeout:        timeout,
 			AllowlistStore: allowlistStore,
 			SelfProtection: selfProtection,
 		}
@@ -140,6 +144,10 @@ func RunServer(ctx context.Context, cfg *config.Config, deps RunDeps) error {
 				return err
 			}
 		}
+		// The deterministic byte budget is not part of the frozen ADR-0012
+		// BuildOptions contract, so it is installed after construction. 0 keeps
+		// pkg/proxy's built-in default.
+		pipeline.SetScanBudget(loaded.Detectors.ScanBudgetBytes)
 	}
 
 	if !deps.DisableRedactionLog && deps.Stderr != nil {

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // writeConfig writes a temporary tokenhush.yaml fixture and returns its path.
@@ -35,15 +36,68 @@ func TestDefaultExactValues(t *testing.T) {
 	}
 
 	d := cfg.Detectors
-	if !d.Prefix || !d.HighEntropy || !d.JWT || !d.PrivateKey || !d.Luhn || !d.Email {
-		t.Errorf("detectors = %+v, want all six enabled", d)
+	if !d.Prefix || d.HighEntropy || !d.JWT || !d.PrivateKey || !d.Luhn || !d.Email {
+		t.Errorf("detectors = %+v, want five enabled and high_entropy off", d)
+	}
+	if d.ScanBudgetBytes != 32<<20 {
+		t.Errorf("detectors.scan_budget_bytes = %d, want 32 MiB", d.ScanBudgetBytes)
+	}
+	if d.Timeout != 30*time.Second {
+		t.Errorf("detectors.timeout = %v, want 30s", d.Timeout)
 	}
 	wantIDs := []string{
-		DetectorPrefix, DetectorHighEntropy, DetectorJWT,
+		DetectorPrefix, DetectorJWT,
 		DetectorPrivateKey, DetectorLuhn, DetectorEmail,
 	}
 	if got := d.EnabledIDs(); !reflect.DeepEqual(got, wantIDs) {
-		t.Errorf("detector ids = %v, want %v (config key prefixes/private_keys must map to prefix/private_key)", got, wantIDs)
+		t.Errorf("detector ids = %v, want %v (high_entropy is wired but defaults off; prefixes/private_keys map to prefix/private_key)", got, wantIDs)
+	}
+}
+
+// TestHighEntropyDefaultsOff locks the deliberate precision decision: the
+// high_entropy detector stays compiled in and wired, but it is off unless a
+// user explicitly enables it. A regression that flips the default back on is a
+// real-traffic false-positive regression (long tool names and session ids were
+// redacted as secrets, breaking function calling), so it must fail here.
+func TestHighEntropyDefaultsOff(t *testing.T) {
+	if Default().Detectors.HighEntropy {
+		t.Fatal("Default().Detectors.HighEntropy = true, want false (high_entropy is opt-in)")
+	}
+	cfg, err := LoadFile(writeConfig(t, "detectors:\n  prefixes: true\n"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Detectors.HighEntropy {
+		t.Fatal("omitting detectors.high_entropy enabled it, want the off default")
+	}
+	cfg, err = LoadFile(writeConfig(t, "detectors:\n  high_entropy: true\n"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if !cfg.Detectors.HighEntropy {
+		t.Fatal("detectors.high_entropy: true did not enable the detector")
+	}
+}
+
+// TestScanBudgetAndTimeoutKeysAreParsed locks the two tuning keys: the
+// deterministic byte budget and the wall-clock backstop are read from YAML and
+// default to the documented values.
+func TestScanBudgetAndTimeoutKeysAreParsed(t *testing.T) {
+	cfg, err := LoadFile(writeConfig(t, "detectors:\n  scan_budget_bytes: 1048576\n  timeout: 7s\n"))
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if cfg.Detectors.ScanBudgetBytes != 1048576 {
+		t.Errorf("scan_budget_bytes = %d, want 1048576", cfg.Detectors.ScanBudgetBytes)
+	}
+	if cfg.Detectors.Timeout != 7*time.Second {
+		t.Errorf("timeout = %v, want 7s", cfg.Detectors.Timeout)
+	}
+	if got := Default().Detectors.ScanBudgetBytes; got != 32<<20 {
+		t.Errorf("default scan_budget_bytes = %d, want 32 MiB", got)
+	}
+	if got := Default().Detectors.Timeout; got != 30*time.Second {
+		t.Errorf("default timeout = %v, want 30s", got)
 	}
 }
 
@@ -92,8 +146,8 @@ func TestLoadFilePartialConfigKeepsDefaults(t *testing.T) {
 		t.Error("detectors.jwt = true, want explicit false")
 	}
 	d := cfg.Detectors
-	if !d.Prefix || !d.HighEntropy || !d.PrivateKey || !d.Luhn || !d.Email {
-		t.Errorf("detectors = %+v, want only jwt disabled", d)
+	if !d.Prefix || d.HighEntropy || !d.PrivateKey || !d.Luhn || !d.Email {
+		t.Errorf("detectors = %+v, want only jwt disabled and high_entropy at its off default", d)
 	}
 }
 

@@ -355,7 +355,7 @@ Tokenhush 用两个目录：存 `tokenhush.yaml` 的配置目录，存运行时�
 
 Tokenhush 从配置目录读 `tokenhush.yaml`，或从 `--config` 指定的路径读。文件不存在就用默认值。未知键会被拒绝，所以拼错会直接报错，不会悄悄忽略。
 
-最常改的设置：监听端口、六个检测器、白名单、日志级别，以及把主机或路径前缀路由到你自己的 OpenAI 兼容端点的 `upstreams` 映射。
+最常改的设置：监听端口、检测器开关（含默认关闭、需显式开启的 `high_entropy`）、扫描预算与检测器超时、白名单、日志级别，以及把主机或路径前缀路由到你自己的 OpenAI 兼容端点的 `upstreams` 映射。
 
 完整的带注释默认值和全部受支持的键见 [tool-setup.zh-CN.md](tool-setup.zh-CN.md#tokenhushyaml-参考)，本指南不重复 YAML 示例。
 

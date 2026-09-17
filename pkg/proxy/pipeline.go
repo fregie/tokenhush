@@ -48,6 +48,25 @@ const (
 	auditMethodPipeline   = "pipeline"
 )
 
+// DefaultScanBudget is the deterministic per-body byte budget a Pipeline
+// applies before it scans a request or response body. A body at or below the
+// budget is inspected normally; a body above it is refused before any detector
+// runs. Unlike a wall-clock timeout the verdict depends only on the input size,
+// so a slow or loaded machine cannot change it. The default is deliberately
+// generous (32 MiB) so the large legitimate agent bodies measured in the field
+// (up to ~24 MB) pass.
+const DefaultScanBudget int64 = 32 << 20
+
+// TypeScanBudgetExceeded is the Finding.Type of the deterministic over-budget
+// refusal. It is a metadata label: the finding carries no content, only the
+// byte counts of the limit and the body.
+const TypeScanBudgetExceeded = "scan_budget_exceeded"
+
+// scanBudgetPluginID labels the core-owned over-budget refusal in a Finding's
+// PluginID, so an operator sees the refusal came from the gateway itself rather
+// than from a registered detector.
+const scanBudgetPluginID = "core"
+
 // PipelineConfig assembles the W4.5 content pipeline.
 type PipelineConfig struct {
 	// Registry holds the compiled-in Inspectors and Transformers (W4.1). A nil
@@ -65,6 +84,12 @@ type PipelineConfig struct {
 	Sink audit.AuditSink
 	// Tool labels the content Document (for example "claude-code").
 	Tool string
+	// ScanBudget is the deterministic per-body byte budget in bytes. A body
+	// larger than it is refused before any detector runs; a body at or below it
+	// is scanned under the policy's wall-clock backstop. <= 0 means
+	// DefaultScanBudget. The verdict depends only on the input size, never on
+	// CPU speed or load (see DefaultScanBudget).
+	ScanBudget int64
 	// The fields below carry the C8 self-protection seam only: NewPipeline
 	// stores them for W6.1–W6.4, which own every interception, force-redaction,
 	// pattern-match and SSE-guard behaviour. Every zero value is a complete
@@ -174,6 +199,21 @@ type Pipeline struct {
 	// metadata-only audit row via noteBufferedGuardRefusal. The streaming
 	// path's refusals stay in streamGuardRefusals/streamGuardFailClosed.
 	selfProtectionInterceptions atomic.Uint64
+
+	// scanBudget is the deterministic per-body byte budget (see
+	// DefaultScanBudget). It is an atomic because the gateway may install a
+	// configured value through SetScanBudget before serving while a caller that
+	// built the pipeline with PipelineConfig.ScanBudget already set it; a zero
+	// value is never observed because NewPipeline normalizes it to the default.
+	scanBudget atomic.Int64
+
+	// contentPolicyBlocks counts every content-policy Block the pipeline
+	// applied — a value or key-guard finding, a FailClosed plugin failure, and
+	// the deterministic over-budget refusal. It is a metadata-only counter (no
+	// content) and backs /status. The increment lives in reportBlock, so every
+	// request-path and response-path block is counted exactly once, whether or
+	// not a RedactionReporter is installed.
+	contentPolicyBlocks atomic.Uint64
 }
 
 // NewPipeline builds the pipeline. It fails when cfg.Engine is nil, because no
@@ -202,6 +242,7 @@ func NewPipeline(cfg PipelineConfig) (*Pipeline, error) {
 		exclusions:            cfg.Exclusions,
 		controlToken:          cfg.ControlToken,
 	}
+	pipeline.scanBudget.Store(normalizeScanBudget(cfg.ScanBudget))
 	// W6.1 consumes the W0.3 seam at construction: while self-protection is
 	// armed, the effective exclusion set (Exclusions plus the non-empty control
 	// token) is derived once and installed on the engine, so the inbound
@@ -229,6 +270,50 @@ func (p *Pipeline) ResponseWalkFailures() uint64 {
 		return 0
 	}
 	return p.responseWalkFailures.Load()
+}
+
+// ContentPolicyBlocks reports how many content-policy Blocks this pipeline has
+// applied since it was built: a value or key-guard finding, a FailClosed plugin
+// failure and the deterministic over-budget refusal. It is a metadata-only
+// count (no content) and backs the /status content_policy_blocks field. A nil
+// receiver returns 0.
+func (p *Pipeline) ContentPolicyBlocks() uint64 {
+	if p == nil {
+		return 0
+	}
+	return p.contentPolicyBlocks.Load()
+}
+
+// ScanBudget returns the deterministic per-body byte budget currently in force.
+// A positive value is always returned, because NewPipeline normalizes a zero or
+// negative configured value to DefaultScanBudget. A nil receiver returns 0.
+func (p *Pipeline) ScanBudget() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.scanBudget.Load()
+}
+
+// SetScanBudget installs a configured byte budget. A value <= 0 restores
+// DefaultScanBudget. Call it before the gateway starts serving; the value is
+// held atomically so a later install is race-free, but the intended use is a
+// one-shot startup configuration (the core CLI applies the tokenhush.yaml
+// budget after BuildPipeline, because the ADR-0012 BuildOptions contract is
+// frozen and carries no budget field).
+func (p *Pipeline) SetScanBudget(budget int64) {
+	if p == nil {
+		return
+	}
+	p.scanBudget.Store(normalizeScanBudget(budget))
+}
+
+// normalizeScanBudget maps a configured budget to the effective one: a
+// non-positive value means DefaultScanBudget.
+func normalizeScanBudget(budget int64) int64 {
+	if budget <= 0 {
+		return DefaultScanBudget
+	}
+	return budget
 }
 
 // BlockedError reports that a content policy decision rejected the request or
@@ -262,7 +347,7 @@ func (p *Pipeline) TransformErrorHandler() TransformErrorFunc {
 	return func(w http.ResponseWriter, err error) bool {
 		var blocked *BlockedError
 		if errors.As(err, &blocked) {
-			http.Error(w, "blocked by content policy", http.StatusForbidden)
+			http.Error(w, blockedMessage(blocked.Findings), http.StatusForbidden)
 			return true
 		}
 		var egress *EgressBlockedError
@@ -315,6 +400,18 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 	if err != nil {
 		return body, fmt.Errorf("%w: %w", ErrUnwalkableBody, err)
 	}
+	// The deterministic scan budget is applied after the walk, so it only
+	// governs bodies the detectors would actually scan; a non-JSON body keeps
+	// its documented byte-for-byte passthrough unchanged.
+	if finding, over := p.overScanBudget(body); over {
+		decision := extension.Decision{
+			Phase:    extension.RequestContent,
+			Action:   extension.Block,
+			Findings: []extension.Finding{finding},
+		}
+		p.reportBlock(RedactionDirectionRequest, decision)
+		return nil, &BlockedError{Phase: extension.RequestContent, Findings: decision.Findings}
+	}
 	// W6.1 prepend step. It runs BEFORE p.policy.Evaluate — and therefore before
 	// every detector and the allowlist suppression inside detector.Inspect — and
 	// rewrites the body the rest of this transform operates on, so the
@@ -345,13 +442,13 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 			Action:   extension.Block,
 			Findings: keyFindings,
 		}
-		p.reportBlock(keyDecision)
+		p.reportBlock(RedactionDirectionRequest, keyDecision)
 		return nil, &BlockedError{Phase: extension.RequestContent, Findings: keyFindings}
 	}
 	var out []byte
 	switch decision.Action {
 	case extension.Block:
-		p.reportBlock(decision)
+		p.reportBlock(RedactionDirectionRequest, decision)
 		return nil, &BlockedError{Phase: decision.Phase, Findings: decision.Findings}
 	case extension.Redact:
 		redacted, err := p.redactBody(body, walked, decision.Findings)
@@ -374,6 +471,75 @@ func (p *Pipeline) transformRequest(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// overScanBudget reports whether body exceeds the deterministic scan budget and
+// returns the refusal Finding when it does. The decision depends only on
+// len(body), so it is identical on a fast and a slow machine, and the body is
+// never partially scanned. The finding carries byte counts only — never a byte
+// of content. A nil receiver has no budget (ScanBudget returns 0) and refuses
+// nothing.
+func (p *Pipeline) overScanBudget(body []byte) (extension.Finding, bool) {
+	limit := p.ScanBudget()
+	if limit <= 0 || int64(len(body)) <= limit {
+		return extension.Finding{}, false
+	}
+	return extension.Finding{
+		Type:       TypeScanBudgetExceeded,
+		Confidence: 1,
+		Action:     extension.Block,
+		PluginID:   scanBudgetPluginID,
+		Meta: map[string]any{
+			"reason":      "budget",
+			"limit_bytes": limit,
+			"body_bytes":  len(body),
+		},
+	}, true
+}
+
+// blockedMessage builds the 403 body for a content-policy block. It names the
+// finding type (the class: a detector type, plugin_failure for a fail-closed
+// detector failure, or scan_budget_exceeded for the over-budget refusal) and,
+// where the finding carries them, the plugin id and the failure reason. It
+// never emits content: Type, PluginID and the "reason" metadata are the only
+// fields read, and a block carries no matched bytes. The list is deduplicated
+// and capped so a many-finding block cannot produce an unbounded body; the
+// existing bytes are preserved as the prefix so a client that matched on the
+// old text keeps working.
+func blockedMessage(findings []extension.Finding) string {
+	const maxParts = 4
+	parts := make([]string, 0, maxParts)
+	seen := make(map[string]struct{}, len(findings))
+	for _, f := range findings {
+		class := f.Type
+		if class == "" {
+			class = "unknown"
+		}
+		var detail []string
+		if f.PluginID != "" {
+			detail = append(detail, "plugin="+f.PluginID)
+		}
+		if reason, ok := f.Meta["reason"].(string); ok && reason != "" {
+			detail = append(detail, "reason="+reason)
+		}
+		part := class
+		if len(detail) > 0 {
+			part += " (" + strings.Join(detail, ", ") + ")"
+		}
+		if _, dup := seen[part]; dup {
+			continue
+		}
+		seen[part] = struct{}{}
+		if len(parts) == maxParts {
+			parts = append(parts, "...")
+			break
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) == 0 {
+		return "blocked by content policy"
+	}
+	return "blocked by content policy: " + strings.Join(parts, "; ")
 }
 
 // redactBody rewrites the detected spans of every terminal leaf to core
@@ -451,6 +617,17 @@ func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 		return body, nil
 	}
 	if walked, err := protocol.Walk(body); err == nil {
+		// Scan budget after the walk: only a body the detectors would scan is
+		// subject to it, so an unparseable response keeps today's behaviour.
+		if finding, over := p.overScanBudget(body); over {
+			decision := extension.Decision{
+				Phase:    extension.ResponseContent,
+				Action:   extension.Block,
+				Findings: []extension.Finding{finding},
+			}
+			p.reportBlock(RedactionDirectionResponse, decision)
+			return nil, &BlockedError{Phase: extension.ResponseContent, Findings: decision.Findings}
+		}
 		// W6.3 mutation-channel guard. It rewrites the offending tool call's
 		// arguments to the refusal notice and returns the fresh walk; the value
 		// policy, ResponseContent transformers and backfill below then run on
@@ -466,6 +643,7 @@ func (p *Pipeline) transformResponse(body []byte, tool string) ([]byte, error) {
 			return nil, fmt.Errorf("proxy: evaluate response content: %w", evalErr)
 		}
 		if decision.Action == extension.Block {
+			p.reportBlock(RedactionDirectionResponse, decision)
 			return nil, &BlockedError{Phase: decision.Phase, Findings: decision.Findings}
 		}
 		if decision.Action == extension.Warn {
@@ -877,7 +1055,7 @@ func (w *pipelineResponseWriter) writeError(err error) {
 	w.Header().Del("Content-Encoding")
 	var blocked *BlockedError
 	if errors.As(err, &blocked) {
-		http.Error(w.dst, "blocked by content policy", http.StatusForbidden)
+		http.Error(w.dst, blockedMessage(blocked.Findings), http.StatusForbidden)
 		return
 	}
 	http.Error(w.dst, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)

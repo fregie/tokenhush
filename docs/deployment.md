@@ -355,7 +355,7 @@ The data directory holds:
 
 Tokenhush reads `tokenhush.yaml` from the config directory, or from the path passed to `--config`. A missing file means defaults. Unknown keys are rejected, so a typo fails loudly instead of being ignored.
 
-The settings you are most likely to touch: the listen port, the six detectors, the allowlist, the log level, and the `upstreams` map that routes a host or path prefix to your own OpenAI-compatible endpoint.
+The settings you are most likely to touch: the listen port, the detector switches (including the opt-in `high_entropy`), the scan budget and detector timeout, the allowlist, the log level, and the `upstreams` map that routes a host or path prefix to your own OpenAI-compatible endpoint.
 
 Full annotated defaults and every supported key live in [tool-setup.md](tool-setup.md#tokenhushyaml-reference); this guide does not repeat the YAML sample.
 

@@ -52,6 +52,19 @@ Tokenhush 本身就是安全工具，所以**它自己必须先安全**。本文
 
 这一不对称是刻意为之：会在可能泄露处 fail-closed，在不可能泄露处保持透明且可观测。
 
+### 确定性字节预算与墙钟兜底
+
+**检测器扫描多少内容**的上限是**字节预算**，不是计时器。任何检测器运行之前，管线先把 body 大小与 `detectors.scan_budget_bytes`（默认 **32 MiB**）比较。判定只取决于输入大小——与 CPU 速度或负载无关——因此慢机或高负载不会改变结果：
+
+- 体量**不超过**预算：照常检测，受下方兜底约束；
+- 体量**超过**预算：任何检测器运行之前即**拒绝**（HTTP 403）。绝不静默放行，也绝不部分扫描：整段 body 要么进入判定，要么在判定之外。
+
+预算背后是**墙钟兜底** `detectors.timeout`（默认**每次检测器调用 30s**）。它只为阻断运行时间无法由大小预测的病态检测器而存在，且刻意远高于正常大 body 的实测成本（一个 16 MB body 经 `high_entropy` 扫描实测约 5.5 s）。正常运行永不触达。
+
+**每一种失败模式都拒绝，且每次拒绝都有标签、被计数。** 超预算、超时、检测器报错、panic 与畸形 finding，在内置检测器一律随附的 `FailClosed` 策略下都会被折叠为 `Block`。403 body 会点明类别（超预算为 `scan_budget_exceeded`；检测器失败为 `plugin_failure`，并在策略保留时带上该检测器自身的类型），并在可得时带上 plugin id 与 reason（`budget`、`timeout`、`error`、`panic`、`malformed`），绝不含匹配字节。每次此类阻断都会让本会话的 `content_policy_blocks` 计数加一（`tokenhush status`）。超过预算是**按设计拒绝**的已文档化边界，不是静默放行；也不再是一句匿名的 `403 blocked by content policy`。
+
+即便一个大 body 是合法的，超预算也照样拒绝：把 `detectors.scan_budget_bytes` 调大是操作者显式选择扫描更多，它不会让判定依赖于机器快慢。
+
 ## 📌 具名路由例外清单
 
 网关**拒绝猜测**未知请求的上游：未知路径是明确的类型化错误（`ErrUnknownUpstream`），绝不静默错路由。只有一份**具名例外清单**，且一条路径能进清单的唯一理由是：该调用不携带用户数据，且所有提供商的服务方式完全一致：
@@ -67,7 +80,7 @@ Tokenhush 本身就是安全工具，所以**它自己必须先安全**。本文
 - **假阳性（过度脱敏）** 伤体验：模型收到占位符，代码或回答质量下降。
 - **假阴性（脱敏不足）** 伤承诺：敏感内容离开本机。
 
-V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵、JWT、私钥头、Luhn 卡号校验和、电子邮件地址），再配白名单（`tokenhush.yaml` 的静态键，加上只经控制面变更且逐次审计的运行期 store）和一键放行。本项目**不**声称“永不泄露”。诚实的说法是**“高置信密钥拦截”**。
+V1 用**确定性、高精度优先的检测器**，再配白名单（`tokenhush.yaml` 的静态键，加上只经控制面变更且逐次审计的运行期 store）和一键放行。默认启用的值域检测器是：已知密钥前缀（`prefix`）、JWT、PEM 私钥头、Luhn 卡号校验和、电子邮件地址。第六个 **`high_entropy`**（看似随机的字符串）已接线但**默认关闭**：它是更弱的信号，其结构化豁免在真实 agent 流量上仍产生误报——长工具名与会话 id 被当成密钥脱敏，破坏了函数调用——因此对默认安装而言代价超过收益。用户可用 `detectors.high_entropy: true` 显式开启并接受那些误报。关闭它是**精度**取舍，不是削弱其它网：键位/内容守卫、带 `StructuralIdentifierContains` 的出站复核、已知密钥匹配与规则包匹配均未改变。本项目**不**声称“永不泄露”。诚实的说法是**“高置信密钥拦截”**；在 `high_entropy` 关闭时，一个格式不被其它任何网覆盖的未知首见密钥会被放行（见「已知限制」）。
 
 ## 🔎 检测范围：值域与对象键
 
@@ -108,7 +121,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 这一对窄口径值是通用回填行为唯一的例外；其它任何值的回填行为逐字节未变。排除集**刻意不含**白名单条目的值，因此操作者已放行的值仍会通过。
 
-**可观测性。** 每次拒绝与每次白名单变更都只留元数据，不含明文、不含条目值；`tokenhush status` 暴露以下计数：`self_protection_interceptions`、`allowlist_mutations`、`stream_guard_refusals`、`stream_guard_fail_closed`、`egress_blocks`。这些计数按网关会话计：`tokenhush status` 读取 `<DataDir>/run.json` 指向的会话，因此对另一个会话或数据目录执行 status 只会得到该会话的计数，而不是另一个网关实例的。
+**可观测性。** 每次拒绝与每次白名单变更都只留元数据，不含明文、不含条目值；`tokenhush status` 暴露以下计数：`self_protection_interceptions`、`allowlist_mutations`、`stream_guard_refusals`、`stream_guard_fail_closed`、`egress_blocks`、`content_policy_blocks`（最后一个统计每一次内容策略阻断，含超预算与 fail-closed 检测器拒绝）。这些计数按网关会话计：`tokenhush status` 读取 `<DataDir>/run.json` 指向的会话，因此对另一个会话或数据目录执行 status 只会得到该会话的计数，而不是另一个网关实例的。
 
 ### 已知限制与不覆盖类别（汇总）
 
@@ -149,9 +162,15 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 17. **经另一条命令参数触达的间接执行、以及未建模的包装，不被检查。** 执行边界规则把作为另一条命令参数的受守护 token——`echo "<CLI 形式>" | sh`、`xargs`、`find -exec`、包装名单未建模的包装 flag（例如 `sudo -u root …`），或运行期拼接的命令文本——当作**提及**，因此不拒绝。这是经提及豁免触达的「间接执行」类（第 2 条），不是新增的变更通路：白名单仍只能由人类操作者经已鉴权控制面变更，而 control token 强制脱敏、白名单文件排除集与出站复核都独立于本守卫。这是放行侧的刻意代价：点名 CLI 形式的裸散文提及如今也放行（它无法执行任何东西），而真正的调用需要规则识别的段起点。内容型文件工具名单与非行动载体工具名单是同一种信任：它们按 `function.name` 判定，因此把行动工具命名为载体或内容型工具的 harness 会绕过对应类，而 file-write 类与各独立兜底不变。
 
+**检测器覆盖（`high_entropy` 默认关闭）**
+
+18. **`high_entropy` 关闭时，一个格式不被规则包覆盖的未知首见密钥不会被捕获。** 默认安装运行值域检测器（`prefix`、`jwt`、`private_key`、`luhn`、`email`）、键位/内容守卫（`keyguard`，限定 `{api_key, jwt, private_key}`）、已同步规则包、control token 强制脱敏，以及带 `StructuralIdentifierContains` 的出站复核。一个不被其中任何一项匹配的不透明凭据——例如既无已知前缀、也无规则包规则的随机 token——会被**放行**。这是放弃那个误报破坏真实函数调用的检测器的刻意代价；`detectors.high_entropy: true` 可恢复该网，代价是那些误报。这是精度取舍，不是闭合声明。
+
 ## ⚠️ 已知限制
 
 如实列出，以免此处任何一句被读成已闭合的保证。全文的诚实口径是**高置信拦截**。
+
+- **`high_entropy` 默认关闭：一个格式不被其它任何项覆盖的未知首见密钥会被放行。** 仍然生效的是：已知密钥匹配（本会话已映射为占位符的密钥在出站被 `StructuralIdentifierContains` 与键位兜底拒绝）、键位/内容守卫、已同步规则包、control token 强制脱敏，以及上述检测器集。与其中任何一项形状都不共享的**新**密钥会离开本机。用 `detectors.high_entropy: true` 可恢复高熵检测（并接受已文档化的、对长工具名 / 会话 id 之类 agent 流量结构的误报）。这正是“高置信拦截、而非闭合”的口径：此处明写，而不是留作隐含。
 
 - **`high_entropy` 对纯 hex 的排除同样作用于键域。** 该检测器本就不标记只由 hex 字符构成的运行（避免对哈希与 ID 误报）。同一排除也作用于对象键位，故**纯 hex** 的密钥置于对象键**不会被拦**。这与值域是同一排除、并非新增缺口；由 `TestPipelinePureHexKeysNotBlocked` 钉死。
 - **`high_entropy` 的结构化豁免是已文档化的跳过。** 规范的服务商 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、请求/追踪/任务 id（`req_…`、`trace_…`、`span_…`、`run_…`、`job_…`、`build_…`）、前缀哈希 / SRI 值（`sha512-…`）、data-URI base64 载荷、载荷类键的字符串值（即使低于 128 字节载荷下限）、长度 ≥ 128 字节的 base64 字母表运行、以及含长哈希的绝对或相对路径在两个域都不被当作密钥。引擎已知的密钥若位于此类运行中，出站复核仍会拒绝（`StructuralIdentifierContains`，403、上游零字节，由 `TestHighEntropyStructuralExemptionEgressBypassBlocked` 钉死）；引擎**未知**的该形态密钥即记录在案的残余风险。`high_entropy` 也不再是键位检测器，故未知的高熵对象键会被放行；**已知**密钥以键的形式重发仍被出站复核拒绝（由 `TestPipelineKnownSecretKeyStillBlockedAtEgress` 钉死）。语法在 `KnownStructuralIdentifierExemptions()` 中枚举并镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`。不主张任何覆盖保证。

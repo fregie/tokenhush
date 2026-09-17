@@ -200,11 +200,13 @@ listen:
   port: 8787           # 1..65535
 detectors:
   prefixes: true       # 已知密钥前缀（sk-、AKIA、ghp_、...）
-  high_entropy: true   # 高熵字符串
+  high_entropy: false  # 默认关闭；显式置 true 才启用（见下方精度说明）
   jwt: true            # JWT
   private_keys: true   # PEM 私钥头
   luhn: true           # 卡号（Luhn）
   email: true          # 电子邮件地址
+  scan_budget_bytes: 33554432  # 确定性扫描预算（32 MiB）；超过即拒绝，绝不部分扫描
+  timeout: 30s                 # 单次检测器调用的墙钟兜底；大默认值，正常运行永不触达
 allowlist: []          # 在列期间永不脱敏的字面量；运行时白名单与其并集生效
 self_protection:       # 变更通道自保护；默认开启
   enabled: true        # false 为显式退出
@@ -219,8 +221,9 @@ upstreams:             # 主机或路径前缀 -> 上游基础 URL
 要点：
 
 - `listen.host` 只接受环回地址。网关**绝不**绑定 `0.0.0.0` 或空主机。它始终绑 `127.0.0.1`；主机有 IPv6 环回时同时绑 `[::1]`，没有时只服务 `127.0.0.1` 并打印提示。
-- 六个确定性检测器，高精度：密钥前缀、高熵字符串、JWT、PEM 私钥头、Luhn 卡号、电子邮件。命中生成稳定占位符，如 `__PII_email_9f2c8a4b6d1e__`，上游拿不到原始值。
+- 默认开启五个确定性、高精度检测器：密钥前缀、JWT、PEM 私钥头、Luhn 卡号、电子邮件。`high_entropy` 已接线但**默认关闭**（用 `high_entropy: true` 显式开启）：它是更弱的信号，其结构化豁免在真实 agent 流量上仍产生误报（长工具名与会话 id 被当成密钥脱敏，破坏了函数调用），代价超过收益。命中生成稳定占位符，如 `__PII_email_9f2c8a4b6d1e__`，上游拿不到原始值。
 - `prefixes` 对应检测器 id `prefix`，`private_keys` 对应 `private_key`（见 `pkg/config` 注释）。
+- `scan_budget_bytes`（默认 32 MiB）是**确定性**扫描预算：判定只取决于请求/响应体大小，与 CPU 速度或负载无关。体量不超过预算则照常检测（受墙钟兜底约束）；超过则任何检测器运行前即**拒绝**——绝不静默放行，也绝不部分扫描。`timeout`（默认 30s）是宽松的墙钟兜底，只为阻断病态检测器而存在，正常运行永不触达。完整失败策略见 [security.zh-CN.md](security.zh-CN.md#失败策略按路径分级)。
 - `allowlist` 放**在列期间**不脱敏的字面量。运行时白名单出现后静态条目仍然生效：启动时它们作为种子导入运行时 store，且本键继续被读取——最终生效集合是两者的**并集**，而不是替换。每条必须非空、不含控制字符、长度不超过 4096 字节。运行期白名单持久化在 `<DataDir>/allowlist.json`（`0600`、带 `schema_version`、**非** session file），且只经环回控制面变更：`tokenhush allowlist list|add|remove`、`GET|POST|DELETE /allowlist`，或 Pro Web UI。变更立即生效、无需重启，且每次变更写一条仅元数据审计行。
 - `self_protection` 保护变更通道（`tokenhush allowlist` CLI、环回控制端口、直写白名单文件），默认开启且三个模式全开。`enabled: true` 时 `modes:` 不得为空列表（省略该键则保留三个默认模式）；`enabled: false` 是显式退出。排除集本身刻意不可配置：它在运行时由 control token 值与白名单文件内容派生。该守护是**高置信拦截、best-effort**，而非闭合；已知不覆盖的通道列在[变更通道自保护](security.zh-CN.md#变更通道自保护)一节。
 - 核心配置里没有 `audit:` 键：仍带该键的配置会加载失败。审计块位于私有 Pro 层；公开核心只保留仅元数据的审计接缝。

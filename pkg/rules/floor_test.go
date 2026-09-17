@@ -64,11 +64,11 @@ func TestFloorAllowsCompliantPack(t *testing.T) {
 // same is rejected.
 func TestFloorIsIndependentOfLocalDetectorConfig(t *testing.T) {
 	local := config.Default()
-	if got := len(local.Detectors.EnabledIDs()); got != 6 {
-		t.Fatalf("default EnabledIDs = %d, want 6", got)
+	if got := len(local.Detectors.EnabledIDs()); got != 5 {
+		t.Fatalf("default EnabledIDs = %d, want 5 (high_entropy is opt-in)", got)
 	}
 	local.Detectors.Prefix = false
-	if ids := local.Detectors.EnabledIDs(); len(ids) != 5 || ids[0] == config.DetectorPrefix {
+	if ids := local.Detectors.EnabledIDs(); len(ids) != 4 || ids[0] == config.DetectorPrefix {
 		t.Fatalf("local disable changed semantics: %v", ids)
 	}
 

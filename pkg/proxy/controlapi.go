@@ -84,6 +84,12 @@ type ControlStatus struct {
 	// EgressBlocks counts outbound request bodies the W2.3 egress re-check
 	// blocked this session.
 	EgressBlocks uint64 `json:"egress_blocks"`
+	// ContentPolicyBlocks counts every content-policy Block this session: a
+	// detector finding, the key-position guard, a FailClosed detector failure
+	// (panic, timeout, error, malformed finding, over-budget) and the
+	// deterministic over-budget refusal. Metadata only: no content, no matched
+	// bytes and no allowlist entry is ever part of /status.
+	ContentPolicyBlocks uint64 `json:"content_policy_blocks"`
 }
 
 // ControlStatusFunc returns a fresh status snapshot. It is called on every
