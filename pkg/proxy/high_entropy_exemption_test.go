@@ -32,12 +32,17 @@ func highEntropyExemptionFixtures(secret string) []struct {
 } {
 	hex40 := strings.Repeat("ab12", 10)
 	filler := strings.Repeat("aB3dE5gH7jK9mN1pQ3sU5wY7", 8)
+	shortFiller := strings.Repeat("aB3d", 10)
 	return []struct {
 		name        string
 		payload     string
 		loadBearing bool
 	}{
 		{name: "structural_identifier", payload: "call_" + secret, loadBearing: true},
+		{name: "request_id", payload: "req_" + secret, loadBearing: true},
+		{name: "prefixed_hash_sri", payload: "sha512-" + secret, loadBearing: true},
+		{name: "payload_key_value", payload: `{"file_data":"` + shortFiller + secret + `"}`, loadBearing: true},
+		{name: "relative_hashed_artifact_path", payload: "dist/" + hex40 + "/" + secret + "/out", loadBearing: true},
 		{name: "data_uri_raw_run", payload: "data:image/png;base64," + secret, loadBearing: true},
 		{name: "payload_length_run", payload: filler + secret + filler, loadBearing: true},
 		{name: "hashed_artifact_path_raw_run", payload: "/tmp/build/" + hex40 + "/" + secret + "/out", loadBearing: true},

@@ -41,6 +41,13 @@ type span struct {
 // invalid UTF-8, and must never panic.
 type finderFunc func(content []byte) []span
 
+// pathFinderFunc scans one leaf's content together with its JSON Pointer path,
+// so a detector whose precision depends on the member name can consult it.
+// high_entropy uses it for the inline payload-key exemption: a leaf that is the
+// string value of a payload-carrying key is exempt below the payload length
+// floor, and the value alone does not carry its member name.
+type pathFinderFunc func(content []byte, path string) []span
+
 // Allowlist holds literal strings that are never redacted: a finding is
 // suppressed when its span lies inside one occurrence of a listed literal.
 // Empty literals are dropped because they would suppress every finding.
@@ -121,6 +128,7 @@ type detector struct {
 	finding     string
 	confidence  float64
 	find        finderFunc
+	findPath    pathFinderFunc
 	allow       *Allowlist
 	allowSource func() []string
 }
@@ -133,6 +141,21 @@ func newDetector(id, finding string, confidence float64, find finderFunc, opts [
 		finding:     finding,
 		confidence:  confidence,
 		find:        find,
+		allow:       cfg.allowlist,
+		allowSource: cfg.allowlistSource,
+	}
+}
+
+// newPathDetector assembles a built-in detector whose finder also sees the
+// leaf's JSON Pointer path. It mirrors newDetector; exactly one of find/findPath
+// is set.
+func newPathDetector(id, finding string, confidence float64, find pathFinderFunc, opts []Option) extension.Inspector {
+	cfg := newDetectorConfig(opts)
+	return &detector{
+		id:          id,
+		finding:     finding,
+		confidence:  confidence,
+		findPath:    find,
 		allow:       cfg.allowlist,
 		allowSource: cfg.allowlistSource,
 	}
@@ -171,7 +194,7 @@ func (d *detector) Inspect(doc *extension.Document) ([]extension.Finding, error)
 		if len(content) == 0 {
 			continue
 		}
-		for _, s := range d.find(content) {
+		for _, s := range d.spans(content, doc.Leaves[i].Path) {
 			if s.start < 0 || s.start >= s.end || s.end > len(content) {
 				continue
 			}
@@ -191,6 +214,15 @@ func (d *detector) Inspect(doc *extension.Document) ([]extension.Finding, error)
 	}
 	sortFindings(findings)
 	return findings, nil
+}
+
+// spans runs the detector's finder over one leaf, selecting the path-aware
+// variant when one was installed.
+func (d *detector) spans(content []byte, path string) []span {
+	if d.findPath != nil {
+		return d.findPath(content, path)
+	}
+	return d.find(content)
 }
 
 // sortFindings orders findings by (LeafIndex, Start, End).

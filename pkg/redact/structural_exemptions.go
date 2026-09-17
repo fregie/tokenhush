@@ -19,9 +19,12 @@ var knownStructuralIdentifierExemptions = []string{
 	"chatcmpl- + 16 or more of [A-Za-z0-9] (OpenAI chat-completion id)",
 	"msg_ + 16 or more of [A-Za-z0-9] (Anthropic message id)",
 	"resp_ + 16 or more of [A-Za-z0-9] (OpenAI response id)",
+	"req_/trace_/span_/run_/job_/build_ + 16 or more of [A-Za-z0-9_-] (common request/trace/job id)",
+	"sha1-/sha256-/sha384-/sha512-/md5-/blake2b-/blake3- + 16 or more of [A-Za-z0-9+/=] (Subresource Integrity / npm integrity hash)",
 	"data: + <mime>[;param];base64, + a run of 28 or more of [A-Za-z0-9+/=_-] immediately after the marker (data-URI payload: an image or attachment body, not a credential)",
+	"a base64-alphabet run that is the JSON string value of a payload-carrying key (file_data, data, b64, base64, blob, payload, attachment, image_url, audio, content_bytes), at any length (inline payload the model must read)",
 	"a base64-alphabet run of 128 or more of [A-Za-z0-9+/=_-] (opaque payload; real credentials are short, while multimodal and attachment bodies are long)",
-	"an absolute path starting with / and using path characters, containing a hex segment of 32 or more of [0-9a-fA-F] (hash-addressed artifact path)",
+	"an absolute or relative path using path characters, containing a hex segment of 32 or more of [0-9a-fA-F] (hash-addressed artifact path)",
 	"a secret that fits one of the grammars above is not redacted by high_entropy; a known secret inside such a run is still refused by the outbound re-check, an unknown one is the recorded residual risk",
 }
 
