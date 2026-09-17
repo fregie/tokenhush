@@ -1,0 +1,28 @@
+# Release publication (GitHub Releases, package-manager taps) is out of scope
+# for this plan. This file only pins the portable, CGO-free build matrix and
+# the checksum artefact that the later release wave will publish.
+version: 2
+
+builds:
+  - id: tokenhush
+    binary: tokenhush
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - arm64
+      - amd64
+    # Effective target set: darwin/arm64, linux/amd64, windows/amd64.
+    ignore:
+      - goos: darwin
+        goarch: amd64
+      - goos: linux
+        goarch: arm64
+      - goos: windows
+        goarch: arm64
+
+checksum:
+  name_template: "checksums.txt"
