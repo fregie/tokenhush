@@ -1,0 +1,10 @@
+# Build output
+tokenhush
+tokenhush.exe
+/dist/
+*.test
+*.out
+
+# Local tooling state — never committed
+.omo/
+.codegraph
