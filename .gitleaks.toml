@@ -1,0 +1,12 @@
+title = "tokenhush"
+
+[extend]
+useDefault = true
+
+# Synthetic fixtures and local plan state are not secrets.
+[allowlist]
+description = "testdata fixtures and .omo plan state are never real credentials"
+paths = [
+  '''testdata/''',
+  '''\.omo/''',
+]

@@ -1,0 +1,20 @@
+# Error-swallowing and nil-safety checks required by the plan.
+# Deliberately limited to the verified-clean set; unused/gocritic/nilerr trip
+# on existing guard-test fixtures outside the scope of this change.
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck      # error-swallowing
+    - govet         # correctness / nil safety
+    - staticcheck   # correctness / nil safety
+    - ineffassign
+    - nilnil
+    - errorlint
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
