@@ -106,7 +106,7 @@ The allowlist is the one runtime affordance that can stop a specific value from 
 
 This narrow pair is the only exception to the general backfill behaviour; every other value's backfill behaviour is byte-for-byte unchanged. The set deliberately does **not** contain allowlist entry values, so a value the operator has allowed still passes through.
 
-**Observability.** Every refusal and every allowlist change is recorded as metadata only, with no plaintext and no entry values, and `tokenhush status` exposes the counts: `self_protection_interceptions`, `allowlist_mutations`, `stream_guard_refusals`, `stream_guard_fail_closed` and `egress_blocks`.
+**Observability.** Every refusal and every allowlist change is recorded as metadata only, with no plaintext and no entry values, and `tokenhush status` exposes the counts: `self_protection_interceptions`, `allowlist_mutations`, `stream_guard_refusals`, `stream_guard_fail_closed` and `egress_blocks`. The counts are per gateway session: `tokenhush status` reads the session named by `<DataDir>/run.json`, so a status read against a different session or data directory reports that session's counts, not another gateway's.
 
 ### Known limits and uncovered classes (aggregate)
 

@@ -108,7 +108,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 这一对窄口径值是通用回填行为唯一的例外；其它任何值的回填行为逐字节未变。排除集**刻意不含**白名单条目的值，因此操作者已放行的值仍会通过。
 
-**可观测性。** 每次拒绝与每次白名单变更都只留元数据，不含明文、不含条目值；`tokenhush status` 暴露以下计数：`self_protection_interceptions`、`allowlist_mutations`、`stream_guard_refusals`、`stream_guard_fail_closed`、`egress_blocks`。
+**可观测性。** 每次拒绝与每次白名单变更都只留元数据，不含明文、不含条目值；`tokenhush status` 暴露以下计数：`self_protection_interceptions`、`allowlist_mutations`、`stream_guard_refusals`、`stream_guard_fail_closed`、`egress_blocks`。这些计数按网关会话计：`tokenhush status` 读取 `<DataDir>/run.json` 指向的会话，因此对另一个会话或数据目录执行 status 只会得到该会话的计数，而不是另一个网关实例的。
 
 ### 已知限制与不覆盖类别（汇总）
 

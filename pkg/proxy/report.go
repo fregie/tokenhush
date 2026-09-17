@@ -179,10 +179,12 @@ func (p *Pipeline) noteResponseWalkFailure(action string) {
 }
 
 // reportMutationChannelBlock emits one metadata-only event for a tool call the
-// C8 guard rewrote to the refusal notice. W6.5 consumes this event for its
-// audit row and status counter; W6.3 adds no counter of its own. The matched
-// channel class is metadata, and no arguments, path or content byte is
-// reported.
+// C8 guard rewrote to the refusal notice. It is called only by the two counted
+// refusal hooks — noteBufferedGuardRefusal (SelfProtectionInterceptions) and
+// noteStreamingGuardRefusal (StreamGuardRefusals/StreamGuardFailClosed) — each
+// of which increments its counter before emitting, so this function adds no
+// counter of its own. The matched channel class is metadata, and no arguments,
+// path or content byte is reported.
 func (p *Pipeline) reportMutationChannelBlock(class string) {
 	if p == nil {
 		return
