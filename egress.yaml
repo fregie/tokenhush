@@ -1,0 +1,15 @@
+# Vendor-bound egress declaration (invariant 6). Exactly two switchable
+# categories, each naming its environment switch, the vendor host it would
+# reach and its retention. This file is the single source of truth:
+# `go generate ./internal/cli` renders it into internal/cli/egress_generated.go,
+# and `tokenhush privacy` prints the rendered disclosure.
+version: 1
+categories:
+  - name: update-check
+    switch: TOKENHUSH_NO_UPDATE_CHECK
+    host: updates.tokenhush.com
+    retention: "Vendor access logs and request records are retained for 30 days."
+  - name: rule-sync
+    switch: TOKENHUSH_NO_RULE_SYNC
+    host: updates.tokenhush.com
+    retention: "Vendor access logs and request records are retained for 30 days."

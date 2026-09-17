@@ -2,31 +2,40 @@
 // vendor-bound egress categories, each naming its switch, and every switch
 // short-circuits before any network call.
 //
-// Consumer todos that extend this guard:
-//   - W6.3 owns egress.yaml (the disclosure half below): TestEgressGuardProductTree
-//     reads it and runs checkDisclosure once it exists; until then the product
-//     test skips with the recorded "egress" guard id.
-//   - W4.8 owns pkg/proxy (the no-dial half): when pkg/proxy lands, extend this
-//     file to assert every switch named in egress.yaml is consulted before any
-//     dial. The no-dial half intentionally has no code yet, so this guard never
-//     fails on absence - only on a present-but-forbidden disclosure.
+// The three halves:
+//   - disclosure (W6.3): TestEgressGuardProductTree reads egress.yaml, asserts
+//     exactly two categories with their switches, that every host is the frozen
+//     supply host and that every retention is disclosed;
+//   - short-circuit (W6.3): TestEgressGuardSwitchesShortCircuit proves each
+//     disclosed switch returns before any request, in the supply layer with a
+//     counting fetcher and at the product boundary through the real CLI;
+//   - no-dial (W4.8): TestEgressGuardNoVendorDial serves a request through
+//     pkg/proxy and asserts exactly the stub upstream was dialled.
+//
+// The guard never fails on absence - only on a present-but-forbidden
+// disclosure.
 package guards
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/fregie/tokenhush/internal/cli"
 	"github.com/fregie/tokenhush/pkg/proxy"
+	"github.com/fregie/tokenhush/pkg/supply"
 )
 
 // reservedDisclosureKeys are YAML keys that introduce the disclosure document
@@ -43,10 +52,28 @@ var reservedDisclosureKeys = map[string]bool{
 	"description": true,
 	"enabled":     true,
 	"default":     true,
+	"host":        true,
+	"retention":   true,
+	"id":          true,
+	"status":      true,
+	"title":       true,
+	"purpose":     true,
+	"fields":      true,
+	"updated":     true,
+	"items":       true,
 }
 
-// checkDisclosure parses a simple YAML-ish egress disclosure and reports every
-// violation of Invariant 6. It accepts either the list form:
+// egressCategory is one parsed disclosure category: its name, its environment
+// switch, the vendor host it would reach and its retention.
+type egressCategory struct {
+	Name      string
+	Switch    string
+	Host      string
+	Retention string
+}
+
+// egressCategories parses a simple YAML-ish egress disclosure and returns its
+// categories in document order. It accepts either the list form:
 //
 //	egress:
 //	  - name: provider
@@ -58,9 +85,8 @@ var reservedDisclosureKeys = map[string]bool{
 //	  provider:
 //	    switch: TOKENHUSH_EGRESS_PROVIDER
 //
-// and requires exactly two categories, each naming a distinct, non-empty
-// switch. The result is sorted and deduplicated.
-func checkDisclosure(text string) []string {
+// empty reports a document with no content lines at all.
+func egressCategories(text string) (categories []egressCategory, empty bool) {
 	var lines []string
 	for _, raw := range strings.Split(text, "\n") {
 		line := strings.TrimSpace(raw)
@@ -70,26 +96,19 @@ func checkDisclosure(text string) []string {
 		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
-		return []string{"disclosure is empty"}
+		return nil, true
 	}
 
-	type category struct {
-		name       string
-		switchName string
-	}
-	var (
-		categories []category
-		current    *category
-	)
+	var current *egressCategory
 	flush := func() {
 		if current != nil {
 			categories = append(categories, *current)
 			current = nil
 		}
 	}
-	ensure := func() *category {
+	ensure := func() *egressCategory {
 		if current == nil {
-			current = &category{}
+			current = &egressCategory{}
 		}
 		return current
 	}
@@ -98,18 +117,26 @@ func checkDisclosure(text string) []string {
 		if strings.HasPrefix(line, "-") {
 			flush()
 			rest := strings.TrimSpace(strings.TrimPrefix(line, "-"))
-			cat := &category{}
+			cat := &egressCategory{}
 			if value, ok := disclosureValue(rest, "name"); ok {
-				cat.name = value
+				cat.Name = value
 			}
 			if value, ok := disclosureValue(rest, "category"); ok {
-				cat.name = value
+				cat.Name = value
 			}
 			current = cat
 			continue
 		}
 		if value, ok := disclosureValue(line, "switch"); ok {
-			ensure().switchName = value
+			ensure().Switch = value
+			continue
+		}
+		if value, ok := disclosureValue(line, "host"); ok {
+			ensure().Host = value
+			continue
+		}
+		if value, ok := disclosureValue(line, "retention"); ok {
+			ensure().Retention = value
 			continue
 		}
 		if strings.HasSuffix(line, ":") {
@@ -118,11 +145,22 @@ func checkDisclosure(text string) []string {
 				continue
 			}
 			flush()
-			current = &category{name: key}
+			current = &egressCategory{Name: key}
 			continue
 		}
 	}
 	flush()
+	return categories, false
+}
+
+// checkDisclosure parses a simple YAML-ish egress disclosure and reports every
+// violation of Invariant 6: it requires exactly two categories, each naming a
+// distinct, non-empty switch. The result is sorted and deduplicated.
+func checkDisclosure(text string) []string {
+	categories, empty := egressCategories(text)
+	if empty {
+		return []string{"disclosure is empty"}
+	}
 
 	var violations []string
 	if len(categories) != 2 {
@@ -130,18 +168,18 @@ func checkDisclosure(text string) []string {
 	}
 	switches := map[string]bool{}
 	for _, cat := range categories {
-		if cat.switchName == "" {
-			name := cat.name
+		if cat.Switch == "" {
+			name := cat.Name
 			if name == "" {
 				name = "<unnamed>"
 			}
 			violations = append(violations, fmt.Sprintf("category %s does not name a switch", name))
 			continue
 		}
-		if switches[cat.switchName] {
-			violations = append(violations, fmt.Sprintf("duplicate switch %s", cat.switchName))
+		if switches[cat.Switch] {
+			violations = append(violations, fmt.Sprintf("duplicate switch %s", cat.Switch))
 		}
-		switches[cat.switchName] = true
+		switches[cat.Switch] = true
 	}
 	sort.Strings(violations)
 	return guardsUniqueStrings(violations)
@@ -206,10 +244,14 @@ func TestEgressGuardRejectsBadDisclosure(t *testing.T) {
 	}
 }
 
-// TestEgressGuardProductTree checks the real egress disclosure. It skips (with
-// the recorded "egress" guard id) until egress.yaml exists, so every wave stays
-// green while the disclosure half is absent. pkg/proxy (the no-dial half) is
-// owned by W4.8 and will be asserted here once it lands.
+// supplyChannelHost is the one vendor host the two disclosed egress categories
+// may reach: the frozen supply base URL's host. A disclosure naming any other
+// host is a lie about where the product connects.
+var supplyChannelHost = strings.TrimPrefix(supply.BaseURL, "https://")
+
+// TestEgressGuardProductTree checks the real egress disclosure: exactly two
+// categories, each naming its switch, and every category reaching the frozen
+// supply host with a disclosed retention.
 func TestEgressGuardProductTree(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "egress.yaml")
@@ -223,6 +265,150 @@ func TestEgressGuardProductTree(t *testing.T) {
 	}
 	for _, violation := range checkDisclosure(string(data)) {
 		t.Error(violation)
+	}
+
+	categories, _ := egressCategories(string(data))
+	if len(categories) != 2 {
+		return
+	}
+	switches := make([]string, 0, len(categories))
+	for _, category := range categories {
+		switches = append(switches, category.Switch)
+		if category.Host != supplyChannelHost {
+			t.Errorf("category %s names host %q, want the frozen supply host %q", category.Name, category.Host, supplyChannelHost)
+		}
+		if category.Retention == "" {
+			t.Errorf("category %s does not disclose its retention", category.Name)
+		}
+	}
+	sort.Strings(switches)
+	wantSwitches := []string{"TOKENHUSH_NO_RULE_SYNC", "TOKENHUSH_NO_UPDATE_CHECK"}
+	if !slices.Equal(switches, wantSwitches) {
+		t.Errorf("disclosed switches = %v, want exactly %v", switches, wantSwitches)
+	}
+}
+
+// egressGuardFetcher records every fetch attempt and refuses to serve one, so
+// a short-circuit can be proven by the call count alone.
+type egressGuardFetcher struct{ calls atomic.Int64 }
+
+func (f *egressGuardFetcher) Get(context.Context, string) ([]byte, error) {
+	f.calls.Add(1)
+	return nil, errors.New("egress guard: fetch blocked")
+}
+
+func (f *egressGuardFetcher) invoked() int64 { return f.calls.Load() }
+
+// egressGuardVerifier refuses every signature: a disabled switch must return
+// before verification is ever reached.
+type egressGuardVerifier struct{}
+
+func (egressGuardVerifier) Verify(string, string, []byte, []byte) error {
+	return errors.New("egress guard: verifier must not be reached")
+}
+
+// guardsRunCLI runs the real CLI entry point and captures its stdout.
+func guardsRunCLI(t *testing.T, args ...string) (int, string) {
+	t.Helper()
+	original := os.Stdout
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = writer
+	code := cli.Main(args)
+	os.Stdout = original
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close pipe writer: %v", err)
+	}
+	out, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close pipe reader: %v", err)
+	}
+	return code, string(out)
+}
+
+// TestEgressGuardSwitchesShortCircuit proves every disclosed switch returns
+// before any network call: the rules switch at the supply layer, where a
+// counting fetcher sees zero requests, and both switches at the product
+// boundary, where `tokenhush rules sync` and `tokenhush update` print that no
+// request was sent.
+func TestEgressGuardSwitchesShortCircuit(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "egress.yaml"))
+	if err != nil {
+		t.Fatalf("read egress.yaml: %v", err)
+	}
+	categories, _ := egressCategories(string(data))
+	if len(categories) != 2 {
+		t.Fatalf("egress.yaml declares %d categories, want the two the switches belong to", len(categories))
+	}
+
+	t.Run("the rules switch short-circuits the signed sync", func(t *testing.T) {
+		counted := &egressGuardFetcher{}
+		syncer, err := supply.NewRulesSync(supply.RulesSyncConfig{
+			DataDir: t.TempDir(), Fetcher: counted, Verifier: egressGuardVerifier{},
+			LookupEnv: func(name string) (string, bool) {
+				if name == "TOKENHUSH_NO_RULE_SYNC" {
+					return "1", true
+				}
+				return "", false
+			},
+		})
+		if err != nil {
+			t.Fatalf("NewRulesSync: %v", err)
+		}
+		if err := syncer.Sync(context.Background()); err != nil {
+			t.Errorf("Sync with TOKENHUSH_NO_RULE_SYNC=1 = %v, want nil", err)
+		}
+		if got := counted.invoked(); got != 0 {
+			t.Errorf("the disabled rules switch made %d request(s), want 0", got)
+		}
+
+		live := &egressGuardFetcher{}
+		liveSyncer, err := supply.NewRulesSync(supply.RulesSyncConfig{
+			DataDir: t.TempDir(), Fetcher: live, Verifier: egressGuardVerifier{},
+			LookupEnv: func(string) (string, bool) { return "", false },
+		})
+		if err != nil {
+			t.Fatalf("NewRulesSync(live): %v", err)
+		}
+		if err := liveSyncer.Sync(context.Background()); err == nil {
+			t.Error("the live control expected the blocked fetch to fail")
+		}
+		if got := live.invoked(); got == 0 {
+			t.Error("the live control never consulted the fetcher: the switch probe is vacuous")
+		}
+	})
+
+	cliDir := filepath.Join(root, "internal", "cli")
+	if !guardsPathExists(filepath.Join(cliDir, "rules.go")) || !guardsPathExists(filepath.Join(cliDir, "update.go")) {
+		skipGuard(t, "egress", "rules.go and update.go not written yet: the CLI short-circuit half activates with W6.4")
+		return
+	}
+	for _, probe := range []struct {
+		name       string
+		switchName string
+		args       []string
+	}{
+		{"rules sync", "TOKENHUSH_NO_RULE_SYNC", []string{"rules", "sync"}},
+		{"rules sync --check", "TOKENHUSH_NO_RULE_SYNC", []string{"rules", "sync", "--check"}},
+		{"update", "TOKENHUSH_NO_UPDATE_CHECK", []string{"update"}},
+		{"update --check", "TOKENHUSH_NO_UPDATE_CHECK", []string{"update", "--check"}},
+	} {
+		t.Run("the CLI short-circuits "+probe.name, func(t *testing.T) {
+			t.Setenv(probe.switchName, "1")
+			code, stdout := guardsRunCLI(t, probe.args...)
+			if code != 0 {
+				t.Errorf("tokenhush %s = %d, want 0", probe.name, code)
+			}
+			if !strings.Contains(stdout, "no request was sent") {
+				t.Errorf("tokenhush %s printed %q, want the no-request message", probe.name, stdout)
+			}
+		})
 	}
 }
 
