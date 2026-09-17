@@ -285,8 +285,9 @@ func (p *Pipeline) TransformErrorHandler() TransformErrorFunc {
 // whether it is a client error or legitimate non-JSON traffic depends on the
 // request headers, which only the HTTP layer can read (BodyTransform takes
 // only []byte). pkg/gateway/dataplane.go matches the sentinel with errors.Is
-// and fails closed with 400 when the request declares JSON (Content-Type:
-// application/json* or, absent a Content-Type, a body with JSON symptoms);
+// and fails closed with 400 when the request declares JSON (a Content-Type
+// whose media type is exactly application/json, or, absent a Content-Type, a
+// body with JSON symptoms);
 // otherwise it forwards the returned body unchanged, preserving the
 // long-documented non-JSON passthrough (V1 routes known JSON API paths, and
 // the resolver rejects unknown paths before they reach the pipeline).

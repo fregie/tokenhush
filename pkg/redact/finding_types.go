@@ -5,8 +5,8 @@ package redact
 // typeX values in detectors.go verbatim so layers outside pkg/redact can
 // select detector types without hard-coded string literals. The pkg/proxy
 // key-position fail-closed check is the first such consumer: it keeps
-// {api_key, high_entropy, jwt, private_key} and drops credit_card/email at
-// object-key positions.
+// {api_key, jwt, private_key} and drops credit_card/email/high_entropy at
+// object-key positions (see pkg/proxy/keyguard.go).
 //
 // The values are frozen by docs/security.md's detector table; changing a value
 // is a deliberate, version-reviewed contract change, not a silent drift.
