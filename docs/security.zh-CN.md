@@ -78,7 +78,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 对象键**不是** `Leaf`，绝不进入 `pkg/extension` 定义的文档模型。键位扫描是一个独立、纯新增的 API（`protocol.WalkKeys`，新增而不改动 `Walk` 或 `Leaf`），因此 `architecture.zh-CN.md` 中记录的“叶子=值”契约**保持不变**。
 
-两个域共用同一套检测器规则，包括 `high_entropy` 的**结构化豁免**：服务商分配的不透明 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、data-URI base64 载荷（`data:<mime>[;param];base64,…`）、长度 ≥ 256 字节的 base64 字母表载荷运行、以及含 ≥32 位 hex 段的绝对路径，都不被当作密钥。被豁免的语法在 `KnownStructuralIdentifierExemptions()` 中枚举（镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`）；残余风险记录于下方「已知限制」。
+两个域共用同一套检测器规则，包括 `high_entropy` 的**结构化豁免**：服务商分配的不透明 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、data-URI base64 载荷（`data:<mime>[;param];base64,…`）、长度 ≥ 128 字节的 base64 字母表载荷运行、以及含 ≥32 位 hex 段的绝对路径，都不被当作密钥。被豁免的语法在 `KnownStructuralIdentifierExemptions()` 中枚举（镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`）；残余风险记录于下方「已知限制」。
 
 **决策留痕。** 选择新增独立的 `WalkKeys` API，而不是把键位塞进 `protocol.Walk` 的 `Leaf` 契约，是一项刻意的决定（加固计划中的 O3 决策）。否决“扩展 `Leaf`”的理由是：那会改动 `pkg/extension` 的 V1 稳定公开面，并破坏“叶子=值”契约（`architecture.zh-CN.md`）。键位机制由 `pkg/protocol` 测试与 `pkg/proxy` 的键位测试锁定；外围加固工作所依赖的跨仓装配契约冻结在私有 Pro 仓库的 ADR-0012 增补 A2。
 
@@ -139,14 +139,14 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 **检测器精度豁免**
 
-15. **`high_entropy` 的结构化豁免是跳过，不是判定。** 符合被豁免语法（服务商 id `call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`；data-URI base64 载荷；长度 ≥ 256 字节的 base64 字母表运行；含长哈希的绝对路径）的密钥不会被脱敏。若引擎已知该密钥，出站复核仍会拒绝该请求（403、上游零字节；`StructuralIdentifierContains` 覆盖全部被豁免类别）；该形态下引擎**未知**的密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举。`high_entropy` 对纯 hex 的排除未变（第 12 条）。
+15. **`high_entropy` 的结构化豁免是跳过，不是判定。** 符合被豁免语法（服务商 id `call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`；data-URI base64 载荷；长度 ≥ 128 字节的 base64 字母表运行；含长哈希的绝对路径）的密钥不会被脱敏。若引擎已知该密钥，出站复核仍会拒绝该请求（403、上游零字节；`StructuralIdentifierContains` 覆盖全部被豁免类别）；该形态下引擎**未知**的密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举。`high_entropy` 对纯 hex 的排除未变（第 12 条）。
 
 ## ⚠️ 已知限制
 
 如实列出，以免此处任何一句被读成已闭合的保证。全文的诚实口径是**高置信拦截**。
 
 - **`high_entropy` 对纯 hex 的排除同样作用于键域。** 该检测器本就不标记只由 hex 字符构成的运行（避免对哈希与 ID 误报）。同一排除也作用于对象键位，故**纯 hex** 的密钥置于对象键**不会被拦**。这与值域是同一排除、并非新增缺口；由 `TestPipelinePureHexKeysNotBlocked` 钉死。
-- **`high_entropy` 的结构化豁免是已文档化的跳过。** 规范的服务商 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、data-URI base64 载荷、长度 ≥ 256 字节的 base64 字母表运行、以及含长哈希的绝对路径在两个域都不被当作密钥。引擎已知的密钥若位于此类运行中，出站复核仍会拒绝（`StructuralIdentifierContains`，403、上游零字节，由 `TestHighEntropyStructuralExemptionEgressBypassBlocked` 钉死）；引擎**未知**的该形态密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举并镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`。不主张任何覆盖保证。
+- **`high_entropy` 的结构化豁免是已文档化的跳过。** 规范的服务商 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、data-URI base64 载荷、长度 ≥ 128 字节的 base64 字母表运行、以及含长哈希的绝对路径在两个域都不被当作密钥。引擎已知的密钥若位于此类运行中，出站复核仍会拒绝（`StructuralIdentifierContains`，403、上游零字节，由 `TestHighEntropyStructuralExemptionEgressBypassBlocked` 钉死）；引擎**未知**的该形态密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举并镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`。不主张任何覆盖保证。
 - **编码形态的覆盖是一组固定的解码器枚举，而非闭合。** 在离开本机之前被某层编码（hex、base64、gzip 等）变换过的密钥是一片已知残余风险区。已覆盖的形态、以及已知**不**被覆盖的类别，发布为 `pkg/redact` 的 `KnownUncoveredEncodings()`，镜像于 `pkg/redact/testdata/known_uncovered_encodings.txt`；上方「已知限制与不覆盖类别（汇总）」一节逐条列出这些类别。此处不声称任何覆盖保证。
 - **响应/SSE 的可观测性是仅元数据。** 响应路径的 walk 失败计数与事件按设计只携带元数据（direction、phase、action；无正文、无键、无路径），且无法解析的响应体**刻意不阻断**（见“失败策略按路径分级”）。
 

@@ -43,14 +43,16 @@ var structuralIdentifierPatterns = []*regexp.Regexp{
 
 // structuralPayloadMinRun is the base64-alphabet run length at or above which
 // a run is treated as an opaque payload rather than a credential. Real
-// credentials are short: even the longest common key forms are well under 256
+// credentials are short: even the longest common key forms are well under 128
 // bytes, while multimodal image/attachment bodies and file artifacts routinely
 // exceed it. Redacting a body the model must perceive directly (a vision
-// request, an inline attachment) is a capability loss, not a privacy win, so
-// the length itself is the discriminator. This is a frozen constant: changing
-// it changes the exemption surface and must be a deliberate, documented
-// decision, not silent drift.
-const structuralPayloadMinRun = 256
+// request, an inline attachment, a plain JSON string field carrying a blob) is
+// a capability loss, not a privacy win, so the length itself is the
+// discriminator. The live case that set the bound was a 200-character
+// plain-field base64 the model had to read: 256 redacted it, 128 exempts it.
+// This is a frozen constant: changing it changes the exemption surface and must
+// be a deliberate, documented decision, not silent drift.
+const structuralPayloadMinRun = 128
 
 // structuralPayloadMinHexRun is the hex-segment length at or above which a hex
 // run inside an absolute path marks the path as hash-addressed (a

@@ -36,9 +36,9 @@ func TestHighEntropyPayloadAndArtifactExemptions(t *testing.T) {
 	hex40 := strings.Repeat("ab12", 10)
 
 	imageB64 := base64.StdEncoding.EncodeToString([]byte(pseudoRandom(150)))
-	shortB64 := base64.StdEncoding.EncodeToString([]byte(pseudoRandom(120)))
-	payload256 := pseudoRandom(structuralPayloadMinRun)
-	payload255 := pseudoRandom(structuralPayloadMinRun - 1)
+	shortB64 := base64.StdEncoding.EncodeToString([]byte(pseudoRandom(60)))
+	payloadAtMin := pseudoRandom(structuralPayloadMinRun)
+	payloadBelowMin := pseudoRandom(structuralPayloadMinRun - 1)
 	artifactPath := "/tmp/build/" + hex40 + "/out.bin"
 	plainLongPath := "/tmp/build/" + pseudoRandom(40) + "/out.bin"
 
@@ -46,14 +46,31 @@ func TestHighEntropyPayloadAndArtifactExemptions(t *testing.T) {
 		{name: "data_uri_base64_payload_exempt", content: "data:image/png;base64," + imageB64},
 		{name: "base64_payload_without_data_uri_marker_still_flagged",
 			content: "blob " + shortB64, found: []string{shortB64}},
-		{name: "payload_run_at_min_exempt", content: "blob " + payload256 + " end"},
+		{name: "payload_run_at_min_exempt", content: "blob " + payloadAtMin + " end"},
 		{name: "run_below_payload_min_still_flagged",
-			content: "blob " + payload255 + " end", found: []string{payload255}},
+			content: "blob " + payloadBelowMin + " end", found: []string{payloadBelowMin}},
 		{name: "sha256_artifact_path_exempt", content: "wrote " + artifactPath + " ok"},
 		{name: "absolute_path_without_long_hash_still_flagged",
 			content: "wrote " + plainLongPath + " ok", found: []string{strings.TrimSuffix(plainLongPath, ".bin")}},
 	}
 	runDetectorCases(t, det, typeHighEntropy, highEntropyConfidence, cases)
+}
+
+// TestHighEntropyPlainFieldBase64Exemption pins the live case that motivated
+// lowering structuralPayloadMinRun from 256 to 128: a 200-character base64 run
+// sitting in an ordinary JSON string field — no data-URI marker, no provider
+// prefix — is an opaque payload, not a credential, and must not be redacted.
+// The length (200) is the observed live case; it is deliberately not derived
+// from the constant, so the test keeps asserting the same shape after the
+// threshold moves.
+func TestHighEntropyPlainFieldBase64Exemption(t *testing.T) {
+	const liveCasePayloadLen = 200
+	det := NewHighEntropyDetector()
+	payload := pseudoRandom(liveCasePayloadLen)
+
+	runDetectorCases(t, det, typeHighEntropy, highEntropyConfidence, []detectorCase{
+		{name: "plain_field_base64_at_live_length_exempt", content: `{"data":"` + payload + `"}`},
+	})
 }
 
 // TestStructuralIdentifierContains pins the egress helper that closes the hole
@@ -112,7 +129,7 @@ func TestKnownStructuralIdentifierExemptions(t *testing.T) {
 		t.Fatalf("accessor and %s drifted:\n accessor=%q\n file=%q", path, list, parsed)
 	}
 
-	for _, grammar := range []string{"call_", "toolu_", "chatcmpl-", "msg_", "resp_", "data:", "256", "hex segment"} {
+	for _, grammar := range []string{"call_", "toolu_", "chatcmpl-", "msg_", "resp_", "data:", "128", "hex segment"} {
 		if !anyLineContains(list, grammar) {
 			t.Fatalf("the %q grammar is not recorded: %q", grammar, list)
 		}
