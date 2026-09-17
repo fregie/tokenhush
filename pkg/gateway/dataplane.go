@@ -72,10 +72,11 @@ func pickRequest(r *http.Request) *extension.Request {
 //
 // 请求体失败策略（W1.3）：pipeline 的 transform 对不可解析的 body 返回原
 // body + proxy.ErrUnwalkableBody，不自行裁决。本层是唯一能读 Content-Type
-// 的地方，因此在此判定：声明为 JSON（application/json*，或缺失 Content-Type
-// 但 body 有 JSON 征兆）→ 本地 400，上游零字节；显式非 JSON → 直通原 body
-// （pipeline 文档化的行为）。400 而非 403：坏 JSON 是客户端错误，不是策略
-// 裁决；500 会把客户端错误藏成服务端错误。
+// 的地方，因此在此判定：声明为 JSON（media type 恰为 application/json，或
+// 缺失 Content-Type 但 body 有 JSON 征兆）→ 本地 400，上游零字节；显式非
+// JSON（含 application/json-seq、application/json-patch+json 等结构化后缀
+// 类型）→ 直通原 body（pipeline 文档化的行为）。400 而非 403：坏 JSON 是
+// 客户端错误，不是策略裁决；500 会把客户端错误藏成服务端错误。
 func (d *dataPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	d.deps.Requests.Add(1)
 	stats := StatsFrom(r.Context())
@@ -201,10 +202,10 @@ func readClientBody(r *http.Request) ([]byte, error) {
 }
 
 // requestDeclaresJSON 判定一个 transform 无法解析的请求体是否必须 fail-closed
-// （W1.3，机制冻结）：Content-Type 声明为 JSON（application/json*，大小写不敏感、
-// 允许 ;charset=... 参数）→ 是；Content-Type 缺失或为空值 → 由 body 的 JSON 征兆
-// 决定；显式非 JSON 的 Content-Type → 否（保持文档化的非 JSON 直通，不得被征兆
-// 覆盖）。
+// （W1.3，机制冻结）：Content-Type 的 media type 恰为 `application/json`（大小写
+// 不敏感、允许 ;charset=... 参数）→ 是；Content-Type 缺失或为空值 → 由 body 的
+// JSON 征兆决定；显式非 JSON（含 `application/json-seq` 等结构化后缀类型）→ 否
+// （保持文档化的非 JSON 直通，不得被征兆覆盖）。
 //
 // 判定只能在这一层：BodyTransform 只拿得到 []byte（与 Forwarder.ServeHTTP 的
 // Content-Encoding 415 守卫同一理由：只有 HTTP 层能读 header）。
@@ -216,16 +217,18 @@ func requestDeclaresJSON(r *http.Request, body []byte) bool {
 }
 
 // isJSONContentType reports whether a Content-Type value declares JSON: the
-// media type (parameters such as ;charset=utf-8 stripped) carries the
-// case-insensitive `application/json` prefix. The prefix accepts both
-// `application/json` and structured-suffix types such as
-// `application/json-patch+json`, matching the `application/json*` rule.
+// media type (parameters such as ;charset=utf-8 stripped) is exactly
+// `application/json`, case-insensitively. It is deliberately an equality test,
+// not a prefix test: `application/json-seq` (RFC 7464 JSON text sequences) and
+// `application/json-patch+json` are different media types whose bodies the
+// leaf walker does not parse, and treating them as declared JSON answered a
+// json-seq body with 400. They now take the existing non-JSON passthrough.
 func isJSONContentType(contentType string) bool {
 	mediaType := contentType
 	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
 		mediaType = mediaType[:i]
 	}
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(mediaType)), "application/json")
+	return strings.EqualFold(strings.TrimSpace(mediaType), "application/json")
 }
 
 // jsonSymptoms reports whether a body looks like JSON: the first byte that is

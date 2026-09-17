@@ -223,8 +223,8 @@ func TestDataPlaneMissingContentTypeNonJSONPassesThrough(t *testing.T) {
 }
 
 // TestJSONContentTypeDetection 锁定 isJSONContentType 的表驱动语义：大小写
-// 不敏感、允许 `;charset=` 参数、接受 application/json* 前缀（含结构化后缀）；
-// 显式非 JSON 一律 false。
+// 不敏感、允许 `;charset=` 参数、media type **恰为** application/json；
+// 结构化后缀类型（json-seq、json-patch+json）与显式非 JSON 一律 false。
 func TestJSONContentTypeDetection(t *testing.T) {
 	cases := []struct {
 		contentType string
@@ -235,7 +235,10 @@ func TestJSONContentTypeDetection(t *testing.T) {
 		{"Application/Json", true},
 		{"application/json; charset=utf-8", true},
 		{" application/json ;charset=UTF-8", true},
-		{"application/json-patch+json", true},
+		{"application/json-seq", false},
+		{"application/json-patch+json", false},
+		{"application/jsonx", false},
+		{"application/json-seq; charset=utf-8", false},
 		{"text/json", false},
 		{"text/plain", false},
 		{"application/xml", false},
@@ -246,6 +249,26 @@ func TestJSONContentTypeDetection(t *testing.T) {
 		if got := isJSONContentType(tc.contentType); got != tc.want {
 			t.Errorf("isJSONContentType(%q) = %v, want %v", tc.contentType, got, tc.want)
 		}
+	}
+}
+
+// TestJSONSeqTakesNonJSONPassthrough 锁定 FIX-3 的端到端后果：声明为
+// application/json-seq 的非 JSON body 不再被当作「声明 JSON」而 400，而是走
+// 文档化的非 JSON 直通，原字节到达上游（上游的 418 状态回传）。
+func TestJSONSeqTakesNonJSONPassthrough(t *testing.T) {
+	rec, url := w13UpstreamServer(t)
+	dp := w13DataPlane(t, url)
+	body := []byte("not json at all")
+	ct := "application/json-seq"
+	status, respBody := w13Do(t, dp, &ct, body)
+	if status != w13UpstreamStatus {
+		t.Fatalf("status = %d, want upstream %d (non-JSON passthrough); body %q", status, w13UpstreamStatus, respBody)
+	}
+	if rec.hitCount() != 1 {
+		t.Fatalf("upstream hits = %d, want 1", rec.hitCount())
+	}
+	if got := rec.received(); !bytes.Equal(got, body) {
+		t.Fatalf("upstream bytes changed:\ngot  %q\nwant %q", got, body)
 	}
 }
 
@@ -288,6 +311,7 @@ func TestRequestDeclaresJSON(t *testing.T) {
 	}{
 		{"json_header", w13Ptr("application/json"), []byte("not json"), true},
 		{"json_header_with_params", w13Ptr("Application/JSON; charset=utf-8"), []byte("not json"), true},
+		{"json_seq_header_ignores_symptoms", w13Ptr("application/json-seq"), []byte(`{"a":1`), false},
 		{"non_json_header_ignores_symptoms", w13Ptr("text/plain"), []byte(`{"a":1`), false},
 		{"absent_header_json_symptoms", nil, []byte(`{"a":1`), true},
 		{"absent_header_non_json", nil, []byte("plain"), false},
