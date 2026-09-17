@@ -47,7 +47,7 @@ Tokenhush 本身就是安全工具，所以**它自己必须先安全**。本文
 
 失败策略取决于 body 的传输方向，因为只有出站（请求）方向会把解析失败变成对上游的泄露。
 
-- **请求路径：声明为 JSON 时 fail-closed。** 请求体在转发前先做叶位遍历。若遍历失败且该请求声明为 JSON（`Content-Type` 为 `application/json*`；或缺失 `Content-Type` 但出现 JSON 征兆，即首个非空白字节是 `{`、`[` 或 `"`），网关即 fail-closed：返回 **HTTP 400**，且**上游零字节**。该裁决在 HTTP 层（`pkg/gateway` 数据面）做出，因为 body 改写接缝读不到请求头；底层哨兵是 `proxy.ErrUnwalkableBody`。显式非 JSON 的请求（`text/plain` 等）保持既有直通：body 逐字节转发，不运行任何遍历。由 `TestPipelineMalformedInputPassthrough`（接缝返回哨兵且 body 逐字节不变）与 `pkg/gateway` 数据面测试锁定。
+- **请求路径：声明为 JSON 时 fail-closed。** 请求体在转发前先做叶位遍历。若遍历失败且该请求声明为 JSON（`Content-Type` 的 media type **恰为** `application/json`，大小写不敏感、剥离 `;charset=utf-8` 之类参数；或缺失 `Content-Type` 但出现 JSON 征兆，即首个非空白字节是 `{`、`[` 或 `"`），网关即 fail-closed：返回 **HTTP 400**，且**上游零字节**。判定是对 media type 的**相等**比较而非前缀：`application/json-seq`（RFC 7464）与 `application/json-patch+json` 是 walker 不解析的另两种 media type，改走文档化的非 JSON 直通，不再 400。该裁决在 HTTP 层（`pkg/gateway` 数据面）做出，因为 body 改写接缝读不到请求头；底层哨兵是 `proxy.ErrUnwalkableBody`。显式非 JSON 的请求（`text/plain`、`application/json-seq` 等）保持既有直通：body 逐字节转发，不运行任何遍历。由 `TestPipelineMalformedInputPassthrough`（接缝返回哨兵且 body 逐字节不变）与 `pkg/gateway` 数据面测试锁定。
 - **响应与 SSE 路径：刻意不 fail-closed。** walker 无法解析的响应体仍逐字节转发，回填也照旧运行。这两个方向都是回客户端方向（入站）：无法解析的响应不可能把任何东西外泄到上游；fail-closed 只会打断合法的纯文本错误体与 `data: [DONE]`/ping 流。跳过不再是静默的：`Pipeline.ResponseWalkFailures()` 为其计数，每次跳过发出一条仅元数据的 `RedactionEvent`（缓冲路径为 `response_walk_failed`，SSE desync 守卫为 `sse_walk_failed`；direction `response`、phase `response_content`），不含任何正文、对象键或 JSON 路径。
 
 这一不对称是刻意为之：会在可能泄露处 fail-closed，在不可能泄露处保持透明且可观测。
@@ -74,11 +74,11 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 在一个被遍历的 JSON 文档中，检测运行在两个相互独立的位置：
 
 - **字符串值**（原有范围）。每个字符串叶都会被检视，命中即以占位符替换。
-- **对象键**（后续加入）。JSON 对象的成员名作为**独立的键位机制**被检视：即 `protocol.WalkKeys`——一个独立 API，返回键位 span 与 JSON Pointer 路径。键位参与判定的检测器集恰为 **`prefix`（api_key）、`high_entropy`、`jwt`、`private_key`**。`luhn`（credit_card）与 `email` 在键位被**刻意排除**，以免对 16 位数字键与邮箱形态键误报。凭据形态的键会使**请求 fail-closed**（整请求被阻断，上游零字节），且键**永不被重写**；键位上有检测器失败关闭时同样阻断。
+- **对象键**（后续加入）。JSON 对象的成员名作为**独立的键位机制**被检视：即 `protocol.WalkKeys`——一个独立 API，返回键位 span 与 JSON Pointer 路径。键位参与判定的检测器集恰为 **`prefix`（api_key）、`jwt`、`private_key`**。`luhn`（credit_card）、`email` 与 `high_entropy` 在键位被**刻意排除**：16 位数字键、邮箱形态键与随机字母数字键在真实提供商流量里都是普通结构，拦截它们属于假阳性门失败（实测一例：键为 40 位随机字符串的请求被整请求 403）。前缀/JWT/PEM 形态的键会使**请求 fail-closed**（整请求被阻断，上游零字节），且键**永不被重写**；键位上有检测器失败关闭时同样阻断。**已知**密钥（本会话已映射为占位符者）以键的形式重发，仍会被拒——此时由出站复核而非键位守卫兜住（见「已知限制」）。
 
 对象键**不是** `Leaf`，绝不进入 `pkg/extension` 定义的文档模型。键位扫描是一个独立、纯新增的 API（`protocol.WalkKeys`，新增而不改动 `Walk` 或 `Leaf`），因此 `architecture.zh-CN.md` 中记录的“叶子=值”契约**保持不变**。
 
-两个域共用同一套检测器规则，包括 `high_entropy` 的**结构化豁免**：服务商分配的不透明 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、data-URI base64 载荷（`data:<mime>[;param];base64,…`）、长度 ≥ 128 字节的 base64 字母表载荷运行、以及含 ≥32 位 hex 段的绝对路径，都不被当作密钥。被豁免的语法在 `KnownStructuralIdentifierExemptions()` 中枚举（镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`）；残余风险记录于下方「已知限制」。
+两个域共用同一套检测器规则，包括 `high_entropy` 的**结构化豁免**：服务商分配的不透明 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、常见请求/追踪/任务 id 前缀（`req_…`、`trace_…`、`span_…`、`run_…`、`job_…`、`build_…`）、Subresource Integrity / npm `integrity` 拼写的规范前缀哈希（`sha1-`/`sha256-`/`sha384-`/`sha512-`/`md5-`/`blake2b-`/`blake3-` 后接 base64）、data-URI base64 载荷（`data:<mime>[;param];base64,…`）、载荷类键的字符串值（`file_data`、`data`、`b64`、`base64`、`blob`、`payload`、`attachment`、`image_url`、`audio`、`content_bytes`）、长度 ≥ 128 字节的 base64 字母表载荷运行、以及含 ≥32 位 hex 段的**绝对或相对**路径，都不被当作密钥。被豁免的语法在 `KnownStructuralIdentifierExemptions()` 中枚举（镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`）；残余风险记录于下方「已知限制」。
 
 **决策留痕。** 选择新增独立的 `WalkKeys` API，而不是把键位塞进 `protocol.Walk` 的 `Leaf` 契约，是一项刻意的决定（加固计划中的 O3 决策）。否决“扩展 `Leaf`”的理由是：那会改动 `pkg/extension` 的 V1 稳定公开面，并破坏“叶子=值”契约（`architecture.zh-CN.md`）。键位机制由 `pkg/protocol` 测试与 `pkg/proxy` 的键位测试锁定；外围加固工作所依赖的跨仓装配契约冻结在私有 Pro 仓库的 ADR-0012 增补 A2。
 
@@ -92,7 +92,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 - 环回控制面（控制端口上的 `/allowlist` 与 `/status`）；
 - 直接写 `<DataDir>/allowlist.json`。
 
-**守护做什么。** 变更通道检测运行在响应方向，针对模型发起的工具调用参数。模式集是显式、可枚举、可审计的（`pkg/proxy` 的 `MutationChannelPatternInventory()`）。控制端口类要求**控制通道证据，而非仅凭端口**：环回 host 加真实控制端口，**并且**带控制端点路径或控制请求行。同一端口上的数据面路径（例如 `http://127.0.0.1:8787/v1/chat/completions`）是合法流量，不会被拒绝。
+**守护做什么。** 变更通道检测运行在响应方向，针对模型发起的工具调用参数。模式集是显式、可枚举、可审计的（`pkg/proxy` 的 `MutationChannelPatternInventory()`）。控制端口类要求**控制通道证据，而非仅凭端口**：环回 host 加真实控制端口，**并且**带控制端点路径或控制请求行。同一端口上的数据面路径（例如 `http://127.0.0.1:8787/v1/chat/completions`）是合法流量，不会被拒绝。`/status` 是只读元数据（只报告计数），因此只有与**变更**同时出现才算证据——写动词（POST/PUT/PATCH/DELETE）或 curl 数据 flag；只读的 `GET`/`HEAD` `/status` 刻意不被拒绝。`/allowlist` 保持无条件：它是变更端点，读与写都仍是证据。
 
 - 全缓冲路径逐工具调用检查其 `arguments` 字符串（含其嵌套叶）；命中时**只把该次工具调用**的整个参数值改写为结构化 JSON 拒绝（`{"error":"<notice>","refused":true,"channel":"<class>"}`），使把 `arguments` 当 JSON 解析的客户端不至于硬失败，模型也能据此调整。同一响应里的其它工具调用不受影响，也不返回整响应 `403`。
 - 流式（SSE）路径按 path 累积某个工具调用的流式参数，**上界为 `SSEGuardCap`（192 KiB）**，再做同样的逐工具调用拒绝；命中之后到达的分片被丢弃。该上界刻意小于回填保留量（`sseBackfillMaxHoldbackBytes`，256 KiB），以保证判定真实可达。
@@ -130,7 +130,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 **键位扫描**
 
-12. **`high_entropy` 对纯 hex 的排除同样作用于键域。** 纯 hex 的密钥置于对象键不会被拦，与值域是同一排除。
+12. **`high_entropy` 在键位，以及其纯 hex 排除。** `high_entropy` 不再是键位检测器：首次出现的**未知**高熵键（实测：键为 40 位随机字母数字的 JSON 对象）不再被检测、也不再阻断请求。引擎已**已知**为密钥的键仍被出站复核拒绝（403、上游零字节），前缀/JWT/PEM 形态的键仍由键位守卫阻断。另外，值域的纯 hex 排除同样作用于键域，故纯 hex 的密钥置于对象键不会被拦，与值域是同一排除。
 
 **失败策略与已接受代价**
 
@@ -139,14 +139,14 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 **检测器精度豁免**
 
-15. **`high_entropy` 的结构化豁免是跳过，不是判定。** 符合被豁免语法（服务商 id `call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`；data-URI base64 载荷；长度 ≥ 128 字节的 base64 字母表运行；含长哈希的绝对路径）的密钥不会被脱敏。若引擎已知该密钥，出站复核仍会拒绝该请求（403、上游零字节；`StructuralIdentifierContains` 覆盖全部被豁免类别）；该形态下引擎**未知**的密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举。`high_entropy` 对纯 hex 的排除未变（第 12 条）。
+15. **`high_entropy` 的结构化豁免是跳过，不是判定。** 符合被豁免语法（服务商 id `call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`；请求/追踪/任务 id `req_…`、`trace_…`、`span_…`、`run_…`、`job_…`、`build_…`；前缀哈希 / SRI 值；data-URI base64 载荷；载荷类键的字符串值；长度 ≥ 128 字节的 base64 字母表运行；含长哈希的绝对或相对路径）的密钥不会被脱敏。若引擎已知该密钥，出站复核仍会拒绝该请求（403、上游零字节；`StructuralIdentifierContains` 覆盖全部被豁免类别）；该形态下引擎**未知**的密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举。`high_entropy` 对纯 hex 的排除未变（第 12 条）。
 
 ## ⚠️ 已知限制
 
 如实列出，以免此处任何一句被读成已闭合的保证。全文的诚实口径是**高置信拦截**。
 
 - **`high_entropy` 对纯 hex 的排除同样作用于键域。** 该检测器本就不标记只由 hex 字符构成的运行（避免对哈希与 ID 误报）。同一排除也作用于对象键位，故**纯 hex** 的密钥置于对象键**不会被拦**。这与值域是同一排除、并非新增缺口；由 `TestPipelinePureHexKeysNotBlocked` 钉死。
-- **`high_entropy` 的结构化豁免是已文档化的跳过。** 规范的服务商 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、data-URI base64 载荷、长度 ≥ 128 字节的 base64 字母表运行、以及含长哈希的绝对路径在两个域都不被当作密钥。引擎已知的密钥若位于此类运行中，出站复核仍会拒绝（`StructuralIdentifierContains`，403、上游零字节，由 `TestHighEntropyStructuralExemptionEgressBypassBlocked` 钉死）；引擎**未知**的该形态密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举并镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`。不主张任何覆盖保证。
+- **`high_entropy` 的结构化豁免是已文档化的跳过。** 规范的服务商 id（`call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`）、请求/追踪/任务 id（`req_…`、`trace_…`、`span_…`、`run_…`、`job_…`、`build_…`）、前缀哈希 / SRI 值（`sha512-…`）、data-URI base64 载荷、载荷类键的字符串值（即使低于 128 字节载荷下限）、长度 ≥ 128 字节的 base64 字母表运行、以及含长哈希的绝对或相对路径在两个域都不被当作密钥。引擎已知的密钥若位于此类运行中，出站复核仍会拒绝（`StructuralIdentifierContains`，403、上游零字节，由 `TestHighEntropyStructuralExemptionEgressBypassBlocked` 钉死）；引擎**未知**的该形态密钥即记录在案的残余风险。`high_entropy` 也不再是键位检测器，故未知的高熵对象键会被放行；**已知**密钥以键的形式重发仍被出站复核拒绝（由 `TestPipelineKnownSecretKeyStillBlockedAtEgress` 钉死）。语法在 `KnownStructuralIdentifierExemptions()` 中枚举并镜像于 `pkg/redact/testdata/known_structural_exemptions.txt`。不主张任何覆盖保证。
 - **编码形态的覆盖是一组固定的解码器枚举，而非闭合。** 在离开本机之前被某层编码（hex、base64、gzip 等）变换过的密钥是一片已知残余风险区。已覆盖的形态、以及已知**不**被覆盖的类别，发布为 `pkg/redact` 的 `KnownUncoveredEncodings()`，镜像于 `pkg/redact/testdata/known_uncovered_encodings.txt`；上方「已知限制与不覆盖类别（汇总）」一节逐条列出这些类别。此处不声称任何覆盖保证。
 - **响应/SSE 的可观测性是仅元数据。** 响应路径的 walk 失败计数与事件按设计只携带元数据（direction、phase、action；无正文、无键、无路径），且无法解析的响应体**刻意不阻断**（见“失败策略按路径分级”）。
 
