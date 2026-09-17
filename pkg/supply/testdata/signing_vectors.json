@@ -1,0 +1,264 @@
+[
+  {
+    "name": "update-manifest-empty",
+    "kind": "update",
+    "document_kind": "manifest",
+    "document": {
+      "version": "0.4.0",
+      "os": "linux",
+      "arch": "amd64",
+      "url": "https://updates.tokenhush.com/dl/tokenhush_0.4.0_linux_amd64.tar.gz",
+      "sha256": "9feaf199f64436846911f45c8dee377367d52dbc6277191a1cf740e4e535c2a3",
+      "channel": "stable",
+      "serial": 1,
+      "key_id": "upd-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "revoked_serials": [],
+      "revoked_versions": []
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d7570646174652d6d616e69666573742d76310a76657273696f6e3a302e342e300a6f733a6c696e75780a617263683a616d6436340a75726c3a68747470733a2f2f757064617465732e746f6b656e687573682e636f6d2f646c2f746f6b656e687573685f302e342e305f6c696e75785f616d6436342e7461722e677a0a7368613235363a396665616631393966363434333638343639313166343563386465653337373336376435326462633632373731393161316366373430653465353335633261330a6368616e6e656c3a737461626c650a73657269616c3a310a6b65795f69643a7570642d323032362d30390a6e6f745f6265666f72653a313738393334343030300a657870697265733a313832303838303030300a7265766f6b65645f73657269616c733a0a7265766f6b65645f76657273696f6e733a0a",
+    "provenance": "source=pkg/update/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "update-manifest-nonempty",
+    "kind": "update",
+    "document_kind": "manifest",
+    "document": {
+      "version": "0.4.1",
+      "os": "linux",
+      "arch": "amd64",
+      "url": "https://updates.tokenhush.com/dl/tokenhush_0.4.1_linux_amd64.tar.gz",
+      "sha256": "9feaf199f64436846911f45c8dee377367d52dbc6277191a1cf740e4e535c2a3",
+      "channel": "stable",
+      "serial": 2,
+      "key_id": "upd-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "revoked_serials": [7, 3],
+      "revoked_versions": ["0.3.9", "0.3.8"]
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d7570646174652d6d616e69666573742d76310a76657273696f6e3a302e342e310a6f733a6c696e75780a617263683a616d6436340a75726c3a68747470733a2f2f757064617465732e746f6b656e687573682e636f6d2f646c2f746f6b656e687573685f302e342e315f6c696e75785f616d6436342e7461722e677a0a7368613235363a396665616631393966363434333638343639313166343563386465653337373336376435326462633632373731393161316366373430653465353335633261330a6368616e6e656c3a737461626c650a73657269616c3a320a6b65795f69643a7570642d323032362d30390a6e6f745f6265666f72653a313738393334343030300a657870697265733a313832303838303030300a7265766f6b65645f73657269616c733a332c370a7265766f6b65645f76657273696f6e733a302e332e382c302e332e390a",
+    "provenance": "source=pkg/update/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "update-revocations-empty",
+    "kind": "update",
+    "document_kind": "revocations",
+    "document": {
+      "channel": "stable",
+      "serial": 1,
+      "key_id": "upd-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "revoked_serials": [],
+      "revoked_versions": []
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d7570646174652d7265766f636174696f6e732d76310a6368616e6e656c3a737461626c650a73657269616c3a310a6b65795f69643a7570642d323032362d30390a6e6f745f6265666f72653a313738393334343030300a657870697265733a313832303838303030300a7265766f6b65645f73657269616c733a0a7265766f6b65645f76657273696f6e733a0a",
+    "provenance": "source=pkg/update/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "update-revocations-nonempty",
+    "kind": "update",
+    "document_kind": "revocations",
+    "document": {
+      "channel": "stable",
+      "serial": 2,
+      "key_id": "upd-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "revoked_serials": [5, 1],
+      "revoked_versions": ["0.3.9"]
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d7570646174652d7265766f636174696f6e732d76310a6368616e6e656c3a737461626c650a73657269616c3a320a6b65795f69643a7570642d323032362d30390a6e6f745f6265666f72653a313738393334343030300a657870697265733a313832303838303030300a7265766f6b65645f73657269616c733a312c350a7265766f6b65645f76657273696f6e733a302e332e390a",
+    "provenance": "source=pkg/update/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "update-keylist-two-keys",
+    "kind": "update",
+    "document_kind": "keylist",
+    "document": {
+      "serial": 1,
+      "key_id": "root-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "keys": [
+        {
+          "key_id": "upd-2026-10",
+          "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "not_before": "2026-09-14T00:00:00Z",
+          "expires": "2027-09-14T00:00:00Z"
+        },
+        {
+          "key_id": "upd-2026-09",
+          "public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "not_before": "2026-09-14T00:00:00Z",
+          "expires": "2027-09-14T00:00:00Z"
+        }
+      ]
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d7570646174652d6b65796c6973742d76310a73657269616c3a310a6b65795f69643a726f6f742d323032362d30390a6e6f745f6265666f72653a313738393334343030300a657870697265733a313832303838303030300a6b65793a7570642d323032362d30393a414141414141414141414141414141414141414141414141414141414141414141414141414141414141413a313738393334343030303a313832303838303030300a6b65793a7570642d323032362d31303a414141414141414141414141414141414141414141414141414141414141414141414141414141414141413a313738393334343030303a313832303838303030300a",
+    "provenance": "source=pkg/update/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "rules-revocations-empty",
+    "kind": "rules",
+    "document_kind": "revocations",
+    "document": {
+      "channel": "stable",
+      "serial": 1,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "revoked_serials": []
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d7265766f636174696f6e732d76310a34666464323765373263666434336563646233326436376239313335303830383434373536303130373365393537643336643839666332663538306337643665",
+    "provenance": "source=pkg/rules/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "rules-revocations-published-live",
+    "kind": "rules",
+    "document_kind": "revocations",
+    "document": {
+      "channel": "stable",
+      "serial": 1,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "revoked_serials": []
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d7265766f636174696f6e732d76310a34666464323765373263666434336563646233326436376239313335303830383434373536303130373365393537643336643839666332663538306337643665",
+    "provenance": "source=pkg/rules/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector published-live-duplicate-of-rules-revocations-empty"
+  },
+  {
+    "name": "rules-revocations-nonempty",
+    "kind": "rules",
+    "document_kind": "revocations",
+    "document": {
+      "channel": "stable",
+      "serial": 2,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "revoked_serials": [9, 2, 5]
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d7265766f636174696f6e732d76310a64383532666431313731393763383764373330336566663961663034303336306463303638343635373039306461343863623266633930613832626239306661",
+    "provenance": "source=pkg/rules/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "rules-manifest-empty",
+    "kind": "rules",
+    "document_kind": "manifest",
+    "document": {
+      "channel": "stable",
+      "schema_version": 1,
+      "min_binary_version": "0.3.0",
+      "serial": 1,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "bundle_sha256": "9feaf199f64436846911f45c8dee377367d52dbc6277191a1cf740e4e535c2a3",
+      "bundle": "rules/stable/1.json",
+      "revoked_serials": []
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d6d616e69666573742d76310a38386466343935656166646633393665666164353262323038353830313866366266303662373631663363303630396262643666396639313330633366316534",
+    "provenance": "source=pkg/rules/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "rules-manifest-nonempty",
+    "kind": "rules",
+    "document_kind": "manifest",
+    "document": {
+      "channel": "stable",
+      "schema_version": 1,
+      "min_binary_version": "0.3.0",
+      "serial": 3,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "bundle_sha256": "9feaf199f64436846911f45c8dee377367d52dbc6277191a1cf740e4e535c2a3",
+      "bundle": "rules/stable/3.json",
+      "revoked_serials": [4, 1]
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d6d616e69666573742d76310a32633039663332333731313332313866643232333235343061653039666133306537636239343634633366343063663962306639666138363964616437663731",
+    "provenance": "source=pkg/rules/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "rules-pack-minimal",
+    "kind": "rules",
+    "document_kind": "pack",
+    "document": {
+      "channel": "stable",
+      "schema_version": 1,
+      "min_binary_version": "0.3.0",
+      "serial": 2,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z"
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d7061636b2d76310a66646234303763386636326437316564353863626361393330363233396130356339646232386131356666356364363230663230363466383565343632343732",
+    "provenance": "source=pkg/rules/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "rules-pack-rich",
+    "kind": "rules",
+    "document_kind": "pack",
+    "document": {
+      "channel": "stable",
+      "schema_version": 1,
+      "min_binary_version": "0.3.0",
+      "serial": 4,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "detectors": {"email": true, "prefix": true},
+      "disabled_categories": ["internal_only"],
+      "allowlist": ["example.com"],
+      "blocklist": ["TOKENHUSH_BLOCK"],
+      "rules": [
+        {"id": "proj", "type": "regex", "pattern": "PROJ-[0-9]{4,}", "action": "warn", "confidence": 0.85},
+        {"id": "secret", "type": "keyword", "keywords": ["secret", "token"], "action": "block", "case_sensitive": true, "allowlist": ["not-a-secret"]}
+      ]
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d7061636b2d76310a34343030653036306661343232613836643034353234626663633233373931396438353432646637613336356664343661376564393639393738343163383134",
+    "provenance": "source=pkg/rules/signing_input_golden_test.go sha=87512039ea82cddc5e8276e97b557264933bfd61 note=copied-inline-hex-vector"
+  },
+  {
+    "name": "rules-pack-command-all-fields",
+    "kind": "rules",
+    "document_kind": "pack",
+    "document": {
+      "channel": "stable",
+      "schema_version": 2,
+      "min_binary_version": "0.3.0",
+      "serial": 5,
+      "key_id": "rules-2026-09",
+      "not_before": "2026-09-14T00:00:00Z",
+      "expires": "2027-09-14T00:00:00Z",
+      "detectors": {"email": true},
+      "disabled_categories": ["internal_only"],
+      "allowlist": ["safe<&>literal"],
+      "blocklist": ["TOKENHUSH_BLOCK"],
+      "rules": [
+        {
+          "id": "deploy-cmd",
+          "type": "command",
+          "action": "block",
+          "command": "kubectl",
+          "subcommand": "delete",
+          "verbs": ["delete", "drain"],
+          "targets": ["prod-<&>-cluster"]
+        },
+        {
+          "id": "proj-html",
+          "type": "regex",
+          "pattern": "PROJ-[0-9]{2}<&>done",
+          "action": "warn",
+          "confidence": 0.85
+        }
+      ]
+    },
+    "expected_signing_input_hex": "746f6b656e687573682d72756c65732d7061636b2d76310a37663036306565326565346537366466383562326637326435613730376334633762356261373966623535666232333732623561343232303037353363383834",
+    "provenance": "source=pkg/rules/pack.go sha=87512039ea82cddc5e8276e97b557264933bfd61 func=PackSigningInput note=synthesized-in-throwaway-module-vecgen-command-all-fields-and-html-escaping"
+  }
+]
