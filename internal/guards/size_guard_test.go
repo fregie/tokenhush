@@ -1,7 +1,7 @@
 // Size guard: the 250-pure-LOC ceiling keeps every production file small
-// enough to hold in one head. A line counts only when it carries code: blank
-// lines, comment-only lines, the package clause and lines made up purely of
-// structural punctuation never count. Test files, testdata, generated files,
+// enough to hold in one head. It counts strict pure LOC: blank lines and
+// comment-only lines are excluded, every other line counts, including a lone
+// closing brace and the package clause. Test files, testdata, generated files,
 // .omo/ plan state and vendored code are not production code at all.
 package guards
 
@@ -21,38 +21,22 @@ import (
 // is split, not excused.
 const maxPureLOC = 250
 
-// structuralTokens are punctuation tokens that only open, close or separate a
-// construct. A line built purely from them is the tail (or head) of a
-// construct that is already counted where it carries content, so it is not a
-// line of code a reader has to hold in their head.
-var structuralTokens = map[token.Token]bool{
-	token.LPAREN:    true,
-	token.RPAREN:    true,
-	token.LBRACE:    true,
-	token.RBRACE:    true,
-	token.LBRACK:    true,
-	token.RBRACK:    true,
-	token.COMMA:     true,
-	token.SEMICOLON: true,
-}
-
-// pureLOC counts the lines of src that carry code. A line counts when it
-// contains at least one token that is not a comment, not an automatically
-// inserted semicolon, not part of the package clause, and not structural
-// punctuation. Blank lines and comment-only lines therefore count zero.
+// pureLOC counts the strict pure LOC of src: blank lines and comment-only
+// lines are excluded, while every other line counts, including a lone closing
+// brace and the package clause. A line counts when it contains at least one
+// token that is not a comment and not an automatically inserted newline
+// semicolon.
 func pureLOC(src []byte) (int, error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "pureloc.go", src, parser.ParseComments)
-	if err != nil {
+	parseSet := token.NewFileSet()
+	if _, err := parser.ParseFile(parseSet, "pureloc.go", src, parser.ParseComments); err != nil {
 		return 0, fmt.Errorf("pure LOC: parse: %w", err)
 	}
-	pkgStart, pkgEnd := file.Package, file.Name.End()
 
 	scanSet := token.NewFileSet()
 	tf := scanSet.AddFile("pureloc.go", scanSet.Base(), len(src))
 	var s scanner.Scanner
 	s.Init(tf, src, nil, scanner.ScanComments)
-	lineTokens := map[int][]token.Token{}
+	lines := map[int]bool{}
 	for {
 		pos, tok, lit := s.Scan()
 		if tok == token.EOF {
@@ -61,30 +45,9 @@ func pureLOC(src []byte) (int, error) {
 		if tok == token.COMMENT || (tok == token.SEMICOLON && lit == "\n") {
 			continue
 		}
-		if pos >= pkgStart && pos <= pkgEnd {
-			continue // the package clause is boilerplate, not code
-		}
-		line := tf.Line(pos)
-		lineTokens[line] = append(lineTokens[line], tok)
+		lines[tf.Line(pos)] = true
 	}
-
-	count := 0
-	for _, toks := range lineTokens {
-		if carriesCode(toks) {
-			count++
-		}
-	}
-	return count, nil
-}
-
-// carriesCode reports whether a line's tokens go beyond structural punctuation.
-func carriesCode(toks []token.Token) bool {
-	for _, tok := range toks {
-		if !structuralTokens[tok] {
-			return true
-		}
-	}
-	return false
+	return len(lines), nil
 }
 
 // isProductionFile reports whether a repo-relative slash path is subject to
@@ -161,14 +124,14 @@ func sizeViolations(root string) (offenders []string, scanned int, err error) {
 	return offenders, scanned, nil
 }
 
-// sizedSource returns a parseable source file with exactly n pure LOC: one
-// package clause and n single-line variable declarations, separated by blank
-// lines. The package clause and the blanks never count, so the declarations
-// alone carry the n.
+// sizedSource returns a parseable source file with exactly n strict pure LOC:
+// one package clause plus n-1 single-line variable declarations, separated by
+// blank lines. The package clause and the declarations each count once; the
+// blanks never count.
 func sizedSource(n int) []byte {
 	lines := make([]string, 0, 2*n+2)
 	lines = append(lines, "package probe", "")
-	for i := 0; i < n; i++ {
+	for i := 0; i < n-1; i++ {
 		lines = append(lines, "", fmt.Sprintf("var v%d = %d", i, i))
 	}
 	return []byte(strings.Join(lines, "\n") + "\n")
@@ -186,27 +149,49 @@ func TestSizeGuardPureLocCounting(t *testing.T) {
 	})
 
 	t.Run("blank and comment lines do not count", func(t *testing.T) {
-		lines := []string{"package probe", ""}
+		lines := []string{"package probe", "", "// leading comment"}
 		for i := 0; i < 260; i++ {
 			lines = append(lines, fmt.Sprintf("var v%d = %d", i, i), "", fmt.Sprintf("// comment %d", i), "")
 		}
 		got, err := pureLOC([]byte(strings.Join(lines, "\n") + "\n"))
 		if err != nil {
-			t.Fatalf("pureLOC(260 code lines with blanks and comments): %v", err)
+			t.Fatalf("pureLOC(260 declarations with blanks and comments): %v", err)
 		}
-		if got != 260 {
-			t.Errorf("pureLOC(260 code lines with blanks and comments) = %d, want 260", got)
+		if got != 261 {
+			t.Errorf("pureLOC(260 declarations with blanks and comments) = %d, want 261 (package clause plus 260 declarations)", got)
 		}
 	})
 
-	t.Run("comments and blanks alone count zero", func(t *testing.T) {
+	t.Run("blank and comment lines add nothing", func(t *testing.T) {
 		src := []byte("package probe\n\n// nothing to count here\n\n// and nothing here\n")
 		got, err := pureLOC(src)
 		if err != nil {
-			t.Fatalf("pureLOC(comment-only file): %v", err)
+			t.Fatalf("pureLOC(comment-only body): %v", err)
 		}
-		if got != 0 {
-			t.Errorf("pureLOC(comment-only file) = %d, want 0", got)
+		if got != 1 {
+			t.Errorf("pureLOC(comment-only body) = %d, want 1 for the package clause", got)
+		}
+	})
+
+	t.Run("package, func header and lone brace count", func(t *testing.T) {
+		src := []byte("package p\n\n// a comment line\n\nfunc f() {\n}\n")
+		got, err := pureLOC(src)
+		if err != nil {
+			t.Fatalf("pureLOC(package, func and lone brace): %v", err)
+		}
+		if got != 3 {
+			t.Errorf("pureLOC(package, func and lone brace) = %d, want 3", got)
+		}
+	})
+
+	t.Run("a lone closing brace counts once", func(t *testing.T) {
+		src := []byte("package p\n\nfunc f() {\n\n\t// body comment\n\n}\n")
+		got, err := pureLOC(src)
+		if err != nil {
+			t.Fatalf("pureLOC(func with lone closing brace): %v", err)
+		}
+		if got != 3 {
+			t.Errorf("pureLOC(func with lone closing brace) = %d, want 3 (package, func header, brace)", got)
 		}
 	})
 }
