@@ -14,19 +14,21 @@ import (
 // shell fragments ran. The distinction the guard now draws is structural and
 // positional, never a heuristic over prose length:
 //
-//   - A guarded CLI token counts only when it is the COMMAND WORD of its shell
-//     segment: the first word after leading whitespace, wrapper commands
-//     (sudo/env/nohup/...), wrapper flags and environment assignments, computed
-//     at a segment start (the text start, or just after `;`, `&&`, `||`, `|`, a
-//     newline, a backtick, `$(`, or an `sh -c "`/`bash -c '` opener). Anything
-//     else — a token that is an argument of another command, a token inside a
-//     normal quoted string — is a mention.
+//   - A rule match requires its specific command to sit at an EXECUTION
+//     POSITION: the start of the text, or just after `;`, `&&`, `||`, `|`, a
+//     newline, a backtick, `$(`, or an `sh -c "`/`bash -c '` opener (see
+//     mutationrules.go). Anything else — a token that is an argument of another
+//     command, a token inside a normal quoted string, a token behind a wrapper
+//     (`sudo`, `env`) — is a mention. The wrapper-command / wrapper-flag /
+//     command-word recomputation that used to refine this is gone; a wrapper is
+//     now a recorded residual (the simple boundary set misses it).
 //   - A non-interpreter here-document body is content, so a guarded token inside
 //     it is a mention; a here-document fed to a shell/interpreter is code and
 //     keeps the inspection.
 //   - The control-port class needs an HTTP client (curl/wget/nc) or a request
-//     verb at a segment start, plus the control path and a write verb/data flag;
-//     a URL or path that is an argument of grep/git log/echo is a mention.
+//     verb at an execution position, plus the control path and a write
+//     verb/data flag; a URL or path that is an argument of grep/git log/echo is
+//     a mention.
 //   - The file-write class matches only when a top-level write form (a `>`
 //     redirection outside any normal quote, or a write command at a segment
 //     start) is positionally associated with the listed file; a bare path
@@ -34,8 +36,8 @@ import (
 //
 // The boundaries are deliberate and documented (docs/security.md): an attacker
 // could hide a real invocation inside another command's argument — for example
-// piping it into a shell, or a wrapper flag this list does not model — and that
-// is the already-recorded "indirect execution" uncovered class. The
+// piping it into a shell, or a wrapper the simple boundary set does not model —
+// and that is the already-recorded "indirect execution" uncovered class. The
 // control-token force-redaction and the outbound re-check remain independent
 // backstops.
 
@@ -111,8 +113,8 @@ func mutationChannelContentToolName(name string) bool {
 	return false
 }
 
-// mutationChannelContentArgumentsPaths returns the set of walked arguments-leaf
-// paths owned by a tool call whose function name is a content-bearing file tool.
+// mutationChannelContentArgumentsPaths returns the set of arguments/input root
+// keys owned by a tool call whose function name is a content-bearing file tool.
 // It mirrors mutationChannelCarrierArgumentsPaths, including the
 // last-duplicate-key-wins rule, so the buffered guard can classify exactly those
 // tool calls with the reduced content-tool table.
@@ -122,15 +124,19 @@ func mutationChannelContentArgumentsPaths(walked []protocol.Leaf) map[string]str
 		if !isMutationChannelFunctionNamePath(leaf.Path) {
 			continue
 		}
-		argumentsPath := mutationChannelCarrierArgumentsPath(leaf.Path)
+		roots := mutationChannelToolRootKeys(leaf.Path)
 		if mutationChannelContentToolName(leaf.Content) {
 			if out == nil {
 				out = make(map[string]struct{}, 2)
 			}
-			out[argumentsPath] = struct{}{}
+			for _, root := range roots {
+				out[root] = struct{}{}
+			}
 			continue
 		}
-		delete(out, argumentsPath)
+		for _, root := range roots {
+			delete(out, root)
+		}
 	}
 	return out
 }
@@ -172,9 +178,9 @@ func (t mutationChannelText) inMentionSpan(i int) bool {
 // tokenIsMention reports whether the guarded token starting at byte offset i is
 // a mention rather than an invocation: it lies inside a content here-document
 // body, inside a normal (non-code) quoted string, or the command that owns its
-// shell segment is a mention carrier. The command-word rule (see
-// mutationChannelTokenIsCommandWord) is applied by each class on top of this
-// predicate.
+// shell segment is a mention carrier. The execution-position qualifier (see
+// mutationChannelExecutionPosition in mutationrules.go) is applied by each rule
+// on top of this predicate.
 func (t mutationChannelText) tokenIsMention(i int) bool {
 	if t.inMentionSpan(i) {
 		return true
@@ -288,97 +294,6 @@ func mutationChannelSegmentOwnerIsMentionCarrier(text string, segStart int) bool
 		}
 	}
 	return false
-}
-
-// mutationChannelWrapperWords wrap another command without changing which
-// program runs, so a guarded token directly after one of them is still the
-// command word. The list is closed and auditable; a wrapper deliberately not
-// listed (xargs, ssh, expect) keeps the mention direction, which is a recorded
-// residual (see KnownUncoveredMutationChannels).
-var mutationChannelWrapperWords = []string{
-	"sudo", "doas", "pkexec", "runuser", "su",
-	"env", "nohup", "command", "exec", "eval",
-	"time", "nice", "ionice", "setsid", "stdbuf", "timeout", "chrt", "taskset",
-	"busybox",
-}
-
-// mutationChannelTokenIsCommandWord reports whether the byte at i begins (or
-// lies inside) the command word of its shell segment: the first word after
-// leading whitespace, wrapper commands, wrapper flags and environment
-// assignments (FOO=bar). A guarded token that is not that word is an argument of
-// another command and is therefore a mention.
-func mutationChannelTokenIsCommandWord(text string, i int) bool {
-	segStart := mutationChannelSegmentStart(text, i)
-	for pos := segStart; pos < len(text); {
-		word, after := mutationChannelFirstWord(text, pos)
-		if word == "" {
-			return false
-		}
-		if mutationChannelIsWrapperWord(word) || mutationChannelIsAssignmentWord(word) ||
-			strings.HasPrefix(word, "-") {
-			pos = after
-			continue
-		}
-		end := after
-		if strings.ContainsAny(word, `/\`) {
-			end = mutationChannelPathWordEnd(text, after)
-		}
-		return i >= pos && i < end
-	}
-	return false
-}
-
-// mutationChannelPathWordEnd extends a path-like command word across the
-// space-separated tokens that continue a path, so "/usr/local/bin/tokenhush" and
-// `C:\Program Files\Tokenhush\tokenhush.exe` are each one command word. The
-// executable name that completes the path (the first token without a separator)
-// is included.
-func mutationChannelPathWordEnd(text string, after int) int {
-	end := after
-	for {
-		next, nextAfter := mutationChannelFirstWord(text, end)
-		if next == "" {
-			return end
-		}
-		end = nextAfter
-		if !strings.ContainsAny(next, `/\`) {
-			return end
-		}
-	}
-}
-
-// mutationChannelIsWrapperWord reports whether word names a wrapper command. A
-// path prefix is stripped, so /usr/bin/sudo still counts.
-func mutationChannelIsWrapperWord(word string) bool {
-	if idx := strings.LastIndexAny(word, `/\`); idx >= 0 {
-		word = word[idx+1:]
-	}
-	for _, wrapper := range mutationChannelWrapperWords {
-		if equalFoldASCII(word, wrapper) {
-			return true
-		}
-	}
-	return false
-}
-
-// mutationChannelIsAssignmentWord reports whether word is a leading environment
-// assignment (NAME=value), which precedes the command word without being one.
-func mutationChannelIsAssignmentWord(word string) bool {
-	eq := strings.IndexByte(word, '=')
-	if eq <= 0 {
-		return false
-	}
-	for k := 0; k < eq; k++ {
-		c := word[k]
-		if c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-			continue
-		}
-		if k > 0 && c >= '0' && c <= '9' {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 // mutationChannelInNormalQuote reports whether byte i lies inside a quoted

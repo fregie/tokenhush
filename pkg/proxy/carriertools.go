@@ -39,10 +39,11 @@ import (
 //
 //   - task, spawn_agent, subagent, agent, agent_task: delegation — the
 //     arguments are a prompt handed to another agent; the tool call itself acts
-//     on nothing.
+//     on nothing. Any tool call the delegated agent then makes is inspected on
+//     its own.
 //   - message, prompt: conversation text addressed to a human or a model.
 //   - think, reasoning: model scratchpad text, never executed.
-//   - todo, todowrite, notebook, plan: plan/todo/document bodies.
+//   - todo, todowrite, plan: plan/todo/document bodies.
 //   - question, ask: a question to the user; the reply arrives as content.
 //   - read, read_file: read-only file inspection; it cannot write. A read of
 //     the allowlist file is therefore also exempt: reading cannot change the
@@ -50,6 +51,10 @@ import (
 //     (force-redacted outbound, never restored inbound).
 //   - glob, grep: read-only search patterns; a pattern that spells a guarded
 //     shape is a search, not an action.
+//
+// `notebook` was REMOVED from this list: a notebook tool can execute code
+// cells, so its arguments are not guaranteed to be content. It now keeps the
+// full inspection (the fail-closed direction).
 //
 // The list is deliberately closed: adding a name widens the exemption (and the
 // carrier-named acting-tool boundary above), so it is a security-relevant edit,
@@ -66,7 +71,6 @@ var mutationChannelCarrierTools = []string{
 	"reasoning",
 	"todo",
 	"todowrite",
-	"notebook",
 	"plan",
 	"question",
 	"ask",
@@ -104,6 +108,11 @@ func mutationChannelCarrierToolName(name string) bool {
 // inspects, on the same tool call (…/tool_calls/N/function/name).
 const mutationChannelFunctionNameField = "name"
 
+// mutationChannelInputField is the Anthropic Messages tool_use input field. It
+// is the object (or JSON string) carrying a tool call's arguments in that
+// shape, so the guard scopes it exactly like the OpenAI `arguments` field.
+const mutationChannelInputField = "input"
+
 // isMutationChannelFunctionNamePath reports whether a decoded-leaf JSON Pointer
 // names a tool call's function-name field. It uses the same final-'/'-token rule
 // as isMutationChannelArgumentsPath, so a sibling key that merely contains
@@ -112,32 +121,58 @@ func isMutationChannelFunctionNamePath(path string) bool {
 	return path[strings.LastIndexByte(path, '/')+1:] == mutationChannelFunctionNameField
 }
 
-// mutationChannelCarrierArgumentsPath maps a function-name leaf path to the
-// arguments leaf path of the same tool call (the sibling in the same parent
-// object). The caller guarantees namePath ends in mutationChannelFunctionNameField
-// (via isMutationChannelFunctionNamePath), so the prefix still ends with the
-// '/' opening that field.
-func mutationChannelCarrierArgumentsPath(namePath string) string {
-	return namePath[:len(namePath)-len(mutationChannelFunctionNameField)] + mutationChannelArgumentsField
+// mutationChannelGuardRootKey returns the canonical root key of a decoded-leaf
+// path: the leaf's own path when it is a root, or the enclosing
+// arguments-or-input root when the leaf is nested under object-form arguments.
+// The key is what the carrier/content-tool exemption maps are built from, so a
+// nested leaf must resolve to exactly the key the sibling name leaf produces.
+func mutationChannelGuardRootKey(path string) (string, bool) {
+	for _, field := range [...]string{mutationChannelArgumentsField, mutationChannelInputField} {
+		suffix := "/" + field
+		if strings.HasSuffix(path, suffix) {
+			return path, true
+		}
+		if i := strings.LastIndex(path, suffix+"/"); i >= 0 {
+			return path[:i+len(suffix)], true
+		}
+	}
+	return "", false
 }
 
-// mutationChannelArgumentsPrefix returns the tool-call path prefix that a
-// function-name leaf and an arguments leaf share (the path up to and including
-// the '/' opening the field). The caller guarantees argumentsPath ends in
-// mutationChannelArgumentsField.
-func mutationChannelArgumentsPrefix(argumentsPath string) string {
-	return argumentsPath[:len(argumentsPath)-len(mutationChannelArgumentsField)]
+// mutationChannelGuardToolPrefix returns the tool-call path prefix a name leaf
+// and its arguments/input root share (the path up to and including the '/'
+// opening the root's field). It is derived from the root key, so an
+// object-form child leaf resolves to the same prefix as its sibling name leaf.
+func mutationChannelGuardToolPrefix(path string) (string, bool) {
+	root, ok := mutationChannelGuardRootKey(path)
+	if !ok {
+		return "", false
+	}
+	i := strings.LastIndexByte(root, '/')
+	if i < 0 {
+		return "", false
+	}
+	return root[:i+1], true
 }
 
-// mutationChannelFunctionNamePrefix returns the same shared tool-call path
-// prefix from a function-name leaf path. The caller guarantees namePath ends in
+// mutationChannelToolRootKeys returns the two candidate root keys of a tool
+// call identified by its function-name leaf: the OpenAI `arguments` root and
+// the Anthropic `input` root. A name leaf registers both, so whichever shape
+// the arguments arrive in resolves to an exempt root.
+func mutationChannelToolRootKeys(namePath string) [2]string {
+	base := namePath[:len(namePath)-len(mutationChannelFunctionNameField)]
+	return [2]string{base + mutationChannelArgumentsField, base + mutationChannelInputField}
+}
+
+// mutationChannelFunctionNamePrefix returns the shared tool-call path prefix
+// from a function-name leaf path. The caller guarantees namePath ends in
 // mutationChannelFunctionNameField.
 func mutationChannelFunctionNamePrefix(namePath string) string {
 	return namePath[:len(namePath)-len(mutationChannelFunctionNameField)]
 }
 
-// mutationChannelCarrierArgumentsPaths returns the set of walked arguments-leaf
-// paths owned by a tool call whose function name is a carrier name. It is built
+// mutationChannelCarrierArgumentsPaths returns the set of arguments/input root
+// keys owned by a tool call whose function name is a carrier name. It is built
 // from the sibling name leaves of the same walk, so the buffered guard can skip
 // exactly those tool calls and nothing else. Duplicate keys follow the JSON
 // convention (the later member wins, matching encoding/json), because a later
@@ -148,15 +183,19 @@ func mutationChannelCarrierArgumentsPaths(walked []protocol.Leaf) map[string]str
 		if !isMutationChannelFunctionNamePath(leaf.Path) {
 			continue
 		}
-		argumentsPath := mutationChannelCarrierArgumentsPath(leaf.Path)
+		roots := mutationChannelToolRootKeys(leaf.Path)
 		if mutationChannelCarrierToolName(leaf.Content) {
 			if out == nil {
 				out = make(map[string]struct{}, 2)
 			}
-			out[argumentsPath] = struct{}{}
+			for _, root := range roots {
+				out[root] = struct{}{}
+			}
 			continue
 		}
-		delete(out, argumentsPath)
+		for _, root := range roots {
+			delete(out, root)
+		}
 	}
 	return out
 }

@@ -67,26 +67,30 @@ func (b *sseBackfiller) setToolCallGuard(detect func(text string) (class string,
 	// created (or re-installing it) cannot leave a path unguarded. A tool call
 	// whose carrier name was already streamed stays exempt.
 	for _, p := range b.paths {
-		if p.kind == kindJSON && isMutationChannelArgumentsPath(p.key) && !b.carrierToolCall(p.key) {
+		if _, ok := mutationChannelGuardRootKey(p.key); ok && p.kind == kindJSON && !b.carrierToolCall(p.key) {
 			p.guardArmed = true
 		}
 	}
 }
 
-// guardArms reports whether key names a tool-call arguments path the guard must
-// accumulate, when the guard is installed and the tool call's function name is
-// not a non-action carrier name (see carriertools.go).
+// guardArms reports whether key names a tool-call arguments-or-input path the
+// guard must accumulate, when the guard is installed and the tool call's
+// function name is not a non-action carrier name (see carriertools.go).
 func (b *sseBackfiller) guardArms(kind pathKind, key string) bool {
-	return b.guardDetect != nil && kind == kindJSON && isMutationChannelArgumentsPath(key) && !b.carrierToolCall(key)
+	if b.guardDetect == nil || kind != kindJSON || b.carrierToolCall(key) {
+		return false
+	}
+	_, ok := mutationChannelGuardRootKey(key)
+	return ok
 }
 
 // noteCarrierToolName records one streamed function-name leaf. A carrier name
-// exempts the same tool call's arguments path entirely, disarming it if it was
-// already armed without a decision — a provider that streams arguments before
-// the name must not leave the call armed once the name is known. A content-
-// bearing file tool name instead switches the path to the reduced content-tool
-// table; a path that already matched stays refused, because the decision was
-// made on the fragments the client had streamed.
+// exempts the same tool call's arguments/input paths entirely, disarming every
+// armed path still undecided — a provider that streams arguments before the
+// name must not leave the call armed once the name is known. A content-bearing
+// file tool name instead switches the paths to the reduced content-tool table; a
+// path that already matched stays refused, because the decision was made on the
+// fragments the client had streamed.
 func (b *sseBackfiller) noteCarrierToolName(path, name string) {
 	if b == nil || b.guardDetect == nil || !isMutationChannelFunctionNamePath(path) {
 		return
@@ -106,23 +110,29 @@ func (b *sseBackfiller) noteCarrierToolName(path, name string) {
 		b.carrierToolPrefixes = make(map[string]struct{}, 2)
 	}
 	b.carrierToolPrefixes[prefix] = struct{}{}
-	p := b.paths[prefix+mutationChannelArgumentsField]
-	if p == nil || !p.guardArmed || p.guardDecided {
-		return
-	}
-	p.guardArmed = false
-	p.guardAccum = p.guardAccum[:0]
-	p.guardClass = ""
-	if p.active && p.w.Buffered() == 0 {
-		// Nothing is buffered in the placeholder window, so the event-boundary
-		// release can retire the path now that it is no longer guarded.
-		b.touched = append(b.touched, p)
+	for key, p := range b.paths {
+		if !p.guardArmed || p.guardDecided {
+			continue
+		}
+		if toolPrefix, ok := mutationChannelGuardToolPrefix(key); !ok || toolPrefix != prefix {
+			continue
+		}
+		p.guardArmed = false
+		p.guardAccum = p.guardAccum[:0]
+		p.guardClass = ""
+		if p.active && p.w.Buffered() == 0 {
+			// Nothing is buffered in the placeholder window, so the
+			// event-boundary release can retire the path now that it is no
+			// longer guarded.
+			b.touched = append(b.touched, p)
+		}
 	}
 }
 
-// noteContentToolName records a streamed content-bearing file tool name and
-// switches the same tool call's arguments path (if it is armed) to the reduced
-// content-tool table. A path that already decided a hit stays refused.
+// noteContentToolName records a streamed content-bearing file tool name. The
+// recorded prefix switches every arguments/input path of the same tool call to
+// the reduced content-tool table (see guardDetectorFor); a path that already
+// decided a hit stays refused.
 func (b *sseBackfiller) noteContentToolName(path string) {
 	prefix := mutationChannelFunctionNamePrefix(path)
 	if prefix == "" {
@@ -132,29 +142,35 @@ func (b *sseBackfiller) noteContentToolName(path string) {
 		b.contentToolPrefixes = make(map[string]struct{}, 2)
 	}
 	b.contentToolPrefixes[prefix] = struct{}{}
-	if p := b.paths[prefix+mutationChannelArgumentsField]; p != nil {
-		p.guardContentOnly = true
-	}
 }
 
 // carrierToolCall reports whether a carrier function name was already seen for
-// the tool call owning an arguments path. Callers must pass an arguments path.
-func (b *sseBackfiller) carrierToolCall(argumentsPath string) bool {
-	if b == nil || len(b.carrierToolPrefixes) == 0 || !isMutationChannelArgumentsPath(argumentsPath) {
+// the tool call owning an arguments/input path. A nested object-form leaf
+// resolves to the same tool prefix as its sibling name leaf.
+func (b *sseBackfiller) carrierToolCall(path string) bool {
+	if b == nil || len(b.carrierToolPrefixes) == 0 {
 		return false
 	}
-	_, ok := b.carrierToolPrefixes[mutationChannelArgumentsPrefix(argumentsPath)]
+	prefix, ok := mutationChannelGuardToolPrefix(path)
+	if !ok {
+		return false
+	}
+	_, ok = b.carrierToolPrefixes[prefix]
 	return ok
 }
 
 // contentToolCall reports whether a content-bearing file tool name was already
-// seen for the tool call owning an arguments path. Callers must pass an
-// arguments path.
-func (b *sseBackfiller) contentToolCall(argumentsPath string) bool {
-	if b == nil || len(b.contentToolPrefixes) == 0 || !isMutationChannelArgumentsPath(argumentsPath) {
+// seen for the tool call owning an arguments/input path. A nested object-form
+// leaf resolves to the same tool prefix as its sibling name leaf.
+func (b *sseBackfiller) contentToolCall(path string) bool {
+	if b == nil || len(b.contentToolPrefixes) == 0 {
 		return false
 	}
-	_, ok := b.contentToolPrefixes[mutationChannelArgumentsPrefix(argumentsPath)]
+	prefix, ok := mutationChannelGuardToolPrefix(path)
+	if !ok {
+		return false
+	}
+	_, ok = b.contentToolPrefixes[prefix]
 	return ok
 }
 
@@ -191,7 +207,7 @@ func (b *sseBackfiller) setToolCallGuardContent(detect func(text string) (class 
 // reduced content-tool matcher for a content-bearing file tool, the full matcher
 // otherwise (and whenever the reduced one was not installed).
 func (b *sseBackfiller) guardDetectorFor(p *pathState) func(text string) (class string, matched bool) {
-	if p.guardContentOnly && b.guardDetectContent != nil {
+	if b.contentToolCall(p.key) && b.guardDetectContent != nil {
 		return b.guardDetectContent
 	}
 	return b.guardDetect
@@ -199,7 +215,7 @@ func (b *sseBackfiller) guardDetectorFor(p *pathState) func(text string) (class 
 
 // guardDetectorForEncoded is guardDetectorFor for the whole-valid-JSON shape.
 func (b *sseBackfiller) guardDetectorForEncoded(p *pathState) func(content []byte) (class string, matched bool) {
-	if p.guardContentOnly && b.guardDetectEncodedContent != nil {
+	if b.contentToolCall(p.key) && b.guardDetectEncodedContent != nil {
 		return b.guardDetectEncodedContent
 	}
 	return b.guardDetectEncoded

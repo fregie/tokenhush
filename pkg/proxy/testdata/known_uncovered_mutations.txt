@@ -7,17 +7,17 @@
 #
 # The mutation-channel detector is high-confidence interception (best-effort),
 # not a closed guarantee. An entry here marks a boundary of the explicitly
-# enumerated pattern set (see MutationChannelPatternInventory); it is not a
-# claim that everything else is covered.
+# enumerated rule set (see MutationChannelPatternInventory); it is not a claim
+# that everything else is covered.
 #
 # One class per line. Blank lines and lines starting with '#' are comments.
 base64- or otherwise encoded command text (the shell decodes it at run time; only the literal command shape is matched)
 indirect execution through a script file (the detector sees the argument text, not the file's contents)
 multi-step assembly across separate tool calls (no single candidate carries the full command)
-a command split across several leaves of one tool call (each leaf is shorter than the command shape)
+a command split across several leaves of one tool call in a shape the nested-leaf joins do not cover
 fragments assembled at run time by an interpreter (for example string concatenation inside python -c)
-shell wrappers and interpreters deliberately not enumerated (for example ssh to a remote host, xargs, or expect)
-a real invocation hidden as the argument of another command, or after a wrapper flag the wrapper list does not model (the indirect-execution class reached through the mention exemption)
+a wrapper prefix the simple execution-position boundary set does not model (for example sudo, sudo -u root, env, or a Windows executable path containing spaces): the specific command is not at a boundary, so the invocation is treated as a mention
+a guarded command hidden as another command's argument or piped into a shell (for example echo "<the CLI form>" | sh, xargs, or find -exec): the carrier/argument position is a mention
 write mechanisms outside the enumerated write-signal list (for example an editor save, a custom program, or a CLI not listed)
 indirect path spellings for the data directory (for example a symlink or a bind mount; the basename form is covered)
-tool-call arguments carried outside the OpenAI arguments string field (an Anthropic-shaped input object is not scanned)
+an acting tool deliberately named like a non-action carrier tool or a content-bearing file tool (the exemption keys on function.name, the only signal available)

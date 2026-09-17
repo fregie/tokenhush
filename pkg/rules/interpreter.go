@@ -27,10 +27,40 @@ func DefaultOptions() Options {
 	return Options{PluginID: DefaultPluginID, Priority: DefaultPriority}
 }
 
+// CommandRule is one compiled high-risk command rule: the mutation-channel
+// guard's data-only rule form. It is the validated projection of a Rule of type
+// RuleCommand, and the assembly layer (pkg/gateway) installs it into the proxy
+// guard, so adding a high-risk command needs no binary change — only rule
+// content does.
+type CommandRule struct {
+	ID         string
+	Command    string
+	Subcommand string
+	Verbs      []string
+	Targets    []string
+}
+
+// CommandRules returns a copy of the compiled high-risk command rules. A nil
+// interpreter returns nil; the returned slice and its nested slices belong to
+// the caller.
+func (i *Interpreter) CommandRules() []CommandRule {
+	if i == nil || len(i.commands) == 0 {
+		return nil
+	}
+	out := make([]CommandRule, len(i.commands))
+	for n := range i.commands {
+		out[n] = i.commands[n]
+		out[n].Verbs = append([]string(nil), i.commands[n].Verbs...)
+		out[n].Targets = append([]string(nil), i.commands[n].Targets...)
+	}
+	return out
+}
+
 // Interpreter is the compiled rule document. It is immutable after Compile and
 // safe for concurrent use.
 type Interpreter struct {
 	rules     []compiledRule
+	commands  []CommandRule
 	allowlist [][]byte
 	blocklist [][]byte
 	canBlock  bool

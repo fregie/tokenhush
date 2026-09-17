@@ -47,12 +47,6 @@ type pathState struct {
 	guardDecided bool
 	guardHit     bool
 	guardAccum   []byte
-	// guardContentOnly marks a path armed for a content-bearing file tool (see
-	// mutationChannelContentTools): its content is a mention for the CLI and
-	// control-port classes, so only the reduced content-tool table may decide
-	// it. It is set when the tool call's function name is known, before or after
-	// the path armed.
-	guardContentOnly bool
 	// guardClass is the channel class a match decided ("" when the refusal came
 	// from a fail-closed path), so releasePath can build the same structured
 	// refusal envelope the buffered path delivers.
@@ -305,7 +299,10 @@ func (b *sseBackfiller) feed(key string, kind pathKind, chunk []byte, seq int) e
 // never written to the placeholder window: the nested terminal leaves keep their
 // existing per-leaf backfill.
 func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) error {
-	if b.guardDetect == nil || b.guardDetectEncoded == nil || !isMutationChannelArgumentsPath(key) || b.carrierToolCall(key) {
+	if b.guardDetect == nil || b.guardDetectEncoded == nil || b.carrierToolCall(key) {
+		return nil
+	}
+	if _, ok := mutationChannelGuardRootKey(key); !ok {
 		return nil
 	}
 	p := b.paths[key]
@@ -352,11 +349,10 @@ func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) er
 // "replace was called".
 func (b *sseBackfiller) newPathState(key string, kind pathKind) *pathState {
 	p := &pathState{
-		key:              key,
-		kind:             kind,
-		lastSeq:          -1,
-		guardArmed:       b.guardArms(kind, key),
-		guardContentOnly: b.contentToolCall(key),
+		key:        key,
+		kind:       kind,
+		lastSeq:    -1,
+		guardArmed: b.guardArms(kind, key),
 	}
 	p.w = protocol.NewBackfillWriter(p, b.maxLen, func(tok string) string {
 		out := b.replace(tok)

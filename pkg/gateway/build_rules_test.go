@@ -56,7 +56,7 @@ func TestBuildPipelineRegistersRemoteRules(t *testing.T) {
 	if _, err := BuildPipeline(opts); err != nil {
 		t.Fatalf("BuildPipeline with remote rules: %v", err)
 	}
-	registry, err := buildRegistry(opts)
+	registry, _, err := buildRegistry(opts)
 	if err != nil {
 		t.Fatalf("buildRegistry with remote rules: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestBuildPipelineRulesNilDropsNoBuiltins(t *testing.T) {
 	if _, err := BuildPipeline(opts); err != nil {
 		t.Fatalf("BuildPipeline without remote rules: %v", err)
 	}
-	registry, err := buildRegistry(opts)
+	registry, _, err := buildRegistry(opts)
 	if err != nil {
 		t.Fatalf("buildRegistry without remote rules: %v", err)
 	}

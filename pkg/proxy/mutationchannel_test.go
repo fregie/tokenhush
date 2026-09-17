@@ -48,27 +48,28 @@ func TestMutationChannelPatterns(t *testing.T) {
 			text: "tokenhush allowlist add entry-value"},
 		{name: "cli_pro_binary", class: MutationChannelCLI,
 			text: "tokenhush-pro allowlist remove entry-value"},
-		{name: "cli_no_sub_subcommand", class: MutationChannelCLI,
-			text: "tokenhush allowlist"},
+		{name: "cli_no_mutating_verb_is_not_a_mutation", text: "tokenhush allowlist"},
 		{name: "cli_sh_c", class: MutationChannelCLI,
 			text: `sh -c "tokenhush allowlist add entry-value"`},
 		{name: "cli_bash_c_single_quotes", class: MutationChannelCLI,
-			text: "bash -c 'tokenhush allowlist list'"},
+			text: "bash -c 'tokenhush allowlist add entry-value'"},
 		{name: "cli_backticks", class: MutationChannelCLI,
 			text: "`tokenhush allowlist add entry-value`"},
 		{name: "cli_command_substitution", class: MutationChannelCLI,
-			text: "echo done && $(tokenhush allowlist list)"},
+			text: "echo done && $(tokenhush allowlist remove entry-value)"},
 		{name: "cli_pipe", class: MutationChannelCLI,
 			text: "cat entries.txt | tokenhush allowlist remove entry-value"},
 		{name: "cli_and_chain", class: MutationChannelCLI,
 			text: "true && tokenhush allowlist add entry-value"},
-		{name: "cli_sudo", class: MutationChannelCLI,
-			text: "sudo tokenhush allowlist add entry-value"},
-		{name: "cli_env_wrapper", class: MutationChannelCLI,
-			text: "env TOKENHUSH_HOME=/tmp/u tokenhush allowlist add entry-value"},
+		// Wrapper prefixes are a recorded residual: the simple execution-position
+		// boundary set does not model them, so they are mentions, not invocations.
+		{name: "cli_sudo_is_a_residual_mention", text: "sudo tokenhush allowlist add entry-value"},
+		{name: "cli_env_wrapper_is_a_residual_mention", text: "env TOKENHUSH_HOME=/tmp/u tokenhush allowlist add entry-value"},
 		{name: "cli_absolute_path", class: MutationChannelCLI,
 			text: "/usr/local/bin/tokenhush allowlist add entry-value"},
-		{name: "cli_windows_exe", class: MutationChannelCLI,
+		// A Windows path with spaces needs the retired path-word join, so it is a
+		// recorded residual mention.
+		{name: "cli_windows_exe_path_with_spaces_is_a_residual_mention",
 			text: `C:\Program Files\Tokenhush\tokenhush.exe allowlist add entry-value`},
 		{name: "cli_tabs_and_mixed_case", class: MutationChannelCLI,
 			text: "\tTokenHush\tAllowList\tAdd\tentry-value\t"},
@@ -270,7 +271,7 @@ func TestMutationChannelPatterns(t *testing.T) {
 	})
 
 	t.Run("double_encoded_leaf", func(t *testing.T) {
-		body := []byte(`{"x":"\"tokenhush allowlist list\""}`)
+		body := []byte(`{"x":"\"tokenhush allowlist add entry-value\""}`)
 		walked, err := protocol.Walk(body)
 		if err != nil {
 			t.Fatalf("walk: %v", err)
@@ -399,9 +400,9 @@ func TestMutationChannelPatterns(t *testing.T) {
 // documentation artifact: the accessor must be non-empty, must equal the file
 // byte for byte (so the two cannot drift), and must explicitly record the
 // classes the plan requires — base64/encoded commands, indirect scripts,
-// multi-step assembly, the wrappers deliberately not enumerated, and the
-// W6.5 honesty gap: arguments carried outside the OpenAI `arguments` string
-// field (an Anthropic-shaped `input` object is not scanned), which W6.6 cites.
+// multi-step assembly, the wrapper prefixes the simple execution-position
+// boundary set does not model, and the indirect-execution class reached through
+// the mention exemption.
 func TestKnownUncoveredMutationChannels(t *testing.T) {
 	list := KnownUncoveredMutationChannels()
 	if len(list) == 0 {
@@ -421,7 +422,7 @@ func TestKnownUncoveredMutationChannels(t *testing.T) {
 		t.Fatalf("accessor and %s drifted:\n accessor=%q\n file=%q", path, list, parsed)
 	}
 
-	for _, want := range []string{"base64", "indirect", "multi-step", "wrapper", "anthropic", "input"} {
+	for _, want := range []string{"base64", "indirect", "multi-step", "wrapper"} {
 		if !anyMutationUncoveredClass(list, want) {
 			t.Fatalf("the %q limitation is not recorded: %q", want, list)
 		}

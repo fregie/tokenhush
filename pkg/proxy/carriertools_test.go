@@ -185,7 +185,7 @@ func TestToolCallCarrierExemptionActingToolsStillRefused(t *testing.T) {
 	}{
 		{"cli_plain", "bash", `{"command":"tokenhush allowlist add evil.example"}`, MutationChannelCLI},
 		{"cli_sh_c", "shell", `{"command":"sh -c \"tokenhush allowlist add evil.example\""}`, MutationChannelCLI},
-		{"cli_backticks", "exec", "{\"command\":\"`tokenhush allowlist list`\"}", MutationChannelCLI},
+		{"cli_backticks", "exec", "{\"command\":\"`tokenhush allowlist add evil.example`\"}", MutationChannelCLI},
 		{"cli_substitution", "terminal", `{"command":"echo done && $(tokenhush allowlist remove evil.example)"}`, MutationChannelCLI},
 		{"control_post_with_data", "bash", `{"command":"curl -X POST http://127.0.0.1:8787/allowlist -d '{\"entry\":\"evil\"}'"}`, MutationChannelControlPort},
 		{"control_request_line", "powershell", `{"command":"DELETE /allowlist HTTP/1.1\r\nHost: 127.0.0.1:8787"}`, MutationChannelControlPort},
@@ -303,7 +303,7 @@ func TestMutationChannelCarrierToolsFrozen(t *testing.T) {
 	want := []string{
 		"task", "spawn_agent", "subagent", "agent", "agent_task",
 		"message", "prompt", "think", "reasoning",
-		"todo", "todowrite", "notebook", "plan", "question", "ask",
+		"todo", "todowrite", "plan", "question", "ask",
 		"read", "read_file", "glob", "grep",
 	}
 	tools := MutationChannelCarrierTools()
@@ -318,6 +318,8 @@ func TestMutationChannelCarrierToolsFrozen(t *testing.T) {
 	for _, acting := range []string{
 		"bash", "shell", "exec", "terminal", "powershell", "cmd",
 		"write", "edit", "apply_patch", "run_command", "fetch", "http_request",
+		// notebook can execute code cells, so it is not a content carrier.
+		"notebook",
 	} {
 		if slices.Contains(tools, acting) {
 			t.Fatalf("acting tool %q is on the carrier list", acting)

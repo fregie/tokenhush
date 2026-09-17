@@ -19,6 +19,11 @@ const (
 	RuleRegex = "regex"
 	// RuleKeyword matches the literal Keywords substrings.
 	RuleKeyword = "keyword"
+	// RuleCommand declares one high-risk command for the mutation-channel
+	// guard (Command plus the optional Subcommand/Verbs/Targets). Command rules
+	// do not produce content findings; they are compiled into the guard's
+	// specific-command set so a tool call invoking the named command is refused.
+	RuleCommand = "command"
 )
 
 // Limits bound a rule document so a malformed or hostile payload cannot make
@@ -35,6 +40,10 @@ const (
 	MaxListEntries = 256
 	// MaxRuleAllowlist bounds a per-rule allowlist.
 	MaxRuleAllowlist = 64
+	// MaxCommandVerbsPerRule bounds a command rule's Verbs.
+	MaxCommandVerbsPerRule = 16
+	// MaxCommandTargetsPerRule bounds a command rule's Targets.
+	MaxCommandTargetsPerRule = 16
 	// MaxLiteralLength bounds one literal in bytes.
 	MaxLiteralLength = 256
 	// MaxPatternLength bounds one regex pattern in bytes.
@@ -103,4 +112,23 @@ type Rule struct {
 	// Allowlist holds byte-exact literals that suppress this rule's matches
 	// (including a block-action rule's matches).
 	Allowlist []string `json:"allowlist,omitempty"`
+
+	// The fields below are only valid for a RuleCommand rule.
+	//
+	// Command is the specific executable or command word the rule names
+	// (basename, ASCII case-insensitive). It is REQUIRED for a command rule and
+	// must be specific: a generic shell or interpreter (sh, bash, python, ...),
+	// a wrapper (sudo, env, ...), a redirection or a wildcard is rejected at
+	// compile time, because a rule over generic shell surface is exactly what
+	// the rule model removes.
+	Command string `json:"command,omitempty"`
+	// Subcommand is an optional token that must follow Command in the same
+	// shell segment.
+	Subcommand string `json:"subcommand,omitempty"`
+	// Verbs are optional mutating tokens; at least one must appear after the
+	// command in the same shell segment.
+	Verbs []string `json:"verbs,omitempty"`
+	// Targets are optional literal shapes (for example a control-plane path);
+	// at least one must appear in the same shell segment.
+	Targets []string `json:"targets,omitempty"`
 }

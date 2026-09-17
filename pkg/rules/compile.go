@@ -44,7 +44,7 @@ func Compile(cfg *Config, opts Options) (*Interpreter, error) {
 	if err := checkListConflict(allow, blocked); err != nil {
 		return nil, err
 	}
-	rules, err := compileRules(cfg.Rules)
+	rules, commands, err := compileRules(cfg.Rules)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +53,9 @@ func Compile(cfg *Config, opts Options) (*Interpreter, error) {
 		if rules[i].action == extension.Block {
 			canBlock = true
 		}
+	}
+	if len(commands) > 0 {
+		canBlock = true
 	}
 	pluginID := opts.PluginID
 	if pluginID == "" {
@@ -64,6 +67,7 @@ func Compile(cfg *Config, opts Options) (*Interpreter, error) {
 	}
 	return &Interpreter{
 		rules:     rules,
+		commands:  commands,
 		allowlist: allow,
 		blocklist: blocked,
 		canBlock:  canBlock,
@@ -73,30 +77,48 @@ func Compile(cfg *Config, opts Options) (*Interpreter, error) {
 }
 
 // compileRules compiles every rule, rejecting duplicate ids and too many rules.
-func compileRules(defs []Rule) ([]compiledRule, error) {
+// Regex/keyword rules produce content findings; command rules are split out into
+// the high-risk command set the mutation-channel guard consumes.
+func compileRules(defs []Rule) ([]compiledRule, []CommandRule, error) {
 	if len(defs) > MaxRules {
-		return nil, fmt.Errorf("%w: %d rules exceed the limit of %d", ErrInvalidRule, len(defs), MaxRules)
+		return nil, nil, fmt.Errorf("%w: %d rules exceed the limit of %d", ErrInvalidRule, len(defs), MaxRules)
 	}
 	out := make([]compiledRule, 0, len(defs))
+	var commands []CommandRule
 	seen := make(map[string]struct{}, len(defs))
 	for i := range defs {
+		if defs[i].Type == RuleCommand {
+			c, err := compileCommandRule(defs[i])
+			if err != nil {
+				return nil, nil, fmt.Errorf("rules[%d]: %w", i, err)
+			}
+			if _, dup := seen[c.ID]; dup {
+				return nil, nil, fmt.Errorf("%w: duplicate rule id %q", ErrInvalidRule, c.ID)
+			}
+			seen[c.ID] = struct{}{}
+			commands = append(commands, c)
+			continue
+		}
 		r, err := compileRule(defs[i])
 		if err != nil {
-			return nil, fmt.Errorf("rules[%d]: %w", i, err)
+			return nil, nil, fmt.Errorf("rules[%d]: %w", i, err)
 		}
 		if _, dup := seen[r.id]; dup {
-			return nil, fmt.Errorf("%w: duplicate rule id %q", ErrInvalidRule, r.id)
+			return nil, nil, fmt.Errorf("%w: duplicate rule id %q", ErrInvalidRule, r.id)
 		}
 		seen[r.id] = struct{}{}
 		out = append(out, r)
 	}
-	return out, nil
+	return out, commands, nil
 }
 
 // compileRule compiles one rule definition.
 func compileRule(def Rule) (compiledRule, error) {
 	if err := validateRuleID(def.ID); err != nil {
 		return compiledRule{}, err
+	}
+	if def.Command != "" || def.Subcommand != "" || len(def.Verbs) > 0 || len(def.Targets) > 0 {
+		return compiledRule{}, fmt.Errorf("%w: rule %q: command, subcommand, verbs and targets are only valid for a %q rule", ErrInvalidRule, def.ID, RuleCommand)
 	}
 	action, err := parseAction(def.Action)
 	if err != nil {
@@ -197,6 +219,101 @@ func compileKeywordRule(r *compiledRule, def Rule) error {
 		r.keywords = append(r.keywords, b)
 	}
 	return nil
+}
+
+// commandRuleGenericWords are the command words a command rule must not name:
+// generic shells and interpreters, wrappers, redirection/separator operators and
+// the wildcard. A rule over one of these is a blanket rule over generic shell
+// surface, which the mutation-channel rule model removes.
+var commandRuleGenericWords = []string{
+	"sh", "bash", "zsh", "ksh", "dash", "ash", "fish", "csh", "tcsh",
+	"python", "python2", "python3", "perl", "ruby", "node", "nodejs", "deno",
+	"php", "lua", "pwsh", "powershell", "cmd", "command", "osascript", "expect",
+	"sudo", "doas", "pkexec", "runuser", "su", "env", "nohup", "exec", "eval",
+	"nice", "time", "ionice", "setsid", "stdbuf", "timeout", "chrt", "taskset",
+	"busybox", "xargs", "ssh", "sh -c", "bash -c",
+	"*", "?", ">", ">>", "<", "|", "&", ";",
+}
+
+// commandRuleCommandIsGeneric reports whether cmd names a generic command word.
+// A path prefix is stripped and ASCII case folded, so /bin/bash is still
+// generic.
+func commandRuleCommandIsGeneric(cmd string) bool {
+	stripped := cmd
+	if idx := strings.LastIndexAny(stripped, `/\`); idx >= 0 {
+		stripped = stripped[idx+1:]
+	}
+	for _, generic := range commandRuleGenericWords {
+		if strings.EqualFold(stripped, generic) {
+			return true
+		}
+	}
+	return false
+}
+
+// compileCommandRule validates and compiles one command rule. Command is
+// required and must be specific; the optional subcommand/verbs/targets are
+// validated like literals and bounded. The action must be block: a command rule
+// is a guard rule that refuses a matching invocation, never a warn/redact rule.
+func compileCommandRule(def Rule) (CommandRule, error) {
+	if err := validateRuleID(def.ID); err != nil {
+		return CommandRule{}, err
+	}
+	if def.Pattern != "" || len(def.Keywords) > 0 || def.CaseSensitive || len(def.Allowlist) > 0 {
+		return CommandRule{}, fmt.Errorf("%w: rule %q: pattern, keywords, case_sensitive and allowlist are not valid for a %q rule", ErrInvalidRule, def.ID, RuleCommand)
+	}
+	if def.Action != string(extension.Block) {
+		return CommandRule{}, fmt.Errorf("%w: rule %q: a %q rule must use action %q, got %q", ErrInvalidRule, def.ID, RuleCommand, extension.Block, def.Action)
+	}
+	command := strings.TrimSpace(def.Command)
+	if command == "" {
+		return CommandRule{}, fmt.Errorf("%w: rule %q: command is required for a %q rule", ErrInvalidRule, def.ID, RuleCommand)
+	}
+	if command != def.Command {
+		return CommandRule{}, fmt.Errorf("%w: rule %q: command %q must not have leading or trailing whitespace", ErrInvalidRule, def.ID, def.Command)
+	}
+	if len(command) > MaxLiteralLength {
+		return CommandRule{}, fmt.Errorf("%w: rule %q: command exceeds %d bytes", ErrInvalidRule, def.ID, MaxLiteralLength)
+	}
+	if commandRuleCommandIsGeneric(command) {
+		return CommandRule{}, fmt.Errorf("%w: rule %q: command %q is generic; a high-risk rule must name a specific command", ErrInvalidRule, def.ID, def.Command)
+	}
+	subcommand := strings.TrimSpace(def.Subcommand)
+	if subcommand != def.Subcommand || len(subcommand) > MaxLiteralLength {
+		return CommandRule{}, fmt.Errorf("%w: rule %q: subcommand must be a single non-padded token of at most %d bytes", ErrInvalidRule, def.ID, MaxLiteralLength)
+	}
+	verbs, err := compileCommandTokens(def.ID, "verbs", def.Verbs, MaxCommandVerbsPerRule)
+	if err != nil {
+		return CommandRule{}, err
+	}
+	targets, err := compileCommandTokens(def.ID, "targets", def.Targets, MaxCommandTargetsPerRule)
+	if err != nil {
+		return CommandRule{}, err
+	}
+	return CommandRule{ID: def.ID, Command: command, Subcommand: subcommand, Verbs: verbs, Targets: targets}, nil
+}
+
+// compileCommandTokens validates and copies a command rule's token list,
+// rejecting empties, padding, control characters, oversized entries and exact
+// duplicates.
+func compileCommandTokens(id, field string, tokens []string, max int) ([]string, error) {
+	if len(tokens) > max {
+		return nil, fmt.Errorf("%w: rule %q: %s: %d entries exceed the limit of %d", ErrInvalidRule, id, field, len(tokens), max)
+	}
+	out := make([]string, 0, len(tokens))
+	seen := make(map[string]struct{}, len(tokens))
+	for _, token := range tokens {
+		b, err := compileLiteral(fmt.Sprintf("rule %q %s", id, field), token)
+		if err != nil {
+			return nil, err
+		}
+		if _, dup := seen[string(b)]; dup {
+			return nil, fmt.Errorf("%w: rule %q: %s: duplicate token %q", ErrInvalidLiteral, id, field, token)
+		}
+		seen[string(b)] = struct{}{}
+		out = append(out, token)
+	}
+	return out, nil
 }
 
 // parseAction maps a config action to the core action, rejecting unknown ones.

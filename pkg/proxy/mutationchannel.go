@@ -86,27 +86,16 @@ type mutationChannelPattern struct {
 	match func(text mutationChannelText, ctx MutationChannelContext) bool
 }
 
-// mutationChannelPatterns is the ordered union of the three class tables,
-// built once at package init. Nothing is compiled or allocated at match time.
-var mutationChannelPatterns = concatMutationChannelPatterns(
-	mutationChannelCLIPatterns,
-	mutationChannelPortPatterns,
-	mutationChannelFilePatterns,
-)
-
-// concatMutationChannelPatterns flattens the per-class tables in class order.
-func concatMutationChannelPatterns(groups ...[]mutationChannelPattern) []mutationChannelPattern {
-	var all []mutationChannelPattern
-	for _, group := range groups {
-		all = append(all, group...)
-	}
-	return all
-}
+// mutationChannelPatterns is the ordered pattern table derived from the
+// built-in rule set (mutationChannelRules in mutationrules.go), built once at
+// package init. Nothing is compiled or allocated at match time.
+var mutationChannelPatterns = mutationChannelRulePatterns(mutationChannelRules)
 
 // MutationChannelPatternInventory returns the ordered, human-readable ids of
-// every pattern the detector matches, one per table entry. It exists so the
-// pattern set is auditable from outside the package (tests, the security
-// documentation) without exporting the predicates.
+// every pattern the detector matches, one per built-in rule. It exists so the
+// pattern/rule set is auditable from outside the package (tests, the security
+// documentation) without exporting the predicates. The ids are the rule ids
+// (see MutationChannelRuleIDs).
 func MutationChannelPatternInventory() []string {
 	out := make([]string, 0, len(mutationChannelPatterns))
 	for _, pattern := range mutationChannelPatterns {
@@ -205,7 +194,7 @@ func (p *Pipeline) DetectMutationChannel(text string) (class string, matched boo
 			return pattern.Class, true
 		}
 	}
-	return "", false
+	return p.matchMutationChannelCommandRules(text, ctx)
 }
 
 // DetectMutationChannelContentTool is the pipeline-level entry point for a
@@ -244,61 +233,14 @@ func (p *Pipeline) selfProtectionModeEnabled(class string) bool {
 
 // Class 1 — the CLI.
 //
-// The shape is "executable name (optionally path-prefixed and quoted, with the
-// Windows .exe suffix) followed by the allowlist subcommand". The bare word
-// "allowlist", a different subcommand (status, doctor, ...) or a different
-// binary never matches. Because the match is on text, every shell wrapping
-// carries it: quotes (sh -c "..."), backticks, $(...), pipes, &&, sudo, env,
-// path prefixes and line continuations.
-var (
-	mutationChannelCommandNames = []string{"tokenhush-pro", "tokenhush"}
-	mutationChannelSubcommand   = "allowlist"
-)
-
-var mutationChannelCLIPatterns = []mutationChannelPattern{
-	{ID: "cli-command/tokenhush-allowlist", Class: MutationChannelCLI, match: matchCLIAllowlistCommand},
-}
-
-// matchCLIAllowlistCommand reports whether text contains the tokenhush or
-// tokenhush-pro executable followed by the allowlist subcommand at a position
-// that executes it. The occurrence must be the command word of its shell segment
-// (see mutationChannelTokenIsCommandWord): an occurrence that is an argument of
-// another command, inside a normal quoted string, or inside a content
-// here-document body is a mention and does not match.
-func matchCLIAllowlistCommand(t mutationChannelText, _ MutationChannelContext) bool {
-	text := t.raw
-	for _, name := range mutationChannelCommandNames {
-		for i := 0; ; {
-			j := indexFoldFrom(text, name, i)
-			if j < 0 {
-				break
-			}
-			i = j + 1
-			if j > 0 && !isCommandStartBoundary(text[j-1]) {
-				continue
-			}
-			if t.tokenIsMention(j) || !mutationChannelTokenIsCommandWord(text, j) {
-				continue
-			}
-			end := j + len(name)
-			if hasFoldAt(text, end, ".exe") {
-				end += len(".exe")
-			}
-			if end < len(text) && !isCommandTerminator(text[end]) {
-				continue
-			}
-			sub := skipCommandSpace(text, end)
-			if !hasFoldAt(text, sub, mutationChannelSubcommand) {
-				continue
-			}
-			if after := sub + len(mutationChannelSubcommand); after < len(text) && !isCommandTerminator(text[after]) {
-				continue
-			}
-			return true
-		}
-	}
-	return false
-}
+// The built-in rule (mutationrules.go) is "a specific executable at an
+// execution position, the allowlist subcommand, and a mutating verb". The bare
+// word "allowlist", a read-only subcommand (list, status, doctor, ...) or a
+// different binary never matches. The executable match is on text, but only at
+// an execution position (see mutationChannelAtBoundary): a path prefix, quotes
+// (sh -c "..."), backticks, $(...), pipes and && still carry it; a wrapper
+// (`sudo`, `env`) does not — that is the recorded residual.
+var mutationChannelSubcommand = "allowlist"
 
 // Class 2 — the control port.
 //
@@ -351,12 +293,6 @@ var (
 	// request body, hence a non-GET method, even when the verb is not spelled.
 	mutationChannelStatusDataFlags = []string{"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode"}
 )
-
-var mutationChannelPortPatterns = []mutationChannelPattern{
-	{ID: "control-port/host-port", Class: MutationChannelControlPort, match: matchControlPortHostPort},
-	{ID: "control-port/netcat-host-port", Class: MutationChannelControlPort, match: matchControlPortNetcat},
-	{ID: "control-port/control-request-line", Class: MutationChannelControlPort, match: matchControlPortRequestLine},
-}
 
 // matchControlPortHostPort reports whether text carries a loopback host with the
 // bound control port AND evidence of the control channel. The port alone is not
@@ -432,7 +368,7 @@ func matchControlPortRequestLine(t mutationChannelText, _ MutationChannelContext
 			if end := j + len(verb); end < len(text) && !isCommandTerminator(text[end]) {
 				continue
 			}
-			if t.tokenIsMention(j) || !mutationChannelTokenIsCommandWord(text, j) {
+			if t.tokenIsMention(j) || !mutationChannelExecutionPosition(text, j) {
 				continue
 			}
 			if hasControlPathAt(text, skipCommandSpace(text, j+len(verb))) {
@@ -488,16 +424,10 @@ const (
 	mutationChannelAllowlistFileName = "allowlist.json"
 )
 
-var mutationChannelFilePatterns = []mutationChannelPattern{
-	{ID: "file-write/data-dir-path", Class: MutationChannelFileWrite, match: matchFileWriteDataDirPath},
-	{ID: "file-write/allowlist-json", Class: MutationChannelFileWrite, match: matchFileWriteAllowlistJSON},
-	{ID: "file-write/target-path", Class: MutationChannelFileWrite, match: matchFileWriteTargetPath},
-}
-
 // mutationChannelContentPatterns is the reduced table a content-bearing file
 // tool is classified with: only the file-write class, and only its target-path
-// pattern. It is a subset of mutationChannelFilePatterns, so the mode gating and
-// the class vocabulary are identical; the two textual patterns are omitted
+// pattern. It is the file-write rule's target-path predicate alone, so the mode
+// gating and the class vocabulary are identical; the two textual patterns are omitted
 // because a document/test/fixture body mentioning the path with a redirection is
 // a mention, not a write to the listed file.
 var mutationChannelContentPatterns = []mutationChannelPattern{
@@ -819,19 +749,6 @@ func hasHTTPClientSignal(text string) bool {
 		}
 	}
 	return false
-}
-
-// mutationChannelCommandWordTokenAt reports whether token occurs at index j as a
-// complete shell token (a command-start boundary before it and a command
-// terminator after it) that is the command word of its segment.
-func mutationChannelCommandWordTokenAt(text string, j int, token string) bool {
-	if j > 0 && !isCommandStartBoundary(text[j-1]) {
-		return false
-	}
-	if end := j + len(token); end < len(text) && !isCommandTerminator(text[end]) {
-		return false
-	}
-	return mutationChannelTokenIsCommandWord(text, j)
 }
 
 // controlPathIsEvidence reports whether a control endpoint path is control

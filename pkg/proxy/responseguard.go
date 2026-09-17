@@ -63,11 +63,17 @@ func isMutationChannelArgumentsPath(path string) bool {
 }
 
 // mutationChannelGuardTargets locates the tool-call arguments leaves the guard
-// may rewrite: the leaf ordinals the leafRewriter will report for the arguments
-// field, for the terminal (non-JSON arguments) and the Encoded (valid-JSON
-// arguments) shapes. The map value records whether the tool call is a
-// content-bearing file tool (see mutationChannelContentTools), so the caller can
-// classify it with the reduced content-tool table.
+// may rewrite: the leaf ordinals the leafRewriter will report for an
+// arguments-or-input root, for the terminal (non-JSON arguments) and the
+// Encoded (valid-JSON arguments) shapes. The map value records whether the tool
+// call is a content-bearing file tool (see mutationChannelContentTools), so the
+// caller can classify it with the reduced content-tool table.
+//
+// The scope is every leaf under an `arguments` root (the OpenAI string or
+// object form) and every leaf under an `input` root (the Anthropic tool_use
+// form). For object-form arguments the child leaves (…/arguments/command,
+// …/arguments/cmd, …/arguments/script) are terminal leaves and are inspected
+// individually; for string-form arguments the root leaf itself is the target.
 //
 // Only top-level leaves are eligible: a leaf nested inside an Encoded parent is
 // owned by that parent's whole-string replacement, never edited on its own —
@@ -77,13 +83,14 @@ func isMutationChannelArgumentsPath(path string) bool {
 // uses, so the ordinals stay aligned with the rewriter even when a sibling key
 // contains '#' (escapePointer does not escape '#').
 //
-// The carrier-tool exemption is applied here, per tool call: an arguments leaf
-// whose sibling function-name leaf (same tool call, …/function/name) carries a
-// name on the frozen non-action carrier list (see carriertools.go) is not a
-// target at all, so the tool call whose arguments are content — a delegation
-// prompt, a plan, a read-only pattern — cannot reach the refusal. Every other
-// name, an unknown name, and a call with no name leaf keep the text inspection;
-// a content-bearing file tool keeps only the file-write class.
+// The carrier-tool exemption is applied here, per tool call: an arguments/input
+// leaf whose sibling function-name leaf (same tool call, …/function/name or
+// …/name) carries a name on the frozen non-action carrier list (see
+// carriertools.go) is not a target at all, so the tool call whose arguments are
+// content — a delegation prompt, a plan, a read-only pattern — cannot reach the
+// refusal. Every other name, an unknown name, and a call with no name leaf keep
+// the text inspection; a content-bearing file tool keeps only the file-write
+// class.
 func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encodedTargets map[int]bool, err error) {
 	terminalTargets = make(map[int]bool)
 	encodedTargets = make(map[int]bool)
@@ -93,9 +100,11 @@ func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encod
 	for i := 0; i < len(walked); {
 		leaf := walked[i]
 		if leaf.Encoded {
-			if _, carrier := carrierArguments[leaf.Path]; isMutationChannelArgumentsPath(leaf.Path) && !carrier {
-				_, content := contentArguments[leaf.Path]
-				encodedTargets[encodedIdx] = content
+			if root, ok := mutationChannelGuardRootKey(leaf.Path); ok {
+				if _, carrier := carrierArguments[root]; !carrier {
+					_, content := contentArguments[root]
+					encodedTargets[encodedIdx] = content
+				}
 			}
 			nested, nerr := protocol.Walk([]byte(leaf.Content))
 			if nerr != nil {
@@ -112,9 +121,11 @@ func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encod
 			i += 1 + len(nested)
 			continue
 		}
-		if _, carrier := carrierArguments[leaf.Path]; isMutationChannelArgumentsPath(leaf.Path) && !carrier {
-			_, content := contentArguments[leaf.Path]
-			terminalTargets[terminalIdx] = content
+		if root, ok := mutationChannelGuardRootKey(leaf.Path); ok {
+			if _, carrier := carrierArguments[root]; !carrier {
+				_, content := contentArguments[root]
+				terminalTargets[terminalIdx] = content
+			}
 		}
 		terminalIdx++
 		i++

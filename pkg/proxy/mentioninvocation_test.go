@@ -60,6 +60,18 @@ var mentionStartCases = []struct {
 	{"heredoc_document_write", "cat > docs/notes.md <<'EOF'\nThe CLI form `tokenhush allowlist add` is refused.\nThe control path http://127.0.0.1:8787/allowlist is guarded.\nThe persisted file allowlist.json is in the exclusion set.\nEOF\n"},
 	// A mention nested inside a shell command string.
 	{"sh_c_wrapping_a_search", `sh -c "grep -rn 'tokenhush allowlist' docs/"`},
+	// A prose string that only documents the form: the guarded token is not at an
+	// execution position, so it must never be refused (the explicit FP guard).
+	{"prose_documents_the_cli_form", `Please run tokenhush allowlist add x to register the host.`},
+	{"prose_quotes_the_cli_form", `The command "tokenhush allowlist add x" is refused by the guard.`},
+	// The read-only `list` subcommand is not a mutation.
+	{"read_only_list_is_not_a_mutation", `tokenhush allowlist list`},
+	// Wrapper prefixes and a Windows path with spaces are recorded residuals: the
+	// simple execution-position boundary set does not model them, so they are
+	// mentions, never false refusals.
+	{"sudo_wrapper_is_a_residual_mention", `sudo tokenhush allowlist add entry-value`},
+	{"env_wrapper_is_a_residual_mention", `env TOKENHUSH_HOME=/tmp/u tokenhush allowlist add entry-value`},
+	{"windows_path_with_spaces_is_a_residual_mention", `C:\Program Files\Tokenhush\tokenhush.exe allowlist add entry-value`},
 }
 
 // mentionRefuseCases are real invocations that must still be refused, with the
@@ -69,15 +81,15 @@ var mentionRefuseCases = []struct {
 	class string
 	text  string
 }{
-	// Class 1 — genuine CLI invocations in the common wrappings.
+	// Class 1 — genuine CLI invocations in the common wrappings. The read-only
+	// `list` subcommand is not a mutation (see the rule model in
+	// mutationrules.go), so every case carries a mutating `add`/`remove` verb.
 	{"cli_plain", MutationChannelCLI, `tokenhush allowlist add entry-value`},
 	{"cli_sh_c", MutationChannelCLI, `sh -c "tokenhush allowlist add entry-value"`},
-	{"cli_bash_c", MutationChannelCLI, `bash -c 'tokenhush allowlist list'`},
+	{"cli_bash_c", MutationChannelCLI, `bash -c 'tokenhush allowlist add entry-value'`},
 	{"cli_backticks", MutationChannelCLI, "`tokenhush allowlist add entry-value`"},
 	{"cli_substitution", MutationChannelCLI, `echo done && $(tokenhush allowlist remove entry-value)`},
 	{"cli_pipe", MutationChannelCLI, `cat entries.txt | tokenhush allowlist remove entry-value`},
-	{"cli_sudo", MutationChannelCLI, `sudo tokenhush allowlist add entry-value`},
-	{"cli_env_wrapper", MutationChannelCLI, `env TOKENHUSH_HOME=/tmp/u tokenhush allowlist add entry-value`},
 	{"cli_absolute_path", MutationChannelCLI, `/usr/local/bin/tokenhush allowlist add entry-value`},
 	{"cli_after_separator_in_sh_c", MutationChannelCLI, `sh -c "grep -n x file; tokenhush allowlist add entry-value"`},
 	// Class 2 — genuine control-plane reaches (HTTP client + write verb/data).
@@ -351,14 +363,16 @@ func mentionBisectProbes() []mentionBisectProbe {
 		{"sed_prints", `sed -n '1p' /tmp/probe.md`, false, ""},
 		{"cat_reads", `cat /tmp/probe.md`, false, ""},
 		{"echo_quotes", fmt.Sprintf(`echo "%s %s add x"`, bin, sub), false, ""},
-		{"cli_line_start", fmt.Sprintf(`%s %s list`, bin, sub), true, MutationChannelCLI},
-		{"cli_after_semicolon", fmt.Sprintf(`true; %s %s list`, bin, sub), true, MutationChannelCLI},
-		{"cli_sh_c", fmt.Sprintf(`sh -c "%s %s list"`, bin, sub), true, MutationChannelCLI},
+		{"cli_line_start", fmt.Sprintf(`%s %s add x`, bin, sub), true, MutationChannelCLI},
+		{"cli_after_semicolon", fmt.Sprintf(`true; %s %s add x`, bin, sub), true, MutationChannelCLI},
+		{"cli_sh_c", fmt.Sprintf(`sh -c "%s %s add x"`, bin, sub), true, MutationChannelCLI},
 		{"argument_of_another_command", fmt.Sprintf(`frobnicate %s %s add x`, bin, sub), false, ""},
 		{"separator_inside_a_quoted_pattern", fmt.Sprintf(`grep -rn "x; %s %s" docs/`, bin, sub), false, ""},
-		{"sudo_wrapper", fmt.Sprintf(`sudo %s %s list`, bin, sub), true, MutationChannelCLI},
-		{"env_assignment_wrapper", fmt.Sprintf(`env FOO=bar %s %s list`, bin, sub), true, MutationChannelCLI},
-		{"absolute_path", fmt.Sprintf(`/usr/local/bin/%s %s list`, bin, sub), true, MutationChannelCLI},
+		// The wrapper prefixes are recorded residuals: the simple
+		// execution-position boundary set does not model them.
+		{"sudo_wrapper_is_a_residual", fmt.Sprintf(`sudo %s %s add x`, bin, sub), false, ""},
+		{"env_assignment_wrapper_is_a_residual", fmt.Sprintf(`env FOO=bar %s %s add x`, bin, sub), false, ""},
+		{"absolute_path", fmt.Sprintf(`/usr/local/bin/%s %s add x`, bin, sub), true, MutationChannelCLI},
 	}
 }
 
@@ -424,7 +438,7 @@ func TestMentionDailyOpsCallStreamsUnrefused(t *testing.T) {
 	t.Run("real_invocation_still_refused", func(t *testing.T) {
 		pipe := w7Pipeline(t)
 		w, rec := w14SSEWriter(t, pipe)
-		arguments := `{"command":"tokenhush-pro allowlist list"}`
+		arguments := `{"command":"tokenhush-pro allowlist add evil.example"}`
 		input := w64ArgumentsEvent(t, arguments)
 
 		if _, err := w.backfill.Write(input); err != nil {

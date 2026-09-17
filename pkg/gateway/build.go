@@ -52,7 +52,7 @@ type BuildOptions struct {
 // daemon has its own builder that can register extra plugin families. The
 // gateway itself never builds a pipeline.
 func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
-	registry, err := buildRegistry(opts)
+	registry, interp, err := buildRegistry(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
 	if err != nil {
 		return nil, err
 	}
-	return proxy.NewPipeline(proxy.PipelineConfig{
+	pipeline, err := proxy.NewPipeline(proxy.PipelineConfig{
 		Registry: registry,
 		Policy:   policy,
 		Engine:   engine,
@@ -81,14 +81,44 @@ func BuildPipeline(opts BuildOptions) (*proxy.Pipeline, error) {
 		Exclusions:            opts.SelfProtection.Exclusions,
 		ControlToken:          opts.SelfProtection.ControlToken,
 	})
+	if err != nil {
+		return nil, err
+	}
+	// 把签名规则包里声明的高危命令装进 C8 守卫：新增一条高危命令只需改规则内容，
+	// 无需改二进制。self-protection 关闭时 Setter 是 no-op。
+	if interp != nil {
+		pipeline.SetMutationChannelCommandRules(mutationChannelCommandRules(interp.CommandRules()))
+	}
+	return pipeline, nil
+}
+
+// mutationChannelCommandRules converts compiled rule-pack command rules into the
+// proxy guard's data-only rule form.
+func mutationChannelCommandRules(cmds []rules.CommandRule) []proxy.MutationChannelCommandRule {
+	if len(cmds) == 0 {
+		return nil
+	}
+	out := make([]proxy.MutationChannelCommandRule, len(cmds))
+	for i := range cmds {
+		out[i] = proxy.MutationChannelCommandRule{
+			ID:         cmds[i].ID,
+			Command:    cmds[i].Command,
+			Subcommand: cmds[i].Subcommand,
+			Verbs:      append([]string(nil), cmds[i].Verbs...),
+			Targets:    append([]string(nil), cmds[i].Targets...),
+		}
+	}
+	return out
 }
 
 // buildRegistry registers the enabled built-in detectors in config order and,
-// when opts carries a synced rule pack, the compiled remote-rule interpreter.
-// A compile or registration failure is a construction error: the registry is
-// the security gate, so a rejected plugin must abort startup rather than be
-// skipped and the interpreter must never be silently dropped.
-func buildRegistry(opts BuildOptions) (*extension.Registry, error) {
+// when opts carries a synced rule pack, the compiled remote-rule interpreter; it
+// returns that interpreter so BuildPipeline can install its high-risk command
+// rules into the C8 guard. A compile or registration failure is a construction
+// error: the registry is the security gate, so a rejected plugin must abort
+// startup rather than be skipped and the interpreter must never be silently
+// dropped.
+func buildRegistry(opts BuildOptions) (*extension.Registry, *rules.Interpreter, error) {
 	registry := extension.NewRegistry()
 	options := detectorOptions(opts.Allowlist, opts.AllowlistStore)
 	for _, id := range opts.Detectors {
@@ -97,19 +127,20 @@ func buildRegistry(opts BuildOptions) (*extension.Registry, error) {
 			continue
 		}
 		if err := registry.Register(constructor(options...)); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	if opts.Rules != nil {
 		interp, err := rules.Compile(opts.Rules, rules.DefaultOptions())
 		if err != nil {
-			return nil, fmt.Errorf("compile remote rules: %w", err)
+			return nil, nil, fmt.Errorf("compile remote rules: %w", err)
 		}
 		if err := registry.Register(interp); err != nil {
-			return nil, fmt.Errorf("register remote rules interpreter: %w", err)
+			return nil, nil, fmt.Errorf("register remote rules interpreter: %w", err)
 		}
+		return registry, interp, nil
 	}
-	return registry, nil
+	return registry, nil, nil
 }
 
 // detectorOptions forwards the config allowlist to every detector; an empty

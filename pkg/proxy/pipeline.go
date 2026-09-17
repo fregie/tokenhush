@@ -160,6 +160,13 @@ type Pipeline struct {
 	// exclusionValues: the gateway installs it while request goroutines read.
 	channelContext atomic.Pointer[MutationChannelContext]
 
+	// commandRules is the rule-pack-provided high-risk command set (see
+	// mutationrules.go), installed through SetMutationChannelCommandRules once
+	// the gateway has compiled the active signed pack. It is an atomic pointer so
+	// a refresh is race-free against request goroutines reading it. A nil pointer
+	// is a complete no-op: only the three built-in rules run.
+	commandRules atomic.Pointer[[]MutationChannelCommandRule]
+
 	// reporter, when set, receives one masked event per replaced span and per
 	// policy block. It is an atomic pointer so a reporter installed before Run
 	// is read race-free by every request goroutine. See SetRedactionReporter.
