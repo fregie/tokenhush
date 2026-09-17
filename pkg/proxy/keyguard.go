@@ -9,11 +9,18 @@ import (
 )
 
 // keyGuardType reports whether a finding type takes part in the key-position
-// fail-closed check. The set is frozen to {api_key, high_entropy, jwt,
-// private_key}. credit_card (luhn) and email are deliberately excluded at key
-// positions: a 16-digit numeric member name and an email-shaped member name
-// are ordinary structure in real provider traffic, and blocking them would be
-// a false-positive gate failure.
+// fail-closed check. The set is frozen to {api_key, jwt, private_key}.
+// credit_card (luhn) and email are deliberately excluded at key positions: a
+// 16-digit numeric member name and an email-shaped member name are ordinary
+// structure in real provider traffic, and blocking them would be a
+// false-positive gate failure. high_entropy is excluded for the same reason: a
+// JSON object keyed by a random alphanumeric id ({"<random40>": "value"}) is
+// ordinary structure, and the live false-positive inventory measured a
+// whole-request 403 for it. A key is never rewritten, so the only outcomes are
+// "no finding" and a fail-closed block; dropping high_entropy means such a key
+// is forwarded, not rewritten. The compensating control is the C2 outbound
+// re-check: a secret the engine already knows, used as a key, is still refused
+// (egress.go's key-position carve-out, TestPipelineKnownSecretKeyStillBlockedAtEgress).
 //
 // Mechanism (frozen, do not "improve" by swapping detectors): the decision
 // below runs the unmodified extension.Policy.Evaluate over a synthetic key
@@ -38,7 +45,6 @@ import (
 func keyGuardType(findingType string) bool {
 	switch findingType {
 	case redact.FindingTypeAPIKey,
-		redact.FindingTypeHighEntropy,
 		redact.FindingTypeJWT,
 		redact.FindingTypePrivateKey:
 		return true

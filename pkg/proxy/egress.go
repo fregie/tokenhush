@@ -4,6 +4,7 @@ import (
 	"bytes"
 
 	"github.com/fregie/tokenhush/pkg/extension"
+	"github.com/fregie/tokenhush/pkg/protocol"
 	"github.com/fregie/tokenhush/pkg/redact"
 )
 
@@ -113,17 +114,32 @@ func (p *Pipeline) egressRecheck(body []byte) error {
 	if len(secrets) == 0 {
 		return nil
 	}
+	keys, keysOK := egressObjectKeys(body)
 	for _, candidate := range redact.NormalizeCandidates(body) {
 		ok, placeholder := p.engine.ContainsKnownSecret(candidate)
 		if !ok {
 			continue
 		}
-		if egressSecretsVisibleInBody(body, candidate, secrets) {
+		if egressSecretsVisibleInBody(body, candidate, secrets, keys, keysOK) {
 			continue
 		}
 		return p.blockEgress(placeholder)
 	}
 	return nil
+}
+
+// egressObjectKeys returns the object keys of the outbound body so the re-check
+// can tell plaintext the value detectors already ruled on from the same bytes
+// used as an object key. The second result is false when the key scan failed;
+// callers then treat a visible secret as key-borne (fail-closed), which cannot
+// open a path. The scan cannot normally fail here: the request transform walked
+// the same document before reaching the re-check.
+func egressObjectKeys(body []byte) ([]protocol.KeySpan, bool) {
+	keys, err := protocol.WalkKeys(body)
+	if err != nil {
+		return nil, false
+	}
+	return keys, true
 }
 
 // egressSecretsVisibleInBody reports whether every known secret candidate
@@ -145,14 +161,15 @@ func (p *Pipeline) egressRecheck(body []byte) error {
 // (allowlist suppression, or a recorded detector exclusion); an attacker
 // cannot resurrect one to smuggle a transformed copy past the check.
 //
-// One visible-plaintext case is NOT exempt: a known secret sitting inside a
-// high_entropy structural-identifier run (redact.StructuralIdentifierContains).
-// That exemption is a blanket skip, not the positive verdict the paragraph above
-// relies on, so it must not buy a secret a free pass — without this check the
-// exemption would be a new exfiltration path for every secret the engine knows.
-// Blocking here is fail-closed and narrower than the pure-hex exclusion, which
-// remains a recorded limitation.
-func egressSecretsVisibleInBody(body, candidate []byte, secrets [][]byte) bool {
+// Two visible-plaintext cases are NOT exempt. A known secret sitting inside a
+// high_entropy structural-identifier run (redact.StructuralIdentifierContains)
+// is a blanket skip, not a positive verdict, so it must not buy a secret a free
+// pass. And a known secret used as an object KEY is not rule-on plaintext
+// either: keys never enter the value detectors and are never rewritten, so the
+// allowlist-compat reasoning does not cover them (see
+// secretUsedAsObjectKey). Both checks are fail-closed and narrower than the
+// pure-hex exclusion, which remains a recorded limitation.
+func egressSecretsVisibleInBody(body, candidate []byte, secrets [][]byte, keys []protocol.KeySpan, keysOK bool) bool {
 	for _, secret := range secrets {
 		if !bytes.Contains(candidate, secret) {
 			continue
@@ -163,8 +180,29 @@ func egressSecretsVisibleInBody(body, candidate []byte, secrets [][]byte) bool {
 		if redact.StructuralIdentifierContains(body, secret) {
 			return false
 		}
+		if secretUsedAsObjectKey(secret, keys, keysOK) {
+			return false
+		}
 	}
 	return true
+}
+
+// secretUsedAsObjectKey reports whether secret occurs inside an object key of
+// the body. A redacted secret re-sent as a key is exactly the case the key
+// guard no longer blocks (high_entropy is out of the frozen key set), so the
+// outbound re-check must refuse it here: a key is never rewritten, so nothing
+// else stands between it and the upstream. keysOK == false means the key scan
+// failed; this fails closed.
+func secretUsedAsObjectKey(secret []byte, keys []protocol.KeySpan, keysOK bool) bool {
+	if !keysOK {
+		return true
+	}
+	for _, key := range keys {
+		if bytes.Contains([]byte(key.Key), secret) {
+			return true
+		}
+	}
+	return false
 }
 
 // blockEgress records one blocked egress finding: it increments EgressBlocks and

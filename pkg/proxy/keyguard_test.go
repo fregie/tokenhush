@@ -79,12 +79,13 @@ func kgLuhn19Digits() string {
 
 // kgKeyTypes is the frozen key-position detector set written out literally, so
 // a production change to the filter fails these tests instead of silently
-// redefining them.
+// redefining them. high_entropy is deliberately absent: a random alphanumeric
+// object key is ordinary structure, and blocking it was the measured
+// whole-request 403 this set dropped (see TestPipelineFalsePositiveKeys).
 var kgKeyTypes = map[string]bool{
-	"api_key":      true,
-	"high_entropy": true,
-	"jwt":          true,
-	"private_key":  true,
+	"api_key":     true,
+	"jwt":         true,
+	"private_key": true,
 }
 
 // kgJSON marshals a body so tests never hand-quote JSON.
@@ -163,9 +164,9 @@ func kgProviderRequestSample(t *testing.T) []byte {
 
 // TestPipelineCredentialShapedKeys is the W1.2 acceptance test for the key
 // guard: a credential-shaped object key participates in the frozen detector
-// set {api_key, high_entropy, jwt, private_key}, and a hit fails closed before
-// any value redaction can run. Findings must never carry a type outside that
-// set, and no transformed body may be produced (upstream receives zero bytes).
+// set {api_key, jwt, private_key}, and a hit fails closed before any value
+// redaction can run. Findings must never carry a type outside that set, and no
+// transformed body may be produced (upstream receives zero bytes).
 func TestPipelineCredentialShapedKeys(t *testing.T) {
 	engine := w45Engine(t)
 	pipe := w45Pipeline(t, PipelineConfig{Registry: kgAllDetectors(t), Engine: engine, Tool: "w1.2-keys"})
@@ -192,7 +193,6 @@ func TestPipelineCredentialShapedKeys(t *testing.T) {
 		wantTypes []string
 	}{
 		{"api_key_prefix_key", kgKeyBody(t, kgPrefixKey(), "x"), []string{"api_key"}},
-		{"high_entropy_key", kgKeyBody(t, kgEntropyKey(), "x"), []string{"high_entropy"}},
 		{"jwt_key", kgKeyBody(t, kgJWTKey(), "x"), []string{"jwt"}},
 		{"private_key_header_key", kgKeyBody(t, kgPEMKey(), "x"), []string{"private_key"}},
 		{"key_nested_in_object_in_array", kgArrayNestedBody(t, kgPrefixKey()), []string{"api_key"}},
@@ -270,10 +270,12 @@ func TestPipelineCredentialShapedKeys(t *testing.T) {
 }
 
 // TestPipelineFalsePositiveKeys is the W1.2 false-positive gate: ordinary
-// structural keys, a Luhn-valid 16-digit numeric key, an email-shaped key and
-// a real-ish provider request sample all pass through byte-identically. The
-// luhn and email detectors are registered and proven live on values below, so
-// the pass-through is the frozen key-type filter at work.
+// structural keys, a high-entropy random-alphanumeric key, a Luhn-valid 16-digit
+// numeric key, an email-shaped key and a real-ish provider request sample all
+// pass through byte-identically. The luhn and email detectors are registered
+// and proven live on values below, so the pass-through is the frozen key-type
+// filter at work; the high_entropy key is the measured live false positive
+// ({"<random40>": "value"} once produced a whole-request 403).
 func TestPipelineFalsePositiveKeys(t *testing.T) {
 	engine := w45Engine(t)
 	pipe := w45Pipeline(t, PipelineConfig{Registry: kgAllDetectors(t), Engine: engine, Tool: "w1.2-fp"})
@@ -284,6 +286,7 @@ func TestPipelineFalsePositiveKeys(t *testing.T) {
 		body []byte
 	}{
 		{"structural_keys", []byte(`{"model":"claude-test","role":"user","content":"hello","type":"text","name":"read_file","index":0,"finish_reason":"stop","tool_use_id":"toolu_01ABC"}`)},
+		{"high_entropy_random_alnum_key", kgKeyBody(t, kgEntropyKey(), "x")},
 		{"luhn_valid_16_digit_key", kgKeyBody(t, kgLuhnDigits(), "x")},
 		{"luhn_valid_15_digit_key", kgKeyBody(t, kgLuhn15Digits(), "x")},
 		{"luhn_valid_19_digit_key", kgKeyBody(t, kgLuhn19Digits(), "x")},
@@ -399,6 +402,38 @@ func TestPipelineAllowlistedKeysNotBlocked(t *testing.T) {
 	if _, err := control.RequestTransform()(body); err == nil {
 		t.Fatal("control pipeline without the allowlist did not block the same key")
 	}
+}
+
+// TestPipelineKnownSecretKeyStillBlockedAtEgress proves the compensating
+// control for dropping high_entropy from the key set: a secret the engine
+// already knows, re-sent as an object key, is refused at the outbound re-check
+// even though the key guard no longer blocks it. The registry carries only the
+// prefix detector, so the key guard cannot block the high-entropy key and the
+// egress key-position carve-out is the load-bearing defense (removing it
+// forwards the plaintext key; see the failure evidence).
+func TestPipelineKnownSecretKeyStillBlockedAtEgress(t *testing.T) {
+	secret := "kR8mQ2vZ9pL4wX7nT1bY6cH3jF5dS0aG"
+	engine := w45Engine(t)
+	engine.Placeholder(secret, "api_key")
+	pipe := w45Pipeline(t, PipelineConfig{
+		Registry: w45Registry(t, redact.NewPrefixDetector()),
+		Engine:   engine,
+		Tool:     "w1.2-known-key-egress",
+	})
+	body := kgKeyBody(t, secret, "value")
+
+	status, upstream := egressE2E(t, pipe, body)
+	if status != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (a known secret as a key must be refused)", status, http.StatusForbidden)
+	}
+	if upstream.hits.Load() != 0 || len(upstream.received()) != 0 {
+		t.Fatalf("upstream dialed %d time(s) / received %d bytes, want 0/0", upstream.hits.Load(), len(upstream.received()))
+	}
+	if got := pipe.EgressBlocks(); got != 1 {
+		t.Errorf("EgressBlocks = %d, want 1", got)
+	}
+	t.Logf("known secret as an object key refused at egress: status=%d upstream_hits=%d upstream_bytes=%d",
+		status, upstream.hits.Load(), len(upstream.received()))
 }
 
 // TestPipelineKeysDoNotBypassValueRedaction is the regression control for the
