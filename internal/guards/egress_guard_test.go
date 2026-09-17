@@ -13,12 +13,20 @@
 package guards
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+
+	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
 // reservedDisclosureKeys are YAML keys that introduce the disclosure document
@@ -216,4 +224,81 @@ func TestEgressGuardProductTree(t *testing.T) {
 	for _, violation := range checkDisclosure(string(data)) {
 		t.Error(violation)
 	}
+}
+
+// vendorEgressHosts are the two vendor destinations the product may ever reach,
+// and only as the explicitly forwarded upstream of a provider request. A dial
+// to either host while a stub upstream is configured is hidden egress.
+var vendorEgressHosts = []string{"api.openai.com", "api.anthropic.com"}
+
+// egressDialRecorder records every address pkg/proxy asks the dialer for.
+type egressDialRecorder struct {
+	mu    sync.Mutex
+	addrs []string
+}
+
+// record appends one requested dial address.
+func (r *egressDialRecorder) record(addr string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.addrs = append(r.addrs, addr)
+}
+
+// recorded returns a sorted copy of the requested addresses, so the assertion
+// can inspect them without racing the dialer.
+func (r *egressDialRecorder) recorded() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := append([]string(nil), r.addrs...)
+	sort.Strings(out)
+	return out
+}
+
+// TestEgressGuardNoVendorDial is W4.8's no-dial half of the egress guard: it
+// serves a real request through pkg/proxy's data plane against a stub upstream
+// and asserts the product dialled exactly that upstream and no vendor host.
+func TestEgressGuardNoVendorDial(t *testing.T) {
+	var served atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		served.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer upstream.Close()
+
+	recorder := &egressDialRecorder{}
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		recorder.record(addr)
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, network, upstream.Listener.Addr().String())
+	}
+	forwarder, err := proxy.NewForwarder("http://upstream.test", nil, proxy.WithDialFunc(dial))
+	if err != nil {
+		t.Fatalf("proxy.NewForwarder: %v", err)
+	}
+	plane := proxy.NewDataPlane(forwarder, proxy.DataPlaneConfig{})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[{"content":"hello"}]}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	plane.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("served request status = %d, want 200 (body %q)", response.Code, response.Body.String())
+	}
+	if got := served.Load(); got != 1 {
+		t.Fatalf("the stub upstream served %d requests, want exactly 1", got)
+	}
+	dialed := recorder.recorded()
+	if len(dialed) != 1 {
+		t.Fatalf("the proxy dialled %v, want exactly one upstream dial", dialed)
+	}
+	for _, addr := range dialed {
+		for _, vendor := range vendorEgressHosts {
+			if strings.Contains(addr, vendor) {
+				t.Errorf("the proxy dialled vendor host %s (%s): invariant 6 has no vendor egress here", vendor, addr)
+			}
+		}
+	}
+	t.Logf("guard egress no-dial: status=%d upstream_requests=1 dialed=%v vendor_dials=0", response.Code, dialed)
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -238,4 +239,65 @@ func TestInvariant7EncodingFailClosed(t *testing.T) {
 			}
 		})
 	})
+}
+
+// vendorEgressHosts are the two vendor destinations the product may ever reach,
+// and only as the explicitly forwarded upstream of a provider request. A dial
+// to either host while a stub upstream is configured is hidden egress.
+var vendorEgressHosts = []string{"api.openai.com", "api.anthropic.com"}
+
+// recorded returns a copy of every address the recorder was asked to dial, so a
+// vendor-egress check can inspect them without racing the recorder.
+func (r *dialRecorder) recorded() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.addrs...)
+}
+
+// TestInvariant6NoVendorEgress is the no-dial half of invariant 6: with a stub
+// upstream configured and a recorder watching every dial, serving a real
+// request through the data plane produces exactly one upstream dial and zero
+// dials to any vendor host. The product carries no hidden vendor telemetry.
+func TestInvariant6NoVendorEgress(t *testing.T) {
+	counters := NewCounters()
+	upstream := newFakeUpstream(t)
+	forwarder, recorder := recordedForwarder(t, upstream, nil)
+	plane := NewDataPlane(forwarder, DataPlaneConfig{Counters: counters})
+
+	body := []byte(`{"messages":[{"role":"user","content":"hello"}]}`)
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	plane.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", response.Code, response.Body.String())
+	}
+	dialed := recorder.recorded()
+	if len(dialed) != 1 {
+		t.Fatalf("the data plane dialled %v, want exactly one upstream dial", dialed)
+	}
+	for _, addr := range dialed {
+		for _, vendor := range vendorEgressHosts {
+			if strings.Contains(addr, vendor) {
+				t.Errorf("the data plane dialled vendor host %s (%s): invariant 6 has no vendor egress here", vendor, addr)
+			}
+		}
+	}
+	select {
+	case got := <-upstream.requests:
+		if got.path != "/v1/chat/completions" {
+			t.Errorf("upstream path = %q, want /v1/chat/completions", got.path)
+		}
+		if !bytes.Equal(got.body, body) {
+			t.Errorf("upstream body = %q, want the identical request body", got.body)
+		}
+	default:
+		t.Error("the stub upstream observed no request")
+	}
+	if counters.ContentPolicyBlocks() != 0 || counters.RuleBlocks() != 0 || counters.WalkSkips() != 0 {
+		t.Errorf("a plain forwarded request moved a content counter: content=%d rule=%d walk=%d",
+			counters.ContentPolicyBlocks(), counters.RuleBlocks(), counters.WalkSkips())
+	}
+	t.Logf("qa: data-plane request -> status=%d upstream_dials=%d dialed=%v vendor_dials=0", response.Code, len(dialed), dialed)
 }
