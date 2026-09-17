@@ -161,4 +161,81 @@ func TestInvariant7EncodingFailClosed(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("response direction", func(t *testing.T) {
+		// W4.5: an upstream encoding is decoded before any status code is
+		// committed, and a coding the gateway cannot decode is a 502 that
+		// discards the upstream bytes without moving a content counter.
+		payload := []byte(responsePayload)
+
+		t.Run("gzip and deflate decode before the status is committed", func(t *testing.T) {
+			for _, tc := range []struct {
+				encoding string
+				encode   func(*testing.T, []byte) []byte
+			}{
+				{"gzip", encodeGzip},
+				{"deflate", encodeDeflate},
+			} {
+				evaluator := allowEvaluator()
+				handler := NewResponseHandler(ResponseConfig{Evaluator: evaluator, Counters: NewCounters()})
+				status, header, body, err := handler.Handle(upstreamResponse(http.StatusCreated, tc.encoding, tc.encode(t, payload)))
+				if err != nil {
+					t.Fatalf("%s: Handle: %v", tc.encoding, err)
+				}
+				if status != http.StatusCreated {
+					t.Errorf("%s: status = %d, want the upstream 201", tc.encoding, status)
+				}
+				if got := header.Get("Content-Encoding"); got != "" {
+					t.Errorf("%s: client-bound Content-Encoding = %q, want removed", tc.encoding, got)
+				}
+				if !bytes.Equal(body, payload) {
+					t.Errorf("%s: body = %q, want the decoded payload", tc.encoding, body)
+				}
+				if seen := evaluator.seen(); len(seen) != 1 || !bytes.Equal(seen[0], payload) {
+					t.Errorf("%s: evaluator saw %q, want the decoded payload", tc.encoding, seen)
+				}
+			}
+		})
+
+		t.Run("an undecodable coding refuses and discards the upstream bytes", func(t *testing.T) {
+			raw := []byte("UPSTREAM-SECRET-RESPONSE")
+			for _, encoding := range []string{"br", "zstd", "bogus", "gzip, br"} {
+				counters := NewCounters()
+				evaluator := allowEvaluator()
+				handler := NewResponseHandler(ResponseConfig{Evaluator: evaluator, Counters: counters})
+				status, _, body, err := handler.Handle(upstreamResponse(http.StatusOK, encoding, raw))
+				if err != nil {
+					t.Fatalf("%s: Handle: %v", encoding, err)
+				}
+				if status != http.StatusBadGateway {
+					t.Errorf("%s: status = %d, want 502 rather than the upstream status", encoding, status)
+				}
+				if bytes.Contains(body, raw) {
+					t.Errorf("%s: refusal body carries the upstream bytes", encoding)
+				}
+				if seen := evaluator.seen(); len(seen) != 0 {
+					t.Errorf("%s: evaluator ran on an undecodable body", encoding)
+				}
+				if counters.ContentPolicyBlocks() != 0 || counters.RuleBlocks() != 0 || counters.WalkSkips() != 0 {
+					t.Errorf("%s: transport refusal moved a content counter", encoding)
+				}
+			}
+		})
+
+		t.Run("a corrupt gzip stream refuses without leaking a prefix", func(t *testing.T) {
+			stream := encodeGzip(t, bytes.Repeat([]byte("PREFIX-LEAK-"), 128))
+			counters := NewCounters()
+			handler := NewResponseHandler(ResponseConfig{Counters: counters})
+			status, _, body, err := handler.Handle(upstreamResponse(http.StatusOK, "gzip", stream[:len(stream)-8]))
+			if err != nil {
+				t.Fatalf("Handle: %v", err)
+			}
+			if status != http.StatusBadGateway {
+				t.Errorf("status = %d, want 502", status)
+			}
+			if bytes.Contains(body, []byte("PREFIX-LEAK")) {
+				t.Errorf("refusal body leaked a partially decoded prefix")
+			}
+		})
+	})
 }
