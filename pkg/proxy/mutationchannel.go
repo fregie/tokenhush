@@ -264,13 +264,21 @@ func matchCLIAllowlistCommand(text string, _ MutationChannelContext) bool {
 //     matchControlPortRequestLine), which also covers a bare `DELETE /allowlist`
 //     with no host spelled at all.
 //
+// /status is read-only metadata (it reports counters; it cannot weaken
+// redaction), so it is evidence only together with a mutation: a write verb
+// (POST/PUT/PATCH/DELETE) or a curl data flag anywhere in the text. A read-only
+// GET/HEAD of /status is deliberately NOT refused. /allowlist stays
+// unconditional: a read of it is still a control-plane reach, and GET/DELETE to
+// it remain evidence.
+//
 // The port stays dynamic (the real bound port from the installed context), so a
 // different port, a non-loopback host, or the number in prose never matches.
 var (
 	mutationChannelLoopbackHosts = []string{"127.0.0.1", "localhost", "[::1]"}
 	// mutationChannelControlPaths are the control-plane endpoint paths. Both are
 	// required for the class to recognise the channel: /allowlist changes the
-	// allowlist, /status reads the control plane's own state.
+	// allowlist, /status reads the control plane's own state (read-only, so it
+	// needs mutation evidence; see controlPathIsEvidence).
 	mutationChannelControlPaths = []string{"/allowlist", "/status"}
 	// mutationChannelHTTPSignals are distinctive, case-insensitive substrings
 	// that put a host:port occurrence in an HTTP request context.
@@ -285,6 +293,12 @@ var (
 	// open with (DELETE /allowlist, POST /allowlist, ...). GET is deliberately
 	// absent: a status read is only control evidence together with the port.
 	mutationChannelRequestVerbs = []string{"post", "delete", "put", "patch"}
+	// mutationChannelStatusMutationVerbs are the write verbs that make a /status
+	// reach mutating rather than a read.
+	mutationChannelStatusMutationVerbs = []string{"post", "delete", "put", "patch"}
+	// mutationChannelStatusDataFlags are the curl/HTTP client flags that imply a
+	// request body, hence a non-GET method, even when the verb is not spelled.
+	mutationChannelStatusDataFlags = []string{"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode"}
 )
 
 var mutationChannelPortPatterns = []mutationChannelPattern{
@@ -667,10 +681,39 @@ func hasHTTPClientSignal(text string) bool {
 	return false
 }
 
+// controlPathIsEvidence reports whether a control endpoint path is control
+// evidence in text. /allowlist always is: it is the mutating endpoint, and a
+// read of it is still a control-plane reach. /status is read-only metadata, so
+// it counts only when the text also carries mutation evidence (a write verb or
+// a curl data flag); a plain GET/HEAD of /status is not the mutation channel.
+func controlPathIsEvidence(text, path string) bool {
+	return path != "/status" || hasStatusMutationEvidence(text)
+}
+
+// hasStatusMutationEvidence reports a write verb or a body-carrying curl/HTTP
+// flag anywhere in text: either makes a /status reach mutating rather than a
+// read.
+func hasStatusMutationEvidence(text string) bool {
+	for _, verb := range mutationChannelStatusMutationVerbs {
+		if containsCommandToken(text, verb) {
+			return true
+		}
+	}
+	for _, flag := range mutationChannelStatusDataFlags {
+		if containsCommandToken(text, flag) {
+			return true
+		}
+	}
+	return false
+}
+
 // hasControlPathAt reports whether text from index i spells a control endpoint
 // path, terminated by a path, query, fragment or shell boundary.
 func hasControlPathAt(text string, i int) bool {
 	for _, path := range mutationChannelControlPaths {
+		if !controlPathIsEvidence(text, path) {
+			continue
+		}
 		if !hasFoldAt(text, i, path) {
 			continue
 		}
@@ -689,9 +732,13 @@ func hasControlPathAt(text string, i int) bool {
 // hasControlPath reports whether text contains a control endpoint path at a path
 // boundary, anywhere. It is the non-adjacent half of the control evidence: a
 // host:port occurrence counts only together with such a path (and an HTTP client
-// or verb), so a data-plane path on the same port never matches.
+// or verb), so a data-plane path on the same port never matches. It applies the
+// same /status read-only rule as hasControlPathAt.
 func hasControlPath(text string) bool {
 	for _, path := range mutationChannelControlPaths {
+		if !controlPathIsEvidence(text, path) {
+			continue
+		}
 		for i := 0; ; {
 			j := indexFoldFrom(text, path, i)
 			if j < 0 {
