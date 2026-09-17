@@ -130,3 +130,35 @@ func TestInvariant4LoopbackOnly(t *testing.T) {
 		}
 	})
 }
+
+// TestInvariant7EncodingFailClosed is the named aggregate check the plan
+// requires for invariant 7 (no uninspected pass-through of encoded content).
+// W4.4 owns the request direction: a request carrying a non-identity
+// Content-Encoding is refused with 415 before its body is read and before any
+// upstream dial is opened, so a compressed payload can never bypass the
+// pipeline. W4.5 adds the response direction to this same test.
+func TestInvariant7EncodingFailClosed(t *testing.T) {
+	t.Run("request direction", func(t *testing.T) {
+		for _, encoding := range []string{"gzip", "deflate", "br", "zstd", "gzip, identity"} {
+			t.Run(encoding, func(t *testing.T) {
+				forwarder, recorder := recordedForwarder(t, nil, nil)
+				body := &countingBody{data: []byte(`{"api_key":"secret"}`)}
+				request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+				request.Header.Set("Content-Encoding", encoding)
+
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, request)
+
+				if response.Code != http.StatusUnsupportedMediaType {
+					t.Errorf("status = %d, want 415", response.Code)
+				}
+				if got := recorder.count(); got != 0 {
+					t.Errorf("refused request opened %d upstream dials, want 0", got)
+				}
+				if got := body.bytesRead(); got != 0 {
+					t.Errorf("refused request read %d body bytes, want 0", got)
+				}
+			})
+		}
+	})
+}
