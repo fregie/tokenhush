@@ -1,6 +1,6 @@
-# Build output
-tokenhush
-tokenhush.exe
+# Build output (anchored: the unanchored tokenhush pattern also swallowed cmd/tokenhush)
+/tokenhush
+/tokenhush.exe
 /dist/
 *.test
 *.out
