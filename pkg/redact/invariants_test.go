@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fregie/tokenhush/pkg/protocol"
 )
 
 // reversePathHints are names that would betray a placeholder -> secret path on
@@ -189,4 +191,67 @@ func TestInvariant1NeverBackfillOutbound(t *testing.T) {
 			t.Fatalf("placeholder %q vanished from %q", known, out)
 		}
 	})
+}
+
+// boundMatcher is the synthetic invariant-8 probe matcher: a token is any
+// "<<...>>" run and every unterminated run is still a candidate prefix, so the
+// writer must hold it until the bound forces a literal release.
+type boundMatcher struct{}
+
+// MaxTokenLen reports a longest token far beyond the holdback bound, so the
+// bound (not the matcher) is what limits the held window.
+func (boundMatcher) MaxTokenLen() int { return protocol.SSEBackfillHoldbackBytes * 2 }
+
+// TokenLen never completes a token, so every fed byte must leave as literal
+// text rather than as a replacement.
+func (boundMatcher) TokenLen([]byte) int { return 0 }
+
+// PrefixLen claims the whole tail while no ">>" has been seen.
+func (boundMatcher) PrefixLen(p []byte) int {
+	if bytes.Contains(p, []byte(">>")) {
+		return 0
+	}
+	return len(p)
+}
+
+// TestInvariant8BoundDerived proves invariant 8 with the production bound: an
+// unterminated token can never make the writer hold more than
+// protocol.SSEBackfillHoldbackBytes, and past the bound the oldest held bytes
+// leave literally and in order, so the writer always makes progress instead of
+// buffering without limit. Every size here is derived from the bound itself.
+func TestInvariant8BoundDerived(t *testing.T) {
+	w := protocol.NewBackfillWriter(boundMatcher{}, func(tok []byte) []byte { return tok })
+
+	limit := protocol.SSEBackfillHoldbackBytes
+	chunk := limit / 16
+	overflow := limit / 64
+	if chunk <= 0 || overflow <= 0 {
+		t.Fatalf("derived sizes must be positive: limit=%d chunk=%d overflow=%d", limit, chunk, overflow)
+	}
+	total := limit + overflow
+
+	data := bytes.Repeat([]byte("<"), chunk)
+	fed, released := 0, 0
+	for fed < total {
+		n := chunk
+		if n > total-fed {
+			n = total - fed
+		}
+		released += len(w.Feed(data[:n]))
+		fed += n
+		if held := w.Held(); held > limit {
+			t.Fatalf("Held() = %d after %d bytes fed, want <= %d", held, fed, limit)
+		}
+	}
+	if released == 0 {
+		t.Fatal("no bytes were released before the bound was crossed: the writer buffered without limit")
+	}
+
+	// Nothing is replaced and nothing is dropped: every byte leaves exactly
+	// once, either released during a Feed or flushed at the end.
+	flushed := len(w.Flush())
+	if got := released + flushed; got != fed {
+		t.Fatalf("released %d + flushed %d = %d, want all %d fed bytes (literal passthrough)",
+			released, flushed, got, fed)
+	}
 }
