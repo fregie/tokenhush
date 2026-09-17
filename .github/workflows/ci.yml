@@ -33,10 +33,13 @@ jobs:
       - name: Layering guard
         run: bash scripts/check-layering.sh
 
-      # Green mode (W0.5): the guards run against the product tree only, so
-      # every wave stays green. The full-graph layering/guard step is added by
-      # the final verification wave (W6.6). Do not export the full-graph
-      # switch from this workflow; the guard config test fails if it appears.
+      # Green mode (W0.5): every step above stays green-mode and never exports
+      # the full-graph switch. The dedicated step below is the W6.6 final
+      # gate: every package, edge and artifact now exists, so the guards and
+      # the layering suite run with full-graph strictness. Exactly one step
+      # exports the switch, and the CI config guard enforces that.
+      - name: Guards and layering (full graph)
+        run: TOKENHUSH_GUARD_FULL_GRAPH=1 go test ./internal/guards/... ./internal/layering/... -count=1
 
   secret-scan:
     name: secret scan

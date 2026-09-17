@@ -1,6 +1,7 @@
 package guards
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -32,6 +33,58 @@ func ciReferencedPaths(workflow string) []string {
 	return out
 }
 
+// ciFullGraphCommand is the dedicated full-graph gate command the workflow must
+// carry exactly once: the guard and layering suites the final verification wave
+// runs with every missing expected package or edge promoted to a violation.
+const ciFullGraphCommand = "TOKENHUSH_GUARD_FULL_GRAPH=1 go test ./internal/guards/... ./internal/layering/... -count=1"
+
+// ciSteps splits a workflow into its job step blocks: every line indented six
+// spaces with "- " opens a step and it runs until the next such line or the end
+// of the document.
+func ciSteps(workflow string) []string {
+	var steps []string
+	var current []string
+	flush := func() {
+		if len(current) > 0 {
+			steps = append(steps, strings.Join(current, "\n"))
+			current = nil
+		}
+	}
+	for _, line := range strings.Split(workflow, "\n") {
+		if strings.HasPrefix(line, "      - ") || line == "      -" {
+			flush()
+		}
+		current = append(current, line)
+	}
+	flush()
+	return steps
+}
+
+// ciFullGraphViolations reports every defect in the full-graph gate wiring:
+// exactly one step must run the dedicated command, no other step may export the
+// switch, and the switch may appear nowhere else in the workflow.
+func ciFullGraphViolations(workflow string) []string {
+	var out []string
+	if mentions := strings.Count(workflow, "TOKENHUSH_GUARD_FULL_GRAPH"); mentions != 1 {
+		out = append(out, fmt.Sprintf("workflow must mention TOKENHUSH_GUARD_FULL_GRAPH exactly once, found %d", mentions))
+	}
+	dedicated := 0
+	for _, step := range ciSteps(workflow) {
+		if strings.Contains(step, ciFullGraphCommand) {
+			dedicated++
+			continue
+		}
+		if strings.Contains(step, "TOKENHUSH_GUARD_FULL_GRAPH") {
+			out = append(out, "a green-mode step must not export TOKENHUSH_GUARD_FULL_GRAPH")
+		}
+	}
+	if dedicated != 1 {
+		out = append(out, fmt.Sprintf("workflow must run the dedicated full-graph command exactly once, found %d", dedicated))
+	}
+	sort.Strings(out)
+	return guardsUniqueStrings(out)
+}
+
 // ciConfigViolations reports every defect in a CI workflow string. exists is
 // the filesystem oracle for referenced repo-relative paths.
 func ciConfigViolations(workflow string, exists func(rel string) bool) []string {
@@ -53,8 +106,8 @@ func ciConfigViolations(workflow string, exists func(rel string) bool) []string 
 		}
 	}
 
-	if strings.Contains(workflow, "TOKENHUSH_GUARD_FULL_GRAPH") {
-		add("workflow must not export TOKENHUSH_GUARD_FULL_GRAPH")
+	for _, violation := range ciFullGraphViolations(workflow) {
+		add(violation)
 	}
 
 	required := []struct {
@@ -147,6 +200,30 @@ func TestCIConfigProductTree(t *testing.T) {
 	}
 	if got := ciConfigViolations(workflow, exists); len(got) != 0 {
 		t.Fatalf("ci.yml violations: %v", got)
+	}
+}
+
+// TestCIConfigFullGraphGate proves the full-graph wiring has teeth: the real
+// workflow passes, removing the dedicated step fails, and a green-mode export
+// fails.
+func TestCIConfigFullGraphGate(t *testing.T) {
+	workflow := readRepoFile(t, ".github/workflows/ci.yml")
+	if got := ciFullGraphViolations(workflow); len(got) != 0 {
+		t.Fatalf("full-graph gate violations: %v", got)
+	}
+
+	withoutSwitch := "go test ./internal/guards/... ./internal/layering/... -count=1"
+	removed := strings.Replace(workflow, ciFullGraphCommand, withoutSwitch, 1)
+	if removed == workflow {
+		t.Fatalf("the workflow does not carry the dedicated command %q", ciFullGraphCommand)
+	}
+	if got := ciFullGraphViolations(removed); len(got) == 0 {
+		t.Error("removing the full-graph step produced no violation")
+	}
+
+	green := workflow + "\n      - name: Green export\n        run: TOKENHUSH_GUARD_FULL_GRAPH=1 go build ./...\n"
+	if got := ciFullGraphViolations(green); len(got) == 0 {
+		t.Error("a green-mode export produced no violation")
 	}
 }
 
