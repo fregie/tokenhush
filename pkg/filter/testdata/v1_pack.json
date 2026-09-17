@@ -1,0 +1,30 @@
+{
+  "channel": "stable",
+  "schema_version": 1,
+  "min_binary_version": "0.3.0",
+  "serial": 4,
+  "key_id": "rules-2026-09",
+  "not_before": "2026-09-14T00:00:00Z",
+  "expires": "2027-09-14T00:00:00Z",
+  "detectors": { "email": true, "prefix": true },
+  "disabled_categories": ["internal_only"],
+  "allowlist": ["example.com"],
+  "blocklist": ["TOKENHUSH_BLOCK"],
+  "rules": [
+    {
+      "id": "proj",
+      "type": "regex",
+      "pattern": "PROJ-[0-9]{4,}",
+      "action": "warn",
+      "confidence": 0.85
+    },
+    {
+      "id": "secret",
+      "type": "keyword",
+      "keywords": ["secret", "token"],
+      "action": "block",
+      "case_sensitive": true,
+      "allowlist": ["not-a-secret"]
+    }
+  ]
+}
