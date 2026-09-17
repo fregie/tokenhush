@@ -24,10 +24,18 @@ import "encoding/json"
 // releases paths, so a cap above the holdback could never be reached and the
 // guard would silently pass instead of failing closed.
 //
+// It is 192 KiB, not the holdback itself: the guard accumulates decoded
+// `arguments` bytes while the holdback counts raw SSE bytes (framing plus JSON
+// escaping), so a cap equal to the holdback is reached only after the holdback
+// already force-flushed and released the path. The headroom keeps the cap the
+// decision that fires. 64 KiB refused a legitimate 100 KiB streamed file write
+// (the measured live case), so the bound was raised to stop breaking normal
+// agent work while staying under the holdback.
+//
 // When a path's accumulation reaches the cap without a decision the tool call is
-// refused. That is the accepted cost W6.6 documents: an extremely large LEGAL
-// tool call is refused too.
-const SSEGuardCap = 64 << 10
+// refused. That is the accepted cost W6.6 documents: a tool call larger than
+// 192 KiB of arguments is refused too.
+const SSEGuardCap = 192 << 10
 
 // Refusal reasons reported to the guard observer. They separate a pattern match
 // from the two fail-closed paths (the cap, and a release without a decision) so

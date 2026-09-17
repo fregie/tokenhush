@@ -95,7 +95,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 **守护做什么。** 变更通道检测运行在响应方向，针对模型发起的工具调用参数。模式集是显式、可枚举、可审计的（`pkg/proxy` 的 `MutationChannelPatternInventory()`）。控制端口类要求**控制通道证据，而非仅凭端口**：环回 host 加真实控制端口，**并且**带控制端点路径或控制请求行。同一端口上的数据面路径（例如 `http://127.0.0.1:8787/v1/chat/completions`）是合法流量，不会被拒绝。
 
 - 全缓冲路径逐工具调用检查其 `arguments` 字符串（含其嵌套叶）；命中时**只把该次工具调用**的整个参数值改写为结构化 JSON 拒绝（`{"error":"<notice>","refused":true,"channel":"<class>"}`），使把 `arguments` 当 JSON 解析的客户端不至于硬失败，模型也能据此调整。同一响应里的其它工具调用不受影响，也不返回整响应 `403`。
-- 流式（SSE）路径按 path 累积某个工具调用的流式参数，**上界为 `SSEGuardCap`（64 KiB）**，再做同样的逐工具调用拒绝；命中之后到达的分片被丢弃。该上界刻意小于回填保留量（`sseBackfillMaxHoldbackBytes`，256 KiB），以保证判定真实可达。
+- 流式（SSE）路径按 path 累积某个工具调用的流式参数，**上界为 `SSEGuardCap`（192 KiB）**，再做同样的逐工具调用拒绝；命中之后到达的分片被丢弃。该上界刻意小于回填保留量（`sseBackfillMaxHoldbackBytes`，256 KiB），以保证判定真实可达。
 - 守护由 `self_protection.enabled` 与 `self_protection.modes` 门控；`enabled: false` 是显式退出。
 
 **排除集。** 两个值在**出站方向、检测器运行之前**被强制脱敏（因此白名单无法豁免它们），且**绝不在入站方向被还原**：
@@ -135,7 +135,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 **失败策略与已接受代价**
 
 13. **响应与 SSE 路径刻意不 fail-closed。** 无法解析的响应体仍逐字节转发、回填照旧；该跳过被计数（`Pipeline.ResponseWalkFailures()`）并以仅元数据事件上报，但不阻断。
-14. **超 cap 的合法工具调用被拒绝。** 流式工具调用的参数累积到 `SSEGuardCap`（64 KiB）仍未完成判定时，该次调用按拒绝处理（fail-closed）并计数（`stream_guard_fail_closed`）。这是已接受的代价，绝不是放行。
+14. **超 cap 的合法工具调用被拒绝。** 流式工具调用的参数累积到 `SSEGuardCap`（192 KiB）仍未完成判定时，该次调用按拒绝处理（fail-closed）并计数（`stream_guard_fail_closed`）。这是已接受的代价，绝不是放行。
 
 **检测器精度豁免**
 

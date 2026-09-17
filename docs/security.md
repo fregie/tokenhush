@@ -93,7 +93,7 @@ The allowlist is the one runtime affordance that can stop a specific value from 
 **What the guard does.** Mutation-channel detection runs on the response side, over model-originated tool-call arguments. The pattern set is explicit, enumerable and auditable (`MutationChannelPatternInventory()` in `pkg/proxy`). The control-port class requires evidence of the control channel, never the bare port: a loopback host with the bound control port **plus** a control endpoint path or a control request line. A data-plane path on the same port (for example `http://127.0.0.1:8787/v1/chat/completions`) is legitimate traffic and is not refused.
 
 - On the buffered path it inspects each tool call's `arguments` string, including its nested leaves, and on a match rewrites **only that tool call's** whole arguments value to a structured JSON refusal (`{"error":"<notice>","refused":true,"channel":"<class>"}`), so a client that parses `arguments` as JSON succeeds and the model can adapt. Other tool calls in the same response are untouched, and no response-wide `403` is returned.
-- On the streaming (SSE) path it accumulates a tool call's streamed arguments **per path, bounded by `SSEGuardCap` (64 KiB)**, then applies the same per-tool-call refusal; fragments that arrive after a hit are dropped. The cap is deliberately smaller than the backfill holdback (`sseBackfillMaxHoldbackBytes`, 256 KiB) so the decision is reachable.
+- On the streaming (SSE) path it accumulates a tool call's streamed arguments **per path, bounded by `SSEGuardCap` (192 KiB)**, then applies the same per-tool-call refusal; fragments that arrive after a hit are dropped. The cap is deliberately smaller than the backfill holdback (`sseBackfillMaxHoldbackBytes`, 256 KiB) so the decision is reachable.
 - The guard is gated by `self_protection.enabled` and `self_protection.modes`; `enabled: false` is an explicit opt-out.
 
 **The exclusion set.** Two values are force-redacted on the outbound direction, **before the detectors run** (so the allowlist cannot exempt them), and are **never restored inbound**:
@@ -133,7 +133,7 @@ This is the single aggregate list for the hardening work's known boundaries. Non
 **Failure policy and accepted cost**
 
 13. **The response and SSE path is deliberately not fail-closed.** An unparseable response body is forwarded byte for byte and backfill still runs; the skip is counted (`Pipeline.ResponseWalkFailures()`) and reported as a metadata-only event, but it is not blocked.
-14. **An over-cap legal tool call is refused.** When a streamed tool call's arguments reach `SSEGuardCap` (64 KiB) without a decision, the tool call is refused fail-closed and counted (`stream_guard_fail_closed`). This is an accepted cost, never a pass.
+14. **An over-cap legal tool call is refused.** When a streamed tool call's arguments reach `SSEGuardCap` (192 KiB) without a decision, the tool call is refused fail-closed and counted (`stream_guard_fail_closed`). This is an accepted cost, never a pass.
 
 **Detector precision exemptions**
 

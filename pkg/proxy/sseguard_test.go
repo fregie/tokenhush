@@ -135,6 +135,28 @@ func w64BigLegalArguments() []string {
 	return fragments
 }
 
+// w64LargeLegalArguments returns the argument fragments of one legal (never
+// matching) tool call whose assembled arguments reach contentBytes — a normal
+// large file write, the shape the pre-192-KiB cap refused.
+func w64LargeLegalArguments(t *testing.T, contentBytes int) []string {
+	t.Helper()
+	const marker = "LEGAL-LARGE-WRITE"
+	content := marker + strings.Repeat("A", contentBytes-len(marker))
+	doc, err := json.Marshal(map[string]string{"path": "/tmp/large-write.bin", "content": content})
+	if err != nil {
+		t.Fatalf("marshal large arguments: %v", err)
+	}
+	const chunk = 4 << 10
+	var fragments []string
+	rest := string(doc)
+	for len(rest) > 0 {
+		n := min(chunk, len(rest))
+		fragments = append(fragments, rest[:n])
+		rest = rest[n:]
+	}
+	return fragments
+}
+
 // TestSSEToolCallGuard is the W6.4 acceptance test.
 func TestSSEToolCallGuard(t *testing.T) {
 	notice := w63Refusal(MutationChannelCLI)
@@ -146,8 +168,8 @@ func TestSSEToolCallGuard(t *testing.T) {
 		if SSEGuardCap <= 0 {
 			t.Fatalf("SSEGuardCap = %d, want a positive bound", SSEGuardCap)
 		}
-		if SSEGuardCap != 64<<10 {
-			t.Fatalf("SSEGuardCap = %d, want the frozen 64 KiB", SSEGuardCap)
+		if SSEGuardCap != 192<<10 {
+			t.Fatalf("SSEGuardCap = %d, want the frozen 192 KiB", SSEGuardCap)
 		}
 		if SSEGuardCap > sseBackfillMaxHoldbackBytes {
 			t.Fatalf("SSEGuardCap = %d exceeds sseBackfillMaxHoldbackBytes = %d",
@@ -189,6 +211,49 @@ func TestSSEToolCallGuard(t *testing.T) {
 		want := `{"path":"/tmp/report.txt","content":"hello world"}`
 		if args != want || n != len(fragments) {
 			t.Fatalf("assembled arguments = %q (%d events), want %q (%d)", args, n, want, len(fragments))
+		}
+	})
+
+	t.Run("large_legal_call_under_cap_streams_byte_identical", func(t *testing.T) {
+		// A 100 KiB file-write argument is normal agent work. It was refused
+		// when the cap was 64 KiB; under the raised cap it must stream
+		// byte-identically and be counted by neither guard counter.
+		const contentBytes = 100 << 10
+		pipe := w63Pipeline(t)
+		reporter, events := w14Reporter()
+		pipe.SetRedactionReporter(reporter)
+		w, rec := w14SSEWriter(t, pipe)
+
+		fragments := w64LargeLegalArguments(t, contentBytes)
+		input := append(w64ArgumentsStream(t, fragments), w64FinishEvent...)
+		input = append(input, w64DoneEvent...)
+
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		out := rec.Body.Bytes()
+		if !bytes.Equal(out, input) {
+			t.Fatalf("a large legal streamed tool call was rewritten (len got %d, want %d)", len(out), len(input))
+		}
+		if got := pipe.StreamGuardRefusals(); got != 0 {
+			t.Fatalf("StreamGuardRefusals = %d for a large legal call, want 0", got)
+		}
+		if got := pipe.StreamGuardFailClosed(); got != 0 {
+			t.Fatalf("StreamGuardFailClosed = %d for a large legal call, want 0", got)
+		}
+		if len(*events) != 0 {
+			t.Fatalf("reporter events = %d (%+v), want 0", len(*events), *events)
+		}
+		args, n := w64Arguments(t, out)
+		if len(args) < contentBytes || !strings.Contains(args, "LEGAL-LARGE-WRITE") {
+			t.Fatalf("assembled arguments = %d bytes (marker %v), want >= %d with the marker intact",
+				len(args), strings.Contains(args, "LEGAL-LARGE-WRITE"), contentBytes)
+		}
+		if n != len(fragments) {
+			t.Fatalf("arguments events = %d, want %d", n, len(fragments))
 		}
 	})
 
