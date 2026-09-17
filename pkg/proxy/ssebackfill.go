@@ -110,6 +110,11 @@ type sseBackfiller struct {
 	// concatenation logic. Nil leaves that shape unarmed; see
 	// setToolCallGuardEncoded.
 	guardDetectEncoded func(content []byte) (class string, matched bool)
+	// carrierToolPrefixes records the tool-call path prefixes (…/function/) of
+	// tool calls whose streamed function name is a non-action carrier name (see
+	// carriertools.go). Their arguments paths are exempt from the guard; a nil
+	// map exempts nothing and is the pre-exemption behaviour.
+	carrierToolPrefixes map[string]struct{}
 }
 
 // newSSEBackfiller returns a backfiller writing rewritten SSE bytes to dst.
@@ -217,6 +222,14 @@ func (b *sseBackfiller) processEvent(ev protocol.SSEEvent) error {
 		}
 		return b.afterEvent()
 	}
+	if b.guardDetect != nil {
+		// Record carrier function names first: a name leaf and its arguments
+		// leaf may arrive in the same event, and the arguments path must be
+		// created exempt, not disarmed after it was armed.
+		for _, leaf := range leaves {
+			b.noteCarrierToolName(leaf.Path, leaf.Content)
+		}
+	}
 	for _, leaf := range leaves {
 		if leaf.Encoded {
 			if err := b.feedGuardEncoded(leaf.Path, []byte(leaf.Content), seq); err != nil {
@@ -275,13 +288,16 @@ func (b *sseBackfiller) feed(key string, kind pathKind, chunk []byte, seq int) e
 // never written to the placeholder window: the nested terminal leaves keep their
 // existing per-leaf backfill.
 func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) error {
-	if b.guardDetect == nil || b.guardDetectEncoded == nil || !isMutationChannelArgumentsPath(key) {
+	if b.guardDetect == nil || b.guardDetectEncoded == nil || !isMutationChannelArgumentsPath(key) || b.carrierToolCall(key) {
 		return nil
 	}
 	p := b.paths[key]
 	if p == nil || p.kind != kindJSON {
 		p = b.newPathState(key, kindJSON)
 		b.paths[key] = p
+	}
+	if !p.guardArmed {
+		return nil
 	}
 	if !p.active {
 		p.active = true

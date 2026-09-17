@@ -64,18 +64,63 @@ func (b *sseBackfiller) setToolCallGuard(detect func(text string) (class string,
 		return
 	}
 	// Arm paths that already exist, so installing the guard after a path was
-	// created (or re-installing it) cannot leave a path unguarded.
+	// created (or re-installing it) cannot leave a path unguarded. A tool call
+	// whose carrier name was already streamed stays exempt.
 	for _, p := range b.paths {
-		if p.kind == kindJSON && isMutationChannelArgumentsPath(p.key) {
+		if p.kind == kindJSON && isMutationChannelArgumentsPath(p.key) && !b.carrierToolCall(p.key) {
 			p.guardArmed = true
 		}
 	}
 }
 
 // guardArms reports whether key names a tool-call arguments path the guard must
-// accumulate, when the guard is installed.
+// accumulate, when the guard is installed and the tool call's function name is
+// not a non-action carrier name (see carriertools.go).
 func (b *sseBackfiller) guardArms(kind pathKind, key string) bool {
-	return b.guardDetect != nil && kind == kindJSON && isMutationChannelArgumentsPath(key)
+	return b.guardDetect != nil && kind == kindJSON && isMutationChannelArgumentsPath(key) && !b.carrierToolCall(key)
+}
+
+// noteCarrierToolName records one streamed function-name leaf when it carries a
+// carrier tool name, and disarms the same tool call's arguments path if it was
+// already armed without a decision — a provider that streams arguments before
+// the name must not leave the call armed once the name is known. A path that
+// already matched stays refused: the decision was made on the fragments the
+// client had streamed, and only the name-before-arguments order the OpenAI
+// shape uses guarantees the exemption can be applied in time.
+func (b *sseBackfiller) noteCarrierToolName(path, name string) {
+	if b == nil || b.guardDetect == nil || !isMutationChannelFunctionNamePath(path) || !mutationChannelCarrierToolName(name) {
+		return
+	}
+	prefix := mutationChannelFunctionNamePrefix(path)
+	if prefix == "" {
+		return
+	}
+	if b.carrierToolPrefixes == nil {
+		b.carrierToolPrefixes = make(map[string]struct{}, 2)
+	}
+	b.carrierToolPrefixes[prefix] = struct{}{}
+	p := b.paths[prefix+mutationChannelArgumentsField]
+	if p == nil || !p.guardArmed || p.guardDecided {
+		return
+	}
+	p.guardArmed = false
+	p.guardAccum = p.guardAccum[:0]
+	p.guardClass = ""
+	if p.active && p.w.Buffered() == 0 {
+		// Nothing is buffered in the placeholder window, so the event-boundary
+		// release can retire the path now that it is no longer guarded.
+		b.touched = append(b.touched, p)
+	}
+}
+
+// carrierToolCall reports whether a carrier function name was already seen for
+// the tool call owning an arguments path. Callers must pass an arguments path.
+func (b *sseBackfiller) carrierToolCall(argumentsPath string) bool {
+	if b == nil || len(b.carrierToolPrefixes) == 0 || !isMutationChannelArgumentsPath(argumentsPath) {
+		return false
+	}
+	_, ok := b.carrierToolPrefixes[mutationChannelArgumentsPrefix(argumentsPath)]
+	return ok
 }
 
 // setToolCallGuardEncoded installs the matcher for the Encoded (valid-JSON)

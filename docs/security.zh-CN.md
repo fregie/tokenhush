@@ -96,6 +96,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 
 - 全缓冲路径逐工具调用检查其 `arguments` 字符串（含其嵌套叶）；命中时**只把该次工具调用**的整个参数值改写为结构化 JSON 拒绝（`{"error":"<notice>","refused":true,"channel":"<class>"}`），使把 `arguments` 当 JSON 解析的客户端不至于硬失败，模型也能据此调整。同一响应里的其它工具调用不受影响，也不返回整响应 `403`。
 - 流式（SSE）路径按 path 累积某个工具调用的流式参数，**上界为 `SSEGuardCap`（192 KiB）**，再做同样的逐工具调用拒绝；命中之后到达的分片被丢弃。该上界刻意小于回填保留量（`sseBackfillMaxHoldbackBytes`，256 KiB），以保证判定真实可达。
+- **非行动载体工具按工具名豁免，判定基于工具而非文本。** 守护的目标是**行动**型工具调用——能执行命令、发起 HTTP 请求或写文件的那种。参数是面向人或另一 agent 的**内容**的工具无法触及变更通道，因此 `function.name` 位于冻结、显式枚举的载体名单内的工具调用不做检查。名单是 `pkg/proxy` 的 **`MutationChannelCarrierTools()`**（冻结常量，刻意不提供配置键）：委托与对话载体（`task`、`spawn_agent`、`subagent`、`agent`、`agent_task`、`message`、`prompt`）、推理/规划/提问载体（`think`、`reasoning`、`todo`、`todowrite`、`notebook`、`plan`、`question`、`ask`）、只读检索（`read`、`read_file`、`glob`、`grep`）。判别是**结构性**的：同一次工具调用中与 `arguments` 叶同级的 `function.name` 叶，绝不是对参数文本的启发式。其它任何名字（含未知名字、以及根本没有 name 叶的调用）保持今日的检查，因此 `bash`/`shell`/`exec`/`terminal`/`powershell` 携带同样文本仍按调用被拒绝。只读的 `read`/`grep` 指向白名单文件或命中受守护形状同样被放行：读不能改变通道，文件字节仍留在下方排除集中（出站强制脱敏，入站绝不还原）。
 - 守护由 `self_protection.enabled` 与 `self_protection.modes` 门控；`enabled: false` 是显式退出。
 
 **排除集。** 两个值在**出站方向、检测器运行之前**被强制脱敏（因此白名单无法豁免它们），且**绝不在入站方向被还原**：
@@ -121,25 +122,26 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 6. **未枚举的包装器与写手段。** 模式集刻意不枚举所有 shell 包装器或解释器（例如 `ssh`、`xargs`、`expect`），也不枚举所有写手段（例如编辑器保存、自写程序或未列出的 CLI）。对数据目录只覆盖文档化的路径拼写；symlink、bind mount 之类间接拼写不在覆盖内。
 7. **无法解析的响应体。** 响应体若无法被 walker 解析，守护不在其上运行（见下方响应路径策略）。
 8. **保守的误报。** 同一次工具调用的多个嵌套叶若恰好拼成命令形状，该次调用会被拒绝。方向是 fail-closed、按工具调用、非整响应阻断，代价可接受。
+9. **非行动载体豁免信任工具名。** `function.name` 位于冻结载体名单（`pkg/proxy` 的 `MutationChannelCarrierTools()`；精确匹配、无配置键）的工具调用不做检查，因此把**行动**工具命名为载体名的 harness（或名为载体却真的行动的工具）会绕过变更通道守卫：名字是唯一可用信号，守卫无法核实工具的真实行为。这是对一项本就 best-effort 的守卫的刻意收窄，不是新增的变更通路：白名单仍只能由人类操作者经已鉴权控制面变更，而 control token 强制脱敏、白名单文件排除集与出站复核都独立于本守卫、不受影响。读取白名单文件的只读调用同样按此规则放行（读不能变更；字节仍出站强制脱敏、入站绝不还原）。
 
 **出站复核（编码）**
 
-9. **覆盖是一组固定的解码器枚举，而非语法。** 每一种被覆盖的形态对应 `NormalizeCandidates` 解码器集合中的一项；刻意**不**覆盖的类别包括：任意多层自定义或非标准编码、深于 `NormalizeMaxRounds`（4）的嵌套、大于 `NormalizeMaxInputBytes`（256 KiB，完全不扫描）的输入、`od -tu1` 未加 `-v` 的输出（连续十六个相同字节会折叠为 `*`）、超过 `NormalizeMaxCandidateBytes`（8192）时跨候选窗口切割的 payload、有口令或加密的容器、隐写或有损变换，以及抽取器无法界定的拆分。
-10. **体积上界。** 出站复核对大于 `egressRecheckMaxBodyBytes`（256 KiB，即归一化器自身的上界 `NormalizeMaxInputBytes`，故归一化器能解码的 body 都会被复核）的 body 跳过。超过该上界的 body 仍会出站且不经复核；这是已文档化的边界，绝不是放行。
-11. **非 JSON 请求体。** 显式非 JSON 的请求保持文档化的逐字节直通且不运行 walk，因此出站复核不对其运行。
+10. **覆盖是一组固定的解码器枚举，而非语法。** 每一种被覆盖的形态对应 `NormalizeCandidates` 解码器集合中的一项；刻意**不**覆盖的类别包括：任意多层自定义或非标准编码、深于 `NormalizeMaxRounds`（4）的嵌套、大于 `NormalizeMaxInputBytes`（256 KiB，完全不扫描）的输入、`od -tu1` 未加 `-v` 的输出（连续十六个相同字节会折叠为 `*`）、超过 `NormalizeMaxCandidateBytes`（8192）时跨候选窗口切割的 payload、有口令或加密的容器、隐写或有损变换，以及抽取器无法界定的拆分。
+11. **体积上界。** 出站复核对大于 `egressRecheckMaxBodyBytes`（256 KiB，即归一化器自身的上界 `NormalizeMaxInputBytes`，故归一化器能解码的 body 都会被复核）的 body 跳过。超过该上界的 body 仍会出站且不经复核；这是已文档化的边界，绝不是放行。
+12. **非 JSON 请求体。** 显式非 JSON 的请求保持文档化的逐字节直通且不运行 walk，因此出站复核不对其运行。
 
 **键位扫描**
 
-12. **`high_entropy` 在键位，以及其纯 hex 排除。** `high_entropy` 不再是键位检测器：首次出现的**未知**高熵键（实测：键为 40 位随机字母数字的 JSON 对象）不再被检测、也不再阻断请求。引擎已**已知**为密钥的键仍被出站复核拒绝（403、上游零字节），前缀/JWT/PEM 形态的键仍由键位守卫阻断。另外，值域的纯 hex 排除同样作用于键域，故纯 hex 的密钥置于对象键不会被拦，与值域是同一排除。
+13. **`high_entropy` 在键位，以及其纯 hex 排除。** `high_entropy` 不再是键位检测器：首次出现的**未知**高熵键（实测：键为 40 位随机字母数字的 JSON 对象）不再被检测、也不再阻断请求。引擎已**已知**为密钥的键仍被出站复核拒绝（403、上游零字节），前缀/JWT/PEM 形态的键仍由键位守卫阻断。另外，值域的纯 hex 排除同样作用于键域，故纯 hex 的密钥置于对象键不会被拦，与值域是同一排除。
 
 **失败策略与已接受代价**
 
-13. **响应与 SSE 路径刻意不 fail-closed。** 无法解析的响应体仍逐字节转发、回填照旧；该跳过被计数（`Pipeline.ResponseWalkFailures()`）并以仅元数据事件上报，但不阻断。
-14. **超 cap 的合法工具调用被拒绝。** 流式工具调用的参数累积到 `SSEGuardCap`（192 KiB）仍未完成判定时，该次调用按拒绝处理（fail-closed）并计数（`stream_guard_fail_closed`）。这是已接受的代价，绝不是放行。
+14. **响应与 SSE 路径刻意不 fail-closed。** 无法解析的响应体仍逐字节转发、回填照旧；该跳过被计数（`Pipeline.ResponseWalkFailures()`）并以仅元数据事件上报，但不阻断。
+15. **超 cap 的合法工具调用被拒绝。** 流式工具调用的参数累积到 `SSEGuardCap`（192 KiB）仍未完成判定时，该次调用按拒绝处理（fail-closed）并计数（`stream_guard_fail_closed`）。这是已接受的代价，绝不是放行。
 
 **检测器精度豁免**
 
-15. **`high_entropy` 的结构化豁免是跳过，不是判定。** 符合被豁免语法（服务商 id `call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`；请求/追踪/任务 id `req_…`、`trace_…`、`span_…`、`run_…`、`job_…`、`build_…`；前缀哈希 / SRI 值；data-URI base64 载荷；载荷类键的字符串值；长度 ≥ 128 字节的 base64 字母表运行；含长哈希的绝对或相对路径）的密钥不会被脱敏。若引擎已知该密钥，出站复核仍会拒绝该请求（403、上游零字节；`StructuralIdentifierContains` 覆盖全部被豁免类别）；该形态下引擎**未知**的密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举。`high_entropy` 对纯 hex 的排除未变（第 12 条）。
+16. **`high_entropy` 的结构化豁免是跳过，不是判定。** 符合被豁免语法（服务商 id `call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`；请求/追踪/任务 id `req_…`、`trace_…`、`span_…`、`run_…`、`job_…`、`build_…`；前缀哈希 / SRI 值；data-URI base64 载荷；载荷类键的字符串值；长度 ≥ 128 字节的 base64 字母表运行；含长哈希的绝对或相对路径）的密钥不会被脱敏。若引擎已知该密钥，出站复核仍会拒绝该请求（403、上游零字节；`StructuralIdentifierContains` 覆盖全部被豁免类别）；该形态下引擎**未知**的密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举。`high_entropy` 对纯 hex 的排除未变（第 13 条）。
 
 ## ⚠️ 已知限制
 

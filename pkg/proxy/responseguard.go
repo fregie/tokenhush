@@ -74,14 +74,22 @@ func isMutationChannelArgumentsPath(path string) bool {
 // parent's decoded content (protocol.Walk), exactly the rule consumeEncoded
 // uses, so the ordinals stay aligned with the rewriter even when a sibling key
 // contains '#' (escapePointer does not escape '#').
+//
+// The carrier-tool exemption is applied here, per tool call: an arguments leaf
+// whose sibling function-name leaf (same tool call, …/function/name) carries a
+// name on the frozen non-action carrier list (see carriertools.go) is not a
+// target at all, so the tool call whose arguments are content — a delegation
+// prompt, a plan, a read-only pattern — cannot reach the refusal. Every other
+// name, an unknown name, and a call with no name leaf keep the text inspection.
 func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encodedTargets map[int]struct{}, err error) {
 	terminalTargets = make(map[int]struct{})
 	encodedTargets = make(map[int]struct{})
+	carrierArguments := mutationChannelCarrierArgumentsPaths(walked)
 	terminalIdx, encodedIdx := 0, 0
 	for i := 0; i < len(walked); {
 		leaf := walked[i]
 		if leaf.Encoded {
-			if isMutationChannelArgumentsPath(leaf.Path) {
+			if _, carrier := carrierArguments[leaf.Path]; isMutationChannelArgumentsPath(leaf.Path) && !carrier {
 				encodedTargets[encodedIdx] = struct{}{}
 			}
 			nested, nerr := protocol.Walk([]byte(leaf.Content))
@@ -99,7 +107,7 @@ func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encod
 			i += 1 + len(nested)
 			continue
 		}
-		if isMutationChannelArgumentsPath(leaf.Path) {
+		if _, carrier := carrierArguments[leaf.Path]; isMutationChannelArgumentsPath(leaf.Path) && !carrier {
 			terminalTargets[terminalIdx] = struct{}{}
 		}
 		terminalIdx++
