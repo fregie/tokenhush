@@ -17,6 +17,7 @@ multi-step assembly across separate tool calls (no single candidate carries the 
 a command split across several leaves of one tool call (each leaf is shorter than the command shape)
 fragments assembled at run time by an interpreter (for example string concatenation inside python -c)
 shell wrappers and interpreters deliberately not enumerated (for example ssh to a remote host, xargs, or expect)
+a real invocation hidden as the argument of an enumerated mention-carrier command (the indirect-execution class reached through the mention exemption)
 write mechanisms outside the enumerated write-signal list (for example an editor save, a custom program, or a CLI not listed)
 indirect path spellings for the data directory (for example a symlink or a bind mount; the basename form is covered)
 tool-call arguments carried outside the OpenAI arguments string field (an Anthropic-shaped input object is not scanned)

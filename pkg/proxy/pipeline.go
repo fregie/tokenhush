@@ -749,6 +749,15 @@ func (w *pipelineResponseWriter) WriteHeader(status int) {
 			if w.pipeline.selfProtectionEnabled {
 				w.backfill.setToolCallGuard(w.pipeline.DetectMutationChannel, w.pipeline.noteStreamingGuardRefusal)
 				w.backfill.setToolCallGuardEncoded(w.pipeline.matchEncodedArguments)
+				// The reduced table a content-bearing file tool's content is
+				// decided with: its mentions of the CLI/control path pass, a
+				// write to the listed file still refuses.
+				w.backfill.setToolCallGuardContent(
+					w.pipeline.DetectMutationChannelContentTool,
+					func(content []byte) (string, bool) {
+						return w.pipeline.matchEncodedArgumentsForTool(content, true)
+					},
+				)
 			}
 			// Wire the emit-time desync guard so an unparseable payload is
 			// counted and reported instead of silent; the fallback (write the

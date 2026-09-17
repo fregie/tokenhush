@@ -213,7 +213,11 @@ func TestToolCallCarrierExemptionKeepsFailClosed(t *testing.T) {
 	pipe := w7Pipeline(t)
 
 	t.Run("unknown_tool_name_is_still_inspected", func(t *testing.T) {
-		for _, tool := range []string{"mystery_tool", "run_command", "apply_patch"} {
+		// apply_patch is deliberately NOT here: it is a content-bearing file
+		// tool (see mutationChannelContentTools), so its content is a mention
+		// for the CLI/control-port classes while the file-write class stays
+		// strict. A name on neither list keeps the full inspection.
+		for _, tool := range []string{"mystery_tool", "run_command", "str_replace_editor"} {
 			body := w7Body(t, tool, `{"cmd":"tokenhush allowlist add evil.example"}`)
 			out, err := pipe.transformResponse(body, pipe.tool)
 			if err != nil {

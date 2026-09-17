@@ -79,11 +79,11 @@ type MutationChannelContext struct {
 
 // mutationChannelPattern is one auditable entry of the detector's inventory:
 // a stable id, the class it implements, and its matching predicate. The
-// predicates are pure: they read text and ctx only.
+// predicates are pure: they read the pre-analysed candidate text and ctx only.
 type mutationChannelPattern struct {
 	ID    string
 	Class string
-	match func(text string, ctx MutationChannelContext) bool
+	match func(text mutationChannelText, ctx MutationChannelContext) bool
 }
 
 // mutationChannelPatterns is the ordered union of the three class tables,
@@ -126,8 +126,29 @@ func ClassifyMutationChannel(text string, ctx MutationChannelContext) (class str
 	if text == "" {
 		return "", false
 	}
-	for _, pattern := range mutationChannelPatterns {
-		if pattern.match(text, ctx) {
+	return matchMutationChannelPatterns(mutationChannelPatterns, text, ctx)
+}
+
+// ClassifyMutationChannelContentTool is the classifier for a content-bearing
+// file tool's arguments (see mutationChannelContentTools). Its content is a
+// mention for the CLI and control-port classes — a document, test or fixture may
+// freely reference the CLI form and the control path — so only the file-write
+// class runs, and only as the target-path pattern: using the tool to write the
+// listed file itself (a path-valued leaf that is exactly the file) is still
+// refused. It is pure, like ClassifyMutationChannel.
+func ClassifyMutationChannelContentTool(text string, ctx MutationChannelContext) (class string, matched bool) {
+	if text == "" {
+		return "", false
+	}
+	return matchMutationChannelPatterns(mutationChannelContentPatterns, text, ctx)
+}
+
+// matchMutationChannelPatterns runs the first matching entry of a pattern table
+// over one candidate text, building the shared mention analysis once.
+func matchMutationChannelPatterns(patterns []mutationChannelPattern, text string, ctx MutationChannelContext) (string, bool) {
+	candidate := newMutationChannelText(text)
+	for _, pattern := range patterns {
+		if pattern.match(candidate, ctx) {
 			return pattern.Class, true
 		}
 	}
@@ -175,11 +196,33 @@ func (p *Pipeline) DetectMutationChannel(text string) (class string, matched boo
 		return "", false
 	}
 	ctx := p.MutationChannelContext()
+	candidate := newMutationChannelText(text)
 	for _, pattern := range mutationChannelPatterns {
 		if !p.selfProtectionModeEnabled(pattern.Class) {
 			continue
 		}
-		if pattern.match(text, ctx) {
+		if pattern.match(candidate, ctx) {
+			return pattern.Class, true
+		}
+	}
+	return "", false
+}
+
+// DetectMutationChannelContentTool is the pipeline-level entry point for a
+// content-bearing file tool's arguments (see ClassifyMutationChannelContentTool).
+// It honours the same self-protection switch and mode list as
+// DetectMutationChannel, so the file-write mode still gates it.
+func (p *Pipeline) DetectMutationChannelContentTool(text string) (class string, matched bool) {
+	if p == nil || !p.selfProtectionEnabled || text == "" {
+		return "", false
+	}
+	ctx := p.MutationChannelContext()
+	candidate := newMutationChannelText(text)
+	for _, pattern := range mutationChannelContentPatterns {
+		if !p.selfProtectionModeEnabled(pattern.Class) {
+			continue
+		}
+		if pattern.match(candidate, ctx) {
 			return pattern.Class, true
 		}
 	}
@@ -217,8 +260,12 @@ var mutationChannelCLIPatterns = []mutationChannelPattern{
 }
 
 // matchCLIAllowlistCommand reports whether text contains the tokenhush or
-// tokenhush-pro executable followed by the allowlist subcommand.
-func matchCLIAllowlistCommand(text string, _ MutationChannelContext) bool {
+// tokenhush-pro executable followed by the allowlist subcommand at a position
+// that executes it. An occurrence owned by a mention-carrier command (a search
+// pattern, a quoted or printed string) or inside a content here-document body is
+// a mention and does not match.
+func matchCLIAllowlistCommand(t mutationChannelText, _ MutationChannelContext) bool {
+	text := t.raw
 	for _, name := range mutationChannelCommandNames {
 		for i := 0; ; {
 			j := indexFoldFrom(text, name, i)
@@ -227,6 +274,9 @@ func matchCLIAllowlistCommand(text string, _ MutationChannelContext) bool {
 			}
 			i = j + 1
 			if j > 0 && !isCommandStartBoundary(text[j-1]) {
+				continue
+			}
+			if t.tokenIsMention(j) {
 				continue
 			}
 			end := j + len(name)
@@ -311,10 +361,11 @@ var mutationChannelPortPatterns = []mutationChannelPattern{
 // bound control port AND evidence of the control channel. The port alone is not
 // evidence: an HTTP-ish context around a bare port (a URL scheme, curl/wget/nc)
 // used to be enough, which refused legitimate data-plane calls to the same port.
-func matchControlPortHostPort(text string, ctx MutationChannelContext) bool {
+func matchControlPortHostPort(t mutationChannelText, ctx MutationChannelContext) bool {
 	if ctx.ControlPort <= 0 || ctx.ControlPort > 65535 {
 		return false
 	}
+	text := t.raw
 	var signal bool
 	var signalKnown bool
 	for _, host := range mutationChannelLoopbackHosts {
@@ -324,6 +375,9 @@ func matchControlPortHostPort(text string, ctx MutationChannelContext) bool {
 				break
 			}
 			i = j + 1
+			if t.tokenIsMention(j) {
+				continue
+			}
 			colon := j + len(host)
 			if colon >= len(text) || text[colon] != ':' {
 				continue
@@ -360,7 +414,8 @@ func matchControlPortHostPort(text string, ctx MutationChannelContext) bool {
 // evidence: the allowlist endpoint exists only on the control plane, so a write
 // verb aimed at it is a control-channel attempt even when no host:port is
 // spelled (the Host header may carry the port separately, or be omitted).
-func matchControlPortRequestLine(text string, _ MutationChannelContext) bool {
+func matchControlPortRequestLine(t mutationChannelText, _ MutationChannelContext) bool {
+	text := t.raw
 	for _, verb := range mutationChannelRequestVerbs {
 		for i := 0; ; {
 			j := indexFoldFrom(text, verb, i)
@@ -369,6 +424,9 @@ func matchControlPortRequestLine(text string, _ MutationChannelContext) bool {
 			}
 			i = j + 1
 			if j > 0 && !isCommandStartBoundary(text[j-1]) {
+				continue
+			}
+			if t.tokenIsMention(j) {
 				continue
 			}
 			if end := j + len(verb); end < len(text) && !isCommandTerminator(text[end]) {
@@ -384,10 +442,11 @@ func matchControlPortRequestLine(text string, _ MutationChannelContext) bool {
 
 // matchControlPortNetcat reports the space-separated netcat spelling
 // (`nc 127.0.0.1 8787`), which carries no colon.
-func matchControlPortNetcat(text string, ctx MutationChannelContext) bool {
+func matchControlPortNetcat(t mutationChannelText, ctx MutationChannelContext) bool {
 	if ctx.ControlPort <= 0 || ctx.ControlPort > 65535 {
 		return false
 	}
+	text := t.raw
 	if !containsCommandToken(text, "nc") && !containsCommandToken(text, "netcat") {
 		return false
 	}
@@ -398,6 +457,9 @@ func matchControlPortNetcat(text string, ctx MutationChannelContext) bool {
 				break
 			}
 			i = j + 1
+			if t.tokenIsMention(j) {
+				continue
+			}
 			afterHost := j + len(host)
 			port := skipCommandSpace(text, afterHost)
 			if port == afterHost {
@@ -429,36 +491,44 @@ var mutationChannelFilePatterns = []mutationChannelPattern{
 	{ID: "file-write/target-path", Class: MutationChannelFileWrite, match: matchFileWriteTargetPath},
 }
 
-// matchFileWriteDataDirPath matches the runtime allowlist path plus a write
-// signal.
-func matchFileWriteDataDirPath(text string, ctx MutationChannelContext) bool {
-	path := strings.TrimSpace(ctx.AllowlistPath)
-	if path == "" || !hasPathFold(text, path) {
-		return false
-	}
-	return hasWriteSignal(text)
+// mutationChannelContentPatterns is the reduced table a content-bearing file
+// tool is classified with: only the file-write class, and only its target-path
+// pattern. It is a subset of mutationChannelFilePatterns, so the mode gating and
+// the class vocabulary are identical; the two textual patterns are omitted
+// because a document/test/fixture body mentioning the path with a redirection is
+// a mention, not a write to the listed file.
+var mutationChannelContentPatterns = []mutationChannelPattern{
+	{ID: "file-write/target-path", Class: MutationChannelFileWrite, match: matchFileWriteTargetPath},
 }
 
-// matchFileWriteAllowlistJSON matches the frozen basename plus a write signal.
-// It deliberately needs no data directory: a relative write inside the data
-// root (or a path spelled differently) still carries the basename.
-func matchFileWriteAllowlistJSON(text string, _ MutationChannelContext) bool {
-	if indexFoldFrom(text, mutationChannelAllowlistFileName, 0) < 0 {
-		return false
-	}
-	return hasWriteSignal(text)
+// matchFileWriteDataDirPath matches the runtime allowlist path when a write form
+// targets it: the path must be preceded, in the same shell segment, by a
+// redirection or write command, and must not sit inside a content here-document
+// body. A bare mention of the path never matches.
+func matchFileWriteDataDirPath(text mutationChannelText, ctx MutationChannelContext) bool {
+	path := strings.TrimSpace(ctx.AllowlistPath)
+	return path != "" && mutationChannelPathWritten(text, path)
+}
+
+// matchFileWriteAllowlistJSON matches the frozen basename under the same
+// positional write rule. It deliberately needs no data directory: a relative
+// write inside the data root (or a path spelled differently) still carries the
+// basename.
+func matchFileWriteAllowlistJSON(text mutationChannelText, _ MutationChannelContext) bool {
+	return mutationChannelPathWritten(text, mutationChannelAllowlistFileName)
 }
 
 // matchFileWriteTargetPath matches a candidate that is exactly the runtime
 // path (or its basename), quoted or not: a path-valued argument leaf is what a
 // file-writing tool call looks like, and it also covers the read-only access
-// W6.1's exclusion set protects the file content from.
-func matchFileWriteTargetPath(text string, ctx MutationChannelContext) bool {
+// W6.1's exclusion set protects the file content from. It is the pattern that
+// keeps the file-write class strict for content-bearing file tools.
+func matchFileWriteTargetPath(text mutationChannelText, ctx MutationChannelContext) bool {
 	path := strings.TrimSpace(ctx.AllowlistPath)
 	if path == "" {
 		return false
 	}
-	value := trimValueQuotes(strings.TrimSpace(text))
+	value := trimValueQuotes(strings.TrimSpace(text.raw))
 	if value == "" {
 		return false
 	}
@@ -791,19 +861,6 @@ func portMatchesAt(text string, i, port int) (int, bool) {
 		return 0, false
 	}
 	return j, true
-}
-
-// hasPathFold reports whether text contains path, case-insensitively, trying
-// the slash-spelled variant too so a Windows path written with forward slashes
-// still matches.
-func hasPathFold(text, path string) bool {
-	if indexFoldFrom(text, path, 0) >= 0 {
-		return true
-	}
-	if strings.IndexByte(path, '\\') >= 0 {
-		return indexFoldFrom(text, strings.ReplaceAll(path, `\`, `/`), 0) >= 0
-	}
-	return false
 }
 
 // trimValueQuotes strips one layer of matching surrounding quotes (and any

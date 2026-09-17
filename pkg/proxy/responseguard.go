@@ -65,7 +65,9 @@ func isMutationChannelArgumentsPath(path string) bool {
 // mutationChannelGuardTargets locates the tool-call arguments leaves the guard
 // may rewrite: the leaf ordinals the leafRewriter will report for the arguments
 // field, for the terminal (non-JSON arguments) and the Encoded (valid-JSON
-// arguments) shapes.
+// arguments) shapes. The map value records whether the tool call is a
+// content-bearing file tool (see mutationChannelContentTools), so the caller can
+// classify it with the reduced content-tool table.
 //
 // Only top-level leaves are eligible: a leaf nested inside an Encoded parent is
 // owned by that parent's whole-string replacement, never edited on its own —
@@ -80,17 +82,20 @@ func isMutationChannelArgumentsPath(path string) bool {
 // name on the frozen non-action carrier list (see carriertools.go) is not a
 // target at all, so the tool call whose arguments are content — a delegation
 // prompt, a plan, a read-only pattern — cannot reach the refusal. Every other
-// name, an unknown name, and a call with no name leaf keep the text inspection.
-func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encodedTargets map[int]struct{}, err error) {
-	terminalTargets = make(map[int]struct{})
-	encodedTargets = make(map[int]struct{})
+// name, an unknown name, and a call with no name leaf keep the text inspection;
+// a content-bearing file tool keeps only the file-write class.
+func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encodedTargets map[int]bool, err error) {
+	terminalTargets = make(map[int]bool)
+	encodedTargets = make(map[int]bool)
 	carrierArguments := mutationChannelCarrierArgumentsPaths(walked)
+	contentArguments := mutationChannelContentArgumentsPaths(walked)
 	terminalIdx, encodedIdx := 0, 0
 	for i := 0; i < len(walked); {
 		leaf := walked[i]
 		if leaf.Encoded {
 			if _, carrier := carrierArguments[leaf.Path]; isMutationChannelArgumentsPath(leaf.Path) && !carrier {
-				encodedTargets[encodedIdx] = struct{}{}
+				_, content := contentArguments[leaf.Path]
+				encodedTargets[encodedIdx] = content
 			}
 			nested, nerr := protocol.Walk([]byte(leaf.Content))
 			if nerr != nil {
@@ -108,7 +113,8 @@ func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encod
 			continue
 		}
 		if _, carrier := carrierArguments[leaf.Path]; isMutationChannelArgumentsPath(leaf.Path) && !carrier {
-			terminalTargets[terminalIdx] = struct{}{}
+			_, content := contentArguments[leaf.Path]
+			terminalTargets[terminalIdx] = content
 		}
 		terminalIdx++
 		i++
@@ -116,20 +122,42 @@ func mutationChannelGuardTargets(walked []protocol.Leaf) (terminalTargets, encod
 	return terminalTargets, encodedTargets, nil
 }
 
+// detectMutationChannelForTool classifies an arguments value with the table the
+// owning tool call deserves: the reduced content-tool table for a content-bearing
+// file tool, the full table otherwise.
+func (p *Pipeline) detectMutationChannelForTool(text string, contentTool bool) (string, bool) {
+	if contentTool {
+		return p.DetectMutationChannelContentTool(text)
+	}
+	return p.DetectMutationChannel(text)
+}
+
 // matchEncodedArguments reports whether a valid-JSON arguments document reaches
 // the mutation channel, and which class matched.
 //
-// The whole decoded arguments string is tested first (a command written into a
-// single nested leaf keeps its shape there). Because JSON punctuation separates
-// two leaves, the same command split across leaves is invisible to a raw-text
-// scan and to a per-leaf scan, so the concatenation of the nested terminal-leaf
-// contents is tested too — both with no separator (a command split mid-token)
-// and with a single space (a command split at a token boundary). This is what
-// makes the parent replacement load-bearing: the variant that rewrites only a
-// matched nested leaf cannot see a split and would let it through.
+// Each nested terminal leaf is tested (a command written into a single nested
+// leaf keeps its shape there). Because JSON punctuation separates two leaves,
+// the same command split across leaves is invisible to a raw-text scan and to a
+// per-leaf scan, so the concatenation of the nested terminal-leaf contents is
+// tested too — both with no separator (a command split mid-token) and with a
+// single space (a command split at a token boundary). This is what makes the
+// parent replacement load-bearing: the variant that rewrites only a matched
+// nested leaf cannot see a split and would let it through.
+//
+// The raw arguments document is deliberately NOT tested as a whole: JSON
+// punctuation and escaping put the owning command's name behind a `":"` prefix,
+// which would defeat the mention/position analysis and refuse a tool call whose
+// text merely mentions a guarded shape (the live `grep` false positive).
 func (p *Pipeline) matchEncodedArguments(content []byte) (string, bool) {
-	if class, matched := p.DetectMutationChannel(string(content)); matched {
-		return class, true
+	return p.matchEncodedArgumentsForTool(content, false)
+}
+
+// matchEncodedArgumentsForTool is matchEncodedArguments with a selectable
+// classifier, so a content-bearing file tool's arguments are matched with the
+// reduced content-tool table.
+func (p *Pipeline) matchEncodedArgumentsForTool(content []byte, contentTool bool) (string, bool) {
+	detect := func(text string) (string, bool) {
+		return p.detectMutationChannelForTool(text, contentTool)
 	}
 	nested, err := protocol.Walk(content)
 	if err != nil {
@@ -141,7 +169,7 @@ func (p *Pipeline) matchEncodedArguments(content []byte) (string, bool) {
 		if leaf.Encoded {
 			continue
 		}
-		if class, matched := p.DetectMutationChannel(leaf.Content); matched {
+		if class, matched := detect(leaf.Content); matched {
 			return class, true
 		}
 		concatenated.WriteString(leaf.Content)
@@ -151,10 +179,10 @@ func (p *Pipeline) matchEncodedArguments(content []byte) (string, bool) {
 		first = false
 		spaced.WriteString(leaf.Content)
 	}
-	if class, matched := p.DetectMutationChannel(concatenated.String()); matched {
+	if class, matched := detect(concatenated.String()); matched {
 		return class, true
 	}
-	if class, matched := p.DetectMutationChannel(spaced.String()); matched {
+	if class, matched := detect(spaced.String()); matched {
 		return class, true
 	}
 	return "", false
@@ -185,10 +213,11 @@ func (p *Pipeline) guardResponseToolCalls(body []byte, walked []protocol.Leaf) (
 	rewriter := &leafRewriter{
 		walked: walked,
 		edit: func(terminalIdx int, _ string, content []byte) ([]byte, bool) {
-			if _, ok := terminalTargets[terminalIdx]; !ok {
+			contentTool, ok := terminalTargets[terminalIdx]
+			if !ok {
 				return content, false
 			}
-			class, matched := p.DetectMutationChannel(string(content))
+			class, matched := p.detectMutationChannelForTool(string(content), contentTool)
 			if !matched {
 				return content, false
 			}
@@ -196,10 +225,11 @@ func (p *Pipeline) guardResponseToolCalls(body []byte, walked []protocol.Leaf) (
 			return mutationChannelRefusalArguments(class), true
 		},
 		parentEdit: func(encodedIdx int, _ string, content []byte) ([]byte, bool) {
-			if _, ok := encodedTargets[encodedIdx]; !ok {
+			contentTool, ok := encodedTargets[encodedIdx]
+			if !ok {
 				return nil, false
 			}
-			class, matched := p.matchEncodedArguments(content)
+			class, matched := p.matchEncodedArgumentsForTool(content, contentTool)
 			if !matched {
 				return nil, false
 			}

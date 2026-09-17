@@ -97,6 +97,8 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 - 全缓冲路径逐工具调用检查其 `arguments` 字符串（含其嵌套叶）；命中时**只把该次工具调用**的整个参数值改写为结构化 JSON 拒绝（`{"error":"<notice>","refused":true,"channel":"<class>"}`），使把 `arguments` 当 JSON 解析的客户端不至于硬失败，模型也能据此调整。同一响应里的其它工具调用不受影响，也不返回整响应 `403`。
 - 流式（SSE）路径按 path 累积某个工具调用的流式参数，**上界为 `SSEGuardCap`（192 KiB）**，再做同样的逐工具调用拒绝；命中之后到达的分片被丢弃。该上界刻意小于回填保留量（`sseBackfillMaxHoldbackBytes`，256 KiB），以保证判定真实可达。
 - **非行动载体工具按工具名豁免，判定基于工具而非文本。** 守护的目标是**行动**型工具调用——能执行命令、发起 HTTP 请求或写文件的那种。参数是面向人或另一 agent 的**内容**的工具无法触及变更通道，因此 `function.name` 位于冻结、显式枚举的载体名单内的工具调用不做检查。名单是 `pkg/proxy` 的 **`MutationChannelCarrierTools()`**（冻结常量，刻意不提供配置键）：委托与对话载体（`task`、`spawn_agent`、`subagent`、`agent`、`agent_task`、`message`、`prompt`）、推理/规划/提问载体（`think`、`reasoning`、`todo`、`todowrite`、`notebook`、`plan`、`question`、`ask`）、只读检索（`read`、`read_file`、`glob`、`grep`）。判别是**结构性**的：同一次工具调用中与 `arguments` 叶同级的 `function.name` 叶，绝不是对参数文本的启发式。其它任何名字（含未知名字、以及根本没有 name 叶的调用）保持今日的检查，因此 `bash`/`shell`/`exec`/`terminal`/`powershell` 携带同样文本仍按调用被拒绝。只读的 `read`/`grep` 指向白名单文件或命中受守护形状同样被放行：读不能改变通道，文件字节仍留在下方排除集中（出站强制脱敏，入站绝不还原）。
+- **提及不等于调用，判定是位置性的。** 在行动型工具内部，受守护 token 只有在**拥有其 shell 段的命令**（即 token **之前**的位置）不是枚举的**提及载体**命令、且该 token 不位于内容型 here-document 主体内时才算数。载体名单是 `pkg/proxy` 的 **`MutationChannelMentionCarrierCommands()`**（冻结、无配置键）：检索与流工具（`grep`、`rg`、`ag`、`ack`）、编辑与打印（`sed`、`awk`、`echo`、`printf`、`cat`、`head`、`tail`、`less`、`more`、`man`）、列目录（`ls`、`find`、`locate`）、文本工具（`wc`、`sort`、`uniq`、`cut`、`tr`）、`xargs`，以及 `git log|show|commit|grep|diff|blame` 子命令。因此 `grep`/`rg` 检索 CLI 形式、`cat`/`head`/`tail`/`sed`/`awk` 打印含该形式的文件或模式、`echo`/`printf` 引用它、`git commit -m` 消息点名它、`git log --grep` 都放行；真正的调用——包括 `sh -c "…"`、反引号与 `$()`——仍被拒绝。here-document 主体是内容，除非该 here-document 被喂给 shell 或解释器（那样保持检查）。控制端口类同理：环回 host:port 出现处不得是提及，因此文本中被引用的 URL 或控制路径不被拒绝，而真实的 `curl`/请求行仍会。
+- **内容型文件工具只保留 file-write 类。** `function.name` 位于冻结 **`MutationChannelContentTools()`** 名单（`write`、`edit`、`multiedit`、`apply_patch`、`notebook_edit`）的工具调用，其**内容**对 CLI 类与控制端口类按提及处理——文档、测试或 fixture 可以自由引用 CLI 形式与控制路径——而 file-write 类保持**严格**：用这类工具写**被列出的文件本身**仍被拒绝（其 target-path 参数就是写入目标）。file-write 类本身只在写入形式（重定向，或 `tee`/`cp`/`mv`/`dd`/`Set-Content`/open-for-write 等写命令）与所列文件在**同一 shell 段内位置关联**时才匹配，因此裸路径提及绝不匹配。
 - 守护由 `self_protection.enabled` 与 `self_protection.modes` 门控；`enabled: false` 是显式退出。
 
 **排除集。** 两个值在**出站方向、检测器运行之前**被强制脱敏（因此白名单无法豁免它们），且**绝不在入站方向被还原**：
@@ -142,6 +144,10 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 **检测器精度豁免**
 
 16. **`high_entropy` 的结构化豁免是跳过，不是判定。** 符合被豁免语法（服务商 id `call_…`、`toolu_…`、`chatcmpl-…`、`msg_…`、`resp_…`；请求/追踪/任务 id `req_…`、`trace_…`、`span_…`、`run_…`、`job_…`、`build_…`；前缀哈希 / SRI 值；data-URI base64 载荷；载荷类键的字符串值；长度 ≥ 128 字节的 base64 字母表运行；含长哈希的绝对或相对路径）的密钥不会被脱敏。若引擎已知该密钥，出站复核仍会拒绝该请求（403、上游零字节；`StructuralIdentifierContains` 覆盖全部被豁免类别）；该形态下引擎**未知**的密钥即记录在案的残余风险。语法在 `KnownStructuralIdentifierExemptions()` 中枚举。`high_entropy` 对纯 hex 的排除未变（第 13 条）。
+
+**提及与调用的区分精度**
+
+17. **藏在提及载体参数里的真实调用不被检查，且豁免信任位置。** 提及规则（「守护做什么」第二条）把由枚举提及载体命令拥有的受守护 token 当作提及，因此真实调用若作为该命令的参数出现——例如 `echo "<CLI 形式>" | sh`、`xargs`，或 `find -exec` 包着它——不会被拒绝。这是经提及豁免触达的「间接执行」类（第 2 条），不是新增的变更通路：白名单仍只能由人类操作者经已鉴权控制面变更，而 control token 强制脱敏、白名单文件排除集与出站复核都独立于本守卫。拥有词不属于任何枚举载体的裸散文提及仍被检查（fail-closed）。内容型文件工具名单是同一种信任：它按 `function.name` 判定，因此把行动工具命名为内容型工具的 harness 会绕过 CLI/控制端口类，而 file-write 类与各独立兜底不变。
 
 ## ⚠️ 已知限制
 

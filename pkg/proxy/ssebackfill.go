@@ -47,6 +47,12 @@ type pathState struct {
 	guardDecided bool
 	guardHit     bool
 	guardAccum   []byte
+	// guardContentOnly marks a path armed for a content-bearing file tool (see
+	// mutationChannelContentTools): its content is a mention for the CLI and
+	// control-port classes, so only the reduced content-tool table may decide
+	// it. It is set when the tool call's function name is known, before or after
+	// the path armed.
+	guardContentOnly bool
 	// guardClass is the channel class a match decided ("" when the refusal came
 	// from a fail-closed path), so releasePath can build the same structured
 	// refusal envelope the buffered path delivers.
@@ -110,11 +116,22 @@ type sseBackfiller struct {
 	// concatenation logic. Nil leaves that shape unarmed; see
 	// setToolCallGuardEncoded.
 	guardDetectEncoded func(content []byte) (class string, matched bool)
+	// guardDetectContent and guardDetectEncodedContent are the reduced
+	// content-tool classifiers (see setToolCallGuardContent): a content-bearing
+	// file tool's content is a mention for the CLI/control-port classes, so only
+	// the file-write target-path pattern may decide it. Nil falls back to the
+	// full detector, the fail-closed direction.
+	guardDetectContent        func(text string) (class string, matched bool)
+	guardDetectEncodedContent func(content []byte) (class string, matched bool)
 	// carrierToolPrefixes records the tool-call path prefixes (…/function/) of
 	// tool calls whose streamed function name is a non-action carrier name (see
 	// carriertools.go). Their arguments paths are exempt from the guard; a nil
 	// map exempts nothing and is the pre-exemption behaviour.
 	carrierToolPrefixes map[string]struct{}
+	// contentToolPrefixes records the same prefixes for content-bearing file
+	// tools (see mutationChannelContentTools). Their arguments paths stay armed
+	// but are decided by the reduced content-tool table.
+	contentToolPrefixes map[string]struct{}
 }
 
 // newSSEBackfiller returns a backfiller writing rewritten SSE bytes to dst.
@@ -317,7 +334,7 @@ func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) er
 	}
 	n := min(len(content), SSEGuardCap)
 	p.guardAccum = append(p.guardAccum[:0], content[:n]...)
-	if class, matched := b.guardDetectEncoded(content); matched {
+	if class, matched := b.guardDetectorForEncoded(p)(content); matched {
 		p.guardDecided, p.guardHit = true, true
 		p.guardClass = class
 		b.noteGuardRefusal(class, sseGuardReasonMatch)
@@ -334,7 +351,13 @@ func (b *sseBackfiller) feedGuardEncoded(key string, content []byte, seq int) er
 // the single point where the changed flag is decided: out != token, never
 // "replace was called".
 func (b *sseBackfiller) newPathState(key string, kind pathKind) *pathState {
-	p := &pathState{key: key, kind: kind, lastSeq: -1, guardArmed: b.guardArms(kind, key)}
+	p := &pathState{
+		key:              key,
+		kind:             kind,
+		lastSeq:          -1,
+		guardArmed:       b.guardArms(kind, key),
+		guardContentOnly: b.contentToolCall(key),
+	}
 	p.w = protocol.NewBackfillWriter(p, b.maxLen, func(tok string) string {
 		out := b.replace(tok)
 		if out != tok {

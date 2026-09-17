@@ -80,15 +80,22 @@ func (b *sseBackfiller) guardArms(kind pathKind, key string) bool {
 	return b.guardDetect != nil && kind == kindJSON && isMutationChannelArgumentsPath(key) && !b.carrierToolCall(key)
 }
 
-// noteCarrierToolName records one streamed function-name leaf when it carries a
-// carrier tool name, and disarms the same tool call's arguments path if it was
+// noteCarrierToolName records one streamed function-name leaf. A carrier name
+// exempts the same tool call's arguments path entirely, disarming it if it was
 // already armed without a decision — a provider that streams arguments before
-// the name must not leave the call armed once the name is known. A path that
-// already matched stays refused: the decision was made on the fragments the
-// client had streamed, and only the name-before-arguments order the OpenAI
-// shape uses guarantees the exemption can be applied in time.
+// the name must not leave the call armed once the name is known. A content-
+// bearing file tool name instead switches the path to the reduced content-tool
+// table; a path that already matched stays refused, because the decision was
+// made on the fragments the client had streamed.
 func (b *sseBackfiller) noteCarrierToolName(path, name string) {
-	if b == nil || b.guardDetect == nil || !isMutationChannelFunctionNamePath(path) || !mutationChannelCarrierToolName(name) {
+	if b == nil || b.guardDetect == nil || !isMutationChannelFunctionNamePath(path) {
+		return
+	}
+	if mutationChannelContentToolName(name) {
+		b.noteContentToolName(path)
+		return
+	}
+	if !mutationChannelCarrierToolName(name) {
 		return
 	}
 	prefix := mutationChannelFunctionNamePrefix(path)
@@ -113,6 +120,23 @@ func (b *sseBackfiller) noteCarrierToolName(path, name string) {
 	}
 }
 
+// noteContentToolName records a streamed content-bearing file tool name and
+// switches the same tool call's arguments path (if it is armed) to the reduced
+// content-tool table. A path that already decided a hit stays refused.
+func (b *sseBackfiller) noteContentToolName(path string) {
+	prefix := mutationChannelFunctionNamePrefix(path)
+	if prefix == "" {
+		return
+	}
+	if b.contentToolPrefixes == nil {
+		b.contentToolPrefixes = make(map[string]struct{}, 2)
+	}
+	b.contentToolPrefixes[prefix] = struct{}{}
+	if p := b.paths[prefix+mutationChannelArgumentsField]; p != nil {
+		p.guardContentOnly = true
+	}
+}
+
 // carrierToolCall reports whether a carrier function name was already seen for
 // the tool call owning an arguments path. Callers must pass an arguments path.
 func (b *sseBackfiller) carrierToolCall(argumentsPath string) bool {
@@ -120,6 +144,17 @@ func (b *sseBackfiller) carrierToolCall(argumentsPath string) bool {
 		return false
 	}
 	_, ok := b.carrierToolPrefixes[mutationChannelArgumentsPrefix(argumentsPath)]
+	return ok
+}
+
+// contentToolCall reports whether a content-bearing file tool name was already
+// seen for the tool call owning an arguments path. Callers must pass an
+// arguments path.
+func (b *sseBackfiller) contentToolCall(argumentsPath string) bool {
+	if b == nil || len(b.contentToolPrefixes) == 0 || !isMutationChannelArgumentsPath(argumentsPath) {
+		return false
+	}
+	_, ok := b.contentToolPrefixes[mutationChannelArgumentsPrefix(argumentsPath)]
 	return ok
 }
 
@@ -134,6 +169,40 @@ func (b *sseBackfiller) setToolCallGuardEncoded(detect func(content []byte) (cla
 		return
 	}
 	b.guardDetectEncoded = detect
+}
+
+// setToolCallGuardContent installs the reduced content-tool classifiers: the
+// text matcher a content-bearing file tool's accumulated arguments are decided
+// with, and the encoded variant for the whole-valid-JSON shape. The pipeline
+// passes DetectMutationChannelContentTool and matchEncodedArgumentsForTool with
+// contentTool set, so a streamed document write that merely mentions the CLI
+// form or the control path is not refused while a write to the listed file still
+// is. A nil detect leaves content paths armed under the full detector, the
+// fail-closed direction.
+func (b *sseBackfiller) setToolCallGuardContent(detect func(text string) (class string, matched bool), detectEncoded func(content []byte) (class string, matched bool)) {
+	if b == nil {
+		return
+	}
+	b.guardDetectContent = detect
+	b.guardDetectEncodedContent = detectEncoded
+}
+
+// guardDetectorFor returns the text classifier a path must be decided with: the
+// reduced content-tool matcher for a content-bearing file tool, the full matcher
+// otherwise (and whenever the reduced one was not installed).
+func (b *sseBackfiller) guardDetectorFor(p *pathState) func(text string) (class string, matched bool) {
+	if p.guardContentOnly && b.guardDetectContent != nil {
+		return b.guardDetectContent
+	}
+	return b.guardDetect
+}
+
+// guardDetectorForEncoded is guardDetectorFor for the whole-valid-JSON shape.
+func (b *sseBackfiller) guardDetectorForEncoded(p *pathState) func(content []byte) (class string, matched bool) {
+	if p.guardContentOnly && b.guardDetectEncodedContent != nil {
+		return b.guardDetectEncodedContent
+	}
+	return b.guardDetectEncoded
 }
 
 // guardReleasable reports whether the event-boundary release may decide this
@@ -181,7 +250,7 @@ func (b *sseBackfiller) guardConsume(p *pathState, chunk []byte) bool {
 			p.guardAccum = append(p.guardAccum, chunk...)
 		}
 	}
-	if class, matched := b.guardDetect(string(p.guardAccum)); matched {
+	if class, matched := b.guardDetectorFor(p)(string(p.guardAccum)); matched {
 		p.guardDecided, p.guardHit = true, true
 		p.guardClass = class
 		b.noteGuardRefusal(class, sseGuardReasonMatch)
