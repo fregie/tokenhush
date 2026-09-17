@@ -197,7 +197,7 @@ func (b *sseBackfiller) Flush() error {
 			b.err = err
 			return err
 		}
-		b.releasePath(p)
+		b.releasePathAtStreamEnd(p)
 	}
 	if err := b.drain(); err != nil {
 		b.err = err
@@ -399,16 +399,19 @@ func (b *sseBackfiller) afterEvent() error {
 // contributing event keeps its original bytes.
 func (b *sseBackfiller) releasePath(p *pathState) {
 	// W6.4: a guarded path is written back with the refusal notice unless the
-	// guard decided it clean. A path released without a decision — forceFlush
-	// or stream end — is refused here, fail-closed, and counted. The refusal is
-	// expressed as a merged-content edit, never as a Write error, so the stream
-	// keeps flowing; giving the last contributing event the notice and every
-	// earlier one an empty string keeps the client's delta concatenation exact.
-	if p.guardArmed && (!p.guardDecided || p.guardHit) {
-		if !p.guardDecided {
-			p.guardDecided, p.guardHit = true, true
-			b.noteGuardRefusal("", sseGuardReasonUndecided)
-		}
+	// guard decided it clean. A path released without a decision — forceFlush —
+	// is classified here, then refused fail-closed when it does not match: a
+	// mid-stream release can still receive the fragment that makes a command
+	// match, so it must never be drained as original bytes. The stream-end
+	// release (releasePathAtStreamEnd) decides on the complete accumulation
+	// instead. The refusal is expressed as a merged-content edit, never as a
+	// Write error, so the stream keeps flowing; giving the last contributing
+	// event the notice and every earlier one an empty string keeps the client's
+	// delta concatenation exact.
+	if p.guardArmed && !p.guardDecided {
+		b.decideUndecided(p, true)
+	}
+	if p.guardArmed && p.guardHit {
 		p.changed = true
 		p.merged.Reset()
 		p.merged.Write(mutationChannelRefusalArguments(p.guardClass))
@@ -431,6 +434,39 @@ func (b *sseBackfiller) releasePath(p *pathState) {
 	p.run = p.run[:0]
 	p.merged.Reset()
 	p.changed = false
+}
+
+// releasePathAtStreamEnd releases an active path at the end of the stream. The
+// accumulation is complete here, so an undecided guard path is decided by
+// running the detector over the whole of it: a match refuses with its class, and
+// a non-match releases the original bytes. This is what stops a complete, legal
+// tool call whose last arguments fragment arrived in the final event (the live
+// daily-ops false positive) from being refused with an empty channel.
+func (b *sseBackfiller) releasePathAtStreamEnd(p *pathState) {
+	if p.guardArmed && !p.guardDecided {
+		b.decideUndecided(p, false)
+	}
+	b.releasePath(p)
+}
+
+// decideUndecided resolves an armed path that reached release without a guard
+// decision. failClosed selects the non-matching outcome: true refuses with an
+// empty channel (a mid-stream forceFlush, where more fragments may still
+// arrive), false releases the bytes (stream end, where the accumulation is
+// complete).
+func (b *sseBackfiller) decideUndecided(p *pathState, failClosed bool) {
+	class, matched := b.guardMatch(p)
+	p.guardDecided = true
+	switch {
+	case matched:
+		p.guardHit, p.guardClass = true, class
+		b.noteGuardRefusal(class, sseGuardReasonMatch)
+	case failClosed:
+		p.guardHit = true
+		b.noteGuardRefusal("", sseGuardReasonUndecided)
+	default:
+		p.guardHit = false
+	}
 }
 
 // setEdit records the final decoded content for one held event's path.

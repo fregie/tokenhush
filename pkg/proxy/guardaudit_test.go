@@ -10,6 +10,7 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -192,13 +193,23 @@ func TestMutationChannelGuardAudit(t *testing.T) {
 		w65AssertRow(t, rows[0], auditSurfaceStream, auditChannelUnmatched, sseGuardReasonCap, 1)
 	})
 
-	t.Run("undecided_release_records_a_fail_closed_row", func(t *testing.T) {
+	t.Run("force_flushed_undecided_release_records_a_fail_closed_row", func(t *testing.T) {
 		sink := &w65Sink{}
 		pipe := w65Pipeline(t, sink)
 		w, _ := w14SSEWriter(t, pipe)
 
-		// No closing event: the stream ends while the guard is undecided.
-		input := w64ArgumentsStream(t, []string{`{"path":"/tmp/`, `report.txt"}`})
+		// A non-arguments window that never closes keeps the stream held while
+		// the guarded arguments path accumulates a tiny unmatched prefix. The
+		// event count trips the holdback on the last event, so forceFlush
+		// releases the still-undecided guard path mid-stream; that release stays
+		// fail-closed because more fragments may yet arrive.
+		content := strings.Repeat("C", 8<<10) + "_"
+		event := fmt.Sprintf(`data: {"choices":[{"index":0,"delta":{"content":%q,"tool_calls":[{"index":0,"function":{"arguments":"A"}}]}}]}`+"\n\n", content)
+		count := sseBackfillMaxHoldbackBytes/len(event) + 1
+		input := []byte(strings.Repeat(event, count))
+		if len(input) <= sseBackfillMaxHoldbackBytes {
+			t.Fatalf("fixture is %d bytes, not above the %d-byte holdback", len(input), sseBackfillMaxHoldbackBytes)
+		}
 		if _, err := w.backfill.Write(input); err != nil {
 			t.Fatalf("Write: %v", err)
 		}
@@ -217,6 +228,35 @@ func TestMutationChannelGuardAudit(t *testing.T) {
 			t.Fatalf("audit rows = %d (%+v), want exactly 1", len(rows), rows)
 		}
 		w65AssertRow(t, rows[0], auditSurfaceStream, auditChannelUnmatched, sseGuardReasonUndecided, 1)
+	})
+
+	t.Run("stream_end_match_records_a_matched_row", func(t *testing.T) {
+		sink := &w65Sink{}
+		pipe := w65Pipeline(t, sink)
+		w, _ := w14SSEWriter(t, pipe)
+
+		// No closing event: the stream ends on a real invocation. The complete
+		// accumulation matches, so the row carries the CLI class and the match
+		// reason, never an empty channel.
+		input := w64ArgumentsStream(t, []string{"tokenhush allow", "list add evil.example"})
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+
+		if got := pipe.StreamGuardRefusals(); got != 1 {
+			t.Fatalf("StreamGuardRefusals = %d, want 1", got)
+		}
+		if got := pipe.StreamGuardFailClosed(); got != 0 {
+			t.Fatalf("StreamGuardFailClosed = %d for a pattern match, want 0", got)
+		}
+		rows := sink.records()
+		if len(rows) != 1 {
+			t.Fatalf("audit rows = %d (%+v), want exactly 1", len(rows), rows)
+		}
+		w65AssertRow(t, rows[0], auditSurfaceStream, MutationChannelCLI, sseGuardReasonMatch, 1)
 	})
 
 	t.Run("no_sink_and_no_refusal_record_nothing", func(t *testing.T) {

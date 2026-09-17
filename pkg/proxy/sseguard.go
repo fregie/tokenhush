@@ -205,6 +205,19 @@ func (b *sseBackfiller) guardDetectorForEncoded(p *pathState) func(content []byt
 	return b.guardDetectEncoded
 }
 
+// guardMatch decides the current accumulation: once it is syntactically complete
+// JSON the encoded matcher runs (it walks the nested leaves, so a command
+// written into a JSON string value is seen), and the text matcher runs while the
+// accumulation is still a fragment. A streamed arguments value can assemble into
+// valid JSON across events, and the text matcher deliberately does not treat a
+// raw JSON document as an invocation (see mentioninvocation.go).
+func (b *sseBackfiller) guardMatch(p *pathState) (class string, matched bool) {
+	if json.Valid(p.guardAccum) && b.guardDetectorForEncoded(p) != nil {
+		return b.guardDetectorForEncoded(p)(p.guardAccum)
+	}
+	return b.guardDetectorFor(p)(string(p.guardAccum))
+}
+
 // guardReleasable reports whether the event-boundary release may decide this
 // path. A guarded path is held until it is decided clean: releasing a hit path
 // here would emit its later original fragments before a refusal, and releasing
@@ -250,7 +263,7 @@ func (b *sseBackfiller) guardConsume(p *pathState, chunk []byte) bool {
 			p.guardAccum = append(p.guardAccum, chunk...)
 		}
 	}
-	if class, matched := b.guardDetectorFor(p)(string(p.guardAccum)); matched {
+	if class, matched := b.guardMatch(p); matched {
 		p.guardDecided, p.guardHit = true, true
 		p.guardClass = class
 		b.noteGuardRefusal(class, sseGuardReasonMatch)

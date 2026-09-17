@@ -261,9 +261,10 @@ var mutationChannelCLIPatterns = []mutationChannelPattern{
 
 // matchCLIAllowlistCommand reports whether text contains the tokenhush or
 // tokenhush-pro executable followed by the allowlist subcommand at a position
-// that executes it. An occurrence owned by a mention-carrier command (a search
-// pattern, a quoted or printed string) or inside a content here-document body is
-// a mention and does not match.
+// that executes it. The occurrence must be the command word of its shell segment
+// (see mutationChannelTokenIsCommandWord): an occurrence that is an argument of
+// another command, inside a normal quoted string, or inside a content
+// here-document body is a mention and does not match.
 func matchCLIAllowlistCommand(t mutationChannelText, _ MutationChannelContext) bool {
 	text := t.raw
 	for _, name := range mutationChannelCommandNames {
@@ -276,7 +277,7 @@ func matchCLIAllowlistCommand(t mutationChannelText, _ MutationChannelContext) b
 			if j > 0 && !isCommandStartBoundary(text[j-1]) {
 				continue
 			}
-			if t.tokenIsMention(j) {
+			if t.tokenIsMention(j) || !mutationChannelTokenIsCommandWord(text, j) {
 				continue
 			}
 			end := j + len(name)
@@ -413,7 +414,9 @@ func matchControlPortHostPort(t mutationChannelText, ctx MutationChannelContext)
 // control endpoint path (`DELETE /allowlist HTTP/1.1`). The control path is the
 // evidence: the allowlist endpoint exists only on the control plane, so a write
 // verb aimed at it is a control-channel attempt even when no host:port is
-// spelled (the Host header may carry the port separately, or be omitted).
+// spelled (the Host header may carry the port separately, or be omitted). The
+// verb must be the command word of its segment; a verb inside a quoted argument
+// (echo "DELETE /allowlist") is a mention.
 func matchControlPortRequestLine(t mutationChannelText, _ MutationChannelContext) bool {
 	text := t.raw
 	for _, verb := range mutationChannelRequestVerbs {
@@ -426,10 +429,10 @@ func matchControlPortRequestLine(t mutationChannelText, _ MutationChannelContext
 			if j > 0 && !isCommandStartBoundary(text[j-1]) {
 				continue
 			}
-			if t.tokenIsMention(j) {
+			if end := j + len(verb); end < len(text) && !isCommandTerminator(text[end]) {
 				continue
 			}
-			if end := j + len(verb); end < len(text) && !isCommandTerminator(text[end]) {
+			if t.tokenIsMention(j) || !mutationChannelTokenIsCommandWord(text, j) {
 				continue
 			}
 			if hasControlPathAt(text, skipCommandSpace(text, j+len(verb))) {
@@ -540,11 +543,13 @@ func matchFileWriteTargetPath(text mutationChannelText, ctx MutationChannelConte
 }
 
 // hasWriteSignal reports whether text carries a write-ish signal from the
-// enumerated list: a shell redirection, a file-writing command token, a
-// distinctive interpreter/API marker, an interpreter open-for-write spelling,
-// a download-to-file flag or an in-place edit.
+// enumerated list: a top-level shell redirection (a `>`/`>>` outside any normal
+// quote), a file-writing command token, a distinctive interpreter/API marker, an
+// interpreter open-for-write spelling, a download-to-file flag or an in-place
+// edit. A `>` inside a normal quoted argument (a grep/sed pattern, a document
+// body) is not a write.
 func hasWriteSignal(text string) bool {
-	if strings.IndexByte(text, '>') >= 0 {
+	if mutationChannelHasTopLevelRedirection(text) {
 		return true
 	}
 	for _, token := range mutationChannelWriteTokens {
@@ -564,6 +569,48 @@ func hasWriteSignal(text string) bool {
 		return true
 	}
 	return hasSedInPlace(text)
+}
+
+// mutationChannelHasTopLevelRedirection reports a `>` or `>>` operator outside a
+// normal quoted string. A shell command string (`sh -c "`) is transparent: its
+// interior is code, so a redirection inside one still counts.
+func mutationChannelHasTopLevelRedirection(text string) bool {
+	var inNormal, inCode bool
+	var normalQuote, codeQuote byte
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if inCode {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == codeQuote {
+				inCode = false
+			}
+			continue
+		}
+		if inNormal {
+			if c == '\\' {
+				i++
+				continue
+			}
+			if c == normalQuote {
+				inNormal = false
+			}
+			continue
+		}
+		switch c {
+		case '"', '\'':
+			if mutationChannelCommandStringQuote(text, i) {
+				inCode, codeQuote = true, c
+			} else {
+				inNormal, normalQuote = true, c
+			}
+		case '>':
+			return true
+		}
+	}
+	return false
 }
 
 // mutationChannelWriteTokens are standalone command tokens that create,
@@ -736,19 +783,55 @@ func containsCommandToken(text, token string) bool {
 }
 
 // hasHTTPClientSignal reports whether text carries an HTTP client or verb
-// signal, putting a nearby host:port occurrence in an HTTP request context.
+// signal that can put a loopback host:port in an HTTP request context. The
+// signal must be the command word of its shell segment (an HTTP client or a
+// request verb that is an argument of another command is a mention), except for
+// a URL scheme, which is evidence by construction.
 func hasHTTPClientSignal(text string) bool {
 	for _, signal := range mutationChannelHTTPSignals {
-		if indexFoldFrom(text, signal, 0) >= 0 {
-			return true
+		if signal == "http://" || signal == "https://" {
+			if indexFoldFrom(text, signal, 0) >= 0 {
+				return true
+			}
+			continue
+		}
+		for i := 0; ; {
+			j := indexFoldFrom(text, signal, i)
+			if j < 0 {
+				break
+			}
+			i = j + 1
+			if mutationChannelCommandWordTokenAt(text, j, signal) {
+				return true
+			}
 		}
 	}
 	for _, verb := range mutationChannelHTTPVerbs {
-		if containsCommandToken(text, verb) {
-			return true
+		for i := 0; ; {
+			j := indexFoldFrom(text, verb, i)
+			if j < 0 {
+				break
+			}
+			i = j + 1
+			if mutationChannelCommandWordTokenAt(text, j, verb) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// mutationChannelCommandWordTokenAt reports whether token occurs at index j as a
+// complete shell token (a command-start boundary before it and a command
+// terminator after it) that is the command word of its segment.
+func mutationChannelCommandWordTokenAt(text string, j int, token string) bool {
+	if j > 0 && !isCommandStartBoundary(text[j-1]) {
+		return false
+	}
+	if end := j + len(token); end < len(text) && !isCommandTerminator(text[end]) {
+		return false
+	}
+	return mutationChannelTokenIsCommandWord(text, j)
 }
 
 // controlPathIsEvidence reports whether a control endpoint path is control

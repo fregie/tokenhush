@@ -251,12 +251,19 @@ func TestMutationChannelPatterns(t *testing.T) {
 		if visited != 1 {
 			t.Fatalf("the '#'-nested command leaf was not visited exactly once: %+v", walked)
 		}
-		// The encoded parent leaf (the whole arguments string) matches too,
-		// because its decoded content still carries the command shape.
+		// The encoded parent leaf (the whole arguments string) is a MENTION at
+		// the raw text level: the guarded token sits inside a JSON string value,
+		// not at a shell command word. The production path analyses its nested
+		// leaves, and the pipeline's encoded matcher walks them and reports the
+		// CLI match.
 		for _, leaf := range walked {
 			if leaf.Path == "/tools/0/arguments" {
-				if class, matched := ClassifyMutationChannel(leaf.Content, ctx); !matched || class != MutationChannelCLI {
-					t.Fatalf("encoded parent %q = (%q, %v), want CLI match", leaf.Path, class, matched)
+				if class, matched := ClassifyMutationChannel(leaf.Content, ctx); matched {
+					t.Fatalf("raw encoded parent %q matched class %q, want a mention", leaf.Path, class)
+				}
+				pipe := w62Pipeline(t, true, []string{MutationChannelCLI})
+				if class, matched := pipe.matchEncodedArguments([]byte(leaf.Content)); !matched || class != MutationChannelCLI {
+					t.Fatalf("encoded matcher %q = (%q, %v), want CLI match", leaf.Path, class, matched)
 				}
 			}
 		}

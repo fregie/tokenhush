@@ -20,7 +20,9 @@ package proxy
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -267,16 +269,22 @@ func TestContentToolGuardSSE(t *testing.T) {
 	})
 }
 
-// TestMentionBareProseRemainsFailClosed pins the documented residual: a bare
-// prose sentence whose owning word is no command at all is not a mention the
-// rule can prove, so it stays inspected (fail closed). Real content — a
-// document body — reaches a content-bearing tool or a non-interpreter heredoc,
-// which the rule does exempt.
-func TestMentionBareProseRemainsFailClosed(t *testing.T) {
+// TestMentionBareProseIsAMention pins the allow side of the execution-boundary
+// rule: a guarded token that is not the command word of its shell segment is an
+// argument of another command, hence a mention, even when the owning word is not
+// one of the enumerated mention carriers. Prose cannot execute the guarded
+// shape; a real invocation needs a segment start (`;`, a newline, a wrapper),
+// which the refuse cases cover. This supersedes the earlier fail-closed
+// direction for bare prose (the user's goal is that daily operations succeed).
+func TestMentionBareProseIsAMention(t *testing.T) {
 	ctx := w62Context()
 	prose := `The CLI form tokenhush allowlist add is what the guard refuses.`
-	if class, matched := ClassifyMutationChannel(prose, ctx); !matched || class != MutationChannelCLI {
-		t.Fatalf("bare prose = (%q, %v), want (%q, true): fail-closed direction", class, matched, MutationChannelCLI)
+	if class, matched := ClassifyMutationChannel(prose, ctx); matched {
+		t.Fatalf("bare prose matched class %q, want a mention: %q", class, prose)
+	}
+	invocation := `then; tokenhush allowlist add entry-value`
+	if class, matched := ClassifyMutationChannel(invocation, ctx); !matched || class != MutationChannelCLI {
+		t.Fatalf("a real invocation after `;` = (%q, %v), want (%q, true): %q", class, matched, MutationChannelCLI, invocation)
 	}
 }
 
@@ -318,4 +326,176 @@ func TestMentionEncodedArgumentsAreMentionOnly(t *testing.T) {
 		t.Fatalf("the invocation survived: %s", out)
 	}
 	w63WantArgs(t, out, mentionArgs, w63Refusal(MutationChannelCLI))
+}
+
+// mentionBisectProbe is one entry of the execution-boundary bisect table the
+// fix was validated against: the live daily-ops call's commands, plus the real
+// invocations that must stay refused.
+type mentionBisectProbe struct {
+	name    string
+	text    string
+	want    bool // true = must be refused (an invocation)
+	channel string
+}
+
+// mentionBisectProbes substitutes the live probe's placeholders with the
+// concrete binary, subcommand and checkout path.
+func mentionBisectProbes() []mentionBisectProbe {
+	const bin = "tokenhush-pro"
+	const sub = "allowlist"
+	const path = "/home/fregie/software/tokenhush-pro"
+	return []mentionBisectProbe{
+		{"grep_pattern", fmt.Sprintf(`grep -rn "%s %s" %s/docs/`, bin, sub, path), false, ""},
+		{"git_log_grep", fmt.Sprintf(`git -C %s log --oneline --grep="%s %s"`, path, bin, sub), false, ""},
+		{"printf_write", fmt.Sprintf("printf 'note: %s %s add x\\n' > /tmp/probe.md", bin, sub), false, ""},
+		{"sed_prints", `sed -n '1p' /tmp/probe.md`, false, ""},
+		{"cat_reads", `cat /tmp/probe.md`, false, ""},
+		{"echo_quotes", fmt.Sprintf(`echo "%s %s add x"`, bin, sub), false, ""},
+		{"cli_line_start", fmt.Sprintf(`%s %s list`, bin, sub), true, MutationChannelCLI},
+		{"cli_after_semicolon", fmt.Sprintf(`true; %s %s list`, bin, sub), true, MutationChannelCLI},
+		{"cli_sh_c", fmt.Sprintf(`sh -c "%s %s list"`, bin, sub), true, MutationChannelCLI},
+		{"argument_of_another_command", fmt.Sprintf(`frobnicate %s %s add x`, bin, sub), false, ""},
+		{"separator_inside_a_quoted_pattern", fmt.Sprintf(`grep -rn "x; %s %s" docs/`, bin, sub), false, ""},
+		{"sudo_wrapper", fmt.Sprintf(`sudo %s %s list`, bin, sub), true, MutationChannelCLI},
+		{"env_assignment_wrapper", fmt.Sprintf(`env FOO=bar %s %s list`, bin, sub), true, MutationChannelCLI},
+		{"absolute_path", fmt.Sprintf(`/usr/local/bin/%s %s list`, bin, sub), true, MutationChannelCLI},
+	}
+}
+
+// TestMentionExecutionBoundaryBisect is the two-directional acceptance test for
+// the execution-boundary + command-word rule on the exact live probe shapes.
+func TestMentionExecutionBoundaryBisect(t *testing.T) {
+	ctx := w62Context()
+	for _, p := range mentionBisectProbes() {
+		t.Run(p.name, func(t *testing.T) {
+			class, matched := ClassifyMutationChannel(p.text, ctx)
+			if matched != p.want {
+				t.Fatalf("ClassifyMutationChannel(%q) = (%q, %v), want matched=%v", p.text, class, matched, p.want)
+			}
+			if p.want && class != p.channel {
+				t.Fatalf("ClassifyMutationChannel(%q) class = %q, want %q", p.text, class, p.channel)
+			}
+		})
+	}
+}
+
+// mentionDailyOpsCommand is the exact literal the orchestrator's daily-ops
+// `bash` call carried: a grep, a git log --grep, a printf write and a sed read
+// of the same documented CLI form.
+func mentionDailyOpsCommand() string {
+	const bin = "tokenhush-pro"
+	const sub = "allowlist"
+	const path = "/home/fregie/software/tokenhush-pro"
+	return fmt.Sprintf("grep -rn \"%s %s\" %s/docs/\n"+
+		"git -C %s log --oneline --grep=\"%s %s\"\n"+
+		"printf 'note: %s %s add x\\n' > /tmp/probe.md\n"+
+		"sed -n '1p' /tmp/probe.md", bin, sub, path, path, bin, sub, bin, sub)
+}
+
+// TestMentionDailyOpsCallStreamsUnrefused is the exact live regression: the
+// daily-ops call arrives as the last streamed event (no trailing finish event),
+// so the guard must decide on the complete accumulation and release it
+// byte-identically. On the pre-fix code this path refused it with an empty
+// channel (reason undecided), which is what the live gateway reported.
+func TestMentionDailyOpsCallStreamsUnrefused(t *testing.T) {
+	pipe := w7Pipeline(t)
+	t.Run("daily_ops", func(t *testing.T) {
+		w, rec := w14SSEWriter(t, pipe)
+		arguments := fmt.Sprintf(`{"command":%s,"description":"daily ops"}`, strconv.Quote(mentionDailyOpsCommand()))
+		input := w64ArgumentsEvent(t, arguments)
+
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		if got := rec.Body.Bytes(); !bytes.Equal(got, input) {
+			t.Fatalf("the daily-ops call was rewritten:\n got %q\nwant %q", got, input)
+		}
+		if got := pipe.StreamGuardRefusals(); got != 0 {
+			t.Fatalf("StreamGuardRefusals = %d, want 0", got)
+		}
+		if got := pipe.StreamGuardFailClosed(); got != 0 {
+			t.Fatalf("StreamGuardFailClosed = %d, want 0", got)
+		}
+	})
+
+	t.Run("real_invocation_still_refused", func(t *testing.T) {
+		pipe := w7Pipeline(t)
+		w, rec := w14SSEWriter(t, pipe)
+		arguments := `{"command":"tokenhush-pro allowlist list"}`
+		input := w64ArgumentsEvent(t, arguments)
+
+		if _, err := w.backfill.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := w.backfill.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		if got, _ := w64Arguments(t, rec.Body.Bytes()); got != w63Refusal(MutationChannelCLI) {
+			t.Fatalf("assembled arguments = %q, want the cli-command refusal envelope", got)
+		}
+		if got := pipe.StreamGuardRefusals(); got != 1 {
+			t.Fatalf("StreamGuardRefusals = %d, want 1", got)
+		}
+	})
+}
+
+// TestFileWriteMentionVsInvocation pins the file-write class's positional rule:
+// a listed-path mention inside another command's quoted argument is a mention,
+// while a top-level redirect or a write command at a segment start is a write.
+func TestFileWriteMentionVsInvocation(t *testing.T) {
+	ctx := w62Context()
+	for _, text := range []string{
+		`grep -rn 'a > allowlist.json' docs/`,
+		`grep -rn 'allowlist.json' docs/`,
+		`sed -n '/allowlist.json/p' docs/security.md`,
+		`git commit -m "docs: mention allowlist.json"`,
+		`git log --grep='allowlist.json'`,
+		`rg 'allowlist.json' .`,
+		`echo 'allowlist.json is documented'`,
+	} {
+		if class, matched := ClassifyMutationChannel(text, ctx); matched {
+			t.Fatalf("file-write mention matched class %q: %q", class, text)
+		}
+	}
+	for _, text := range []string{
+		`echo '{}' > allowlist.json`,
+		`printf '{}' >> allowlist.json`,
+		`echo '{}' | tee allowlist.json`,
+		`sh -c "echo '{}' > /home/u/.local/share/tokenhush/allowlist.json"`,
+	} {
+		if class, matched := ClassifyMutationChannel(text, ctx); !matched || class != MutationChannelFileWrite {
+			t.Fatalf("file-write invocation = (%q, %v), want (%q, true): %q", class, matched, MutationChannelFileWrite, text)
+		}
+	}
+}
+
+// TestControlPortMentionVsInvocation pins the control-port class's positional
+// rule: a control path or a request verb inside another command's quoted
+// argument is a mention, while an HTTP client at a segment start with a write
+// verb or data flag is the control channel.
+func TestControlPortMentionVsInvocation(t *testing.T) {
+	ctx := w62Context()
+	for _, text := range []string{
+		`grep -rn 'curl -X POST http://127.0.0.1:8787/allowlist -d' docs/`,
+		`echo 'DELETE /allowlist HTTP/1.1'`,
+		`git log --grep='POST http://127.0.0.1:8787/allowlist'`,
+		`printf 'GET http://127.0.0.1:8787/status\n'`,
+	} {
+		if class, matched := ClassifyMutationChannel(text, ctx); matched {
+			t.Fatalf("control-port mention matched class %q: %q", class, text)
+		}
+	}
+	for _, text := range []string{
+		`curl -X POST http://127.0.0.1:8787/allowlist -d '{"entry":"evil"}'`,
+		`curl -X DELETE http://127.0.0.1:8787/allowlist`,
+		`wget -qO- http://[::1]:8787/allowlist`,
+		`DELETE /allowlist HTTP/1.1`,
+	} {
+		if class, matched := ClassifyMutationChannel(text, ctx); !matched || class != MutationChannelControlPort {
+			t.Fatalf("control-port invocation = (%q, %v), want (%q, true): %q", class, matched, MutationChannelControlPort, text)
+		}
+	}
 }

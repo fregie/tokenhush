@@ -475,12 +475,38 @@ func TestSSEToolCallGuard(t *testing.T) {
 		}
 	})
 
-	t.Run("path_released_at_stream_end_without_a_decision_is_refused", func(t *testing.T) {
+	t.Run("complete_value_released_at_stream_end_is_allowed", func(t *testing.T) {
+		// Two legal fragments, no closing event: the stream ends while the guard
+		// is undecided. The accumulation is complete at stream end, so the guard
+		// decides on it and releases it as original bytes. This path used to
+		// refuse the call with an empty channel — the live daily-ops false
+		// positive this regression now pins from the allow side.
 		var dst bytes.Buffer
 		b, refusals := w64GuardBackfiller(t, &dst)
-		// Two legal fragments, no closing event: the stream ends while the
-		// guard is undecided, so the tool call is refused (fail-closed).
-		input := w64ArgumentsStream(t, []string{`{"path":"/tmp/`, `report.txt"}`})
+		fragments := []string{`{"path":"/tmp/`, `report.txt"}`}
+		input := w64ArgumentsStream(t, fragments)
+
+		if _, err := b.Write(input); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+		if err := b.Flush(); err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+		if len(*refusals) != 0 {
+			t.Fatalf("refusals = %d (%+v), want none for a legal complete value", len(*refusals), *refusals)
+		}
+		if got := dst.Bytes(); !bytes.Equal(got, input) {
+			t.Fatalf("a legal stream-end release was rewritten:\n got %q\nwant %q", got, input)
+		}
+	})
+
+	t.Run("matching_value_released_at_stream_end_is_refused_with_its_class", func(t *testing.T) {
+		// The stream ends on a real invocation with no closing event: the
+		// complete accumulation matches, so it is refused with the CLI class
+		// rather than an empty channel.
+		var dst bytes.Buffer
+		b, refusals := w64GuardBackfiller(t, &dst)
+		input := w64ArgumentsStream(t, []string{"tokenhush allow", "list add evil.example"})
 
 		if _, err := b.Write(input); err != nil {
 			t.Fatalf("Write: %v", err)
@@ -491,12 +517,12 @@ func TestSSEToolCallGuard(t *testing.T) {
 		if len(*refusals) != 1 {
 			t.Fatalf("refusals = %d (%+v), want exactly 1", len(*refusals), *refusals)
 		}
-		if got := (*refusals)[0]; got.reason != sseGuardReasonUndecided || got.class != "" {
-			t.Fatalf("refusal = %+v, want reason %q", got, sseGuardReasonUndecided)
+		if got := (*refusals)[0]; got.reason != sseGuardReasonMatch || got.class != MutationChannelCLI {
+			t.Fatalf("refusal = %+v, want reason %q class %q", got, sseGuardReasonMatch, MutationChannelCLI)
 		}
 		args, _ := w64Arguments(t, dst.Bytes())
-		if args != w63Refusal("") {
-			t.Fatalf("assembled arguments = %q, want the fail-closed refusal envelope", args)
+		if args != w63Refusal(MutationChannelCLI) {
+			t.Fatalf("assembled arguments = %q, want the cli-command refusal envelope", args)
 		}
 	})
 
