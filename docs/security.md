@@ -123,7 +123,7 @@ This is the single aggregate list for the hardening work's known boundaries. Non
 **Outbound re-check (encodings)**
 
 9. **Coverage is a fixed decoder enumeration, not a grammar.** Each covered form is one entry in the decoder set of `NormalizeCandidates`; the classes deliberately **not** covered include arbitrary multi-layer custom or non-standard encodings, nesting deeper than `NormalizeMaxRounds` (4), inputs larger than `NormalizeMaxInputBytes` (256 KiB, which are not scanned at all), `od -tu1` output produced without `-v` (where a run of sixteen identical bytes collapses to `*`), a payload that straddles a candidate window above `NormalizeMaxCandidateBytes` (8192), password-protected or encrypted containers, steganographic or lossy transforms, and splits the extractor cannot bound.
-10. **Body-size bound.** The outbound re-check is skipped for a body larger than `egressRecheckMaxBodyBytes` (128 KiB). A body above that bound still egresses, without a re-check; this is a documented boundary, never a pass.
+10. **Body-size bound.** The outbound re-check is skipped for a body larger than `egressRecheckMaxBodyBytes` (256 KiB, the normaliser's own cap `NormalizeMaxInputBytes`, so every body the normaliser could decode is re-checked). A body above that bound still egresses, without a re-check; this is a documented boundary, never a pass.
 11. **Non-JSON request bodies.** A request that is explicitly non-JSON keeps the documented byte-for-byte passthrough and runs no walk, so the outbound re-check does not run for it.
 
 **Key-position scanning**

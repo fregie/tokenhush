@@ -125,7 +125,7 @@ V1 用**确定性、高精度优先的检测器**（已知密钥前缀、高熵�
 **出站复核（编码）**
 
 9. **覆盖是一组固定的解码器枚举，而非语法。** 每一种被覆盖的形态对应 `NormalizeCandidates` 解码器集合中的一项；刻意**不**覆盖的类别包括：任意多层自定义或非标准编码、深于 `NormalizeMaxRounds`（4）的嵌套、大于 `NormalizeMaxInputBytes`（256 KiB，完全不扫描）的输入、`od -tu1` 未加 `-v` 的输出（连续十六个相同字节会折叠为 `*`）、超过 `NormalizeMaxCandidateBytes`（8192）时跨候选窗口切割的 payload、有口令或加密的容器、隐写或有损变换，以及抽取器无法界定的拆分。
-10. **体积上界。** 出站复核对大于 `egressRecheckMaxBodyBytes`（128 KiB）的 body 跳过。超过该上界的 body 仍会出站且不经复核；这是已文档化的边界，绝不是放行。
+10. **体积上界。** 出站复核对大于 `egressRecheckMaxBodyBytes`（256 KiB，即归一化器自身的上界 `NormalizeMaxInputBytes`，故归一化器能解码的 body 都会被复核）的 body 跳过。超过该上界的 body 仍会出站且不经复核；这是已文档化的边界，绝不是放行。
 11. **非 JSON 请求体。** 显式非 JSON 的请求保持文档化的逐字节直通且不运行 walk，因此出站复核不对其运行。
 
 **键位扫描**

@@ -31,6 +31,9 @@ func TestEgressRecheckBodyBound(t *testing.T) {
 		wantBlock bool
 	}{
 		{"below_the_bound_is_checked", len(base), true},
+		// 131200 bytes is the measured leak: the encoded secret reached the
+		// upstream when the bound was half the normaliser's cap.
+		{"above_the_old_half_bound_is_checked", 131200, true},
 		{"at_the_bound_is_checked", egressRecheckMaxBodyBytes, true},
 		{"above_the_bound_is_skipped", egressRecheckMaxBodyBytes + 1, false},
 	}
@@ -77,10 +80,10 @@ func TestEgressRecheckBodyBound(t *testing.T) {
 	}
 }
 
-// TestEgressRecheckBodyBoundValue pins the bound's value and its place between
-// the realistic-body floor and the normaliser's own cap: a smaller bound would
-// silently drop the re-check for realistic traffic, and a larger one could
-// never fire.
+// TestEgressRecheckBodyBoundValue pins the bound's value and its place above
+// the realistic-body floor and at the normaliser's own cap: a smaller bound
+// would silently drop the re-check for realistic traffic, and a larger one
+// could never fire.
 func TestEgressRecheckBodyBoundValue(t *testing.T) {
 	if egressRecheckMaxBodyBytes <= 0 {
 		t.Fatalf("bound = %d, want a positive bound", egressRecheckMaxBodyBytes)
@@ -89,8 +92,8 @@ func TestEgressRecheckBodyBoundValue(t *testing.T) {
 		t.Fatalf("bound = %d exceeds the normaliser's cap %d: the short-circuit could never fire",
 			egressRecheckMaxBodyBytes, redact.NormalizeMaxInputBytes)
 	}
-	if want := redact.NormalizeMaxInputBytes / 2; egressRecheckMaxBodyBytes != want {
-		t.Fatalf("bound = %d, want %d (half the normaliser's cap)", egressRecheckMaxBodyBytes, want)
+	if want := redact.NormalizeMaxInputBytes; egressRecheckMaxBodyBytes != want {
+		t.Fatalf("bound = %d, want %d (the normaliser's own cap)", egressRecheckMaxBodyBytes, want)
 	}
 	const realisticBodyFloorBytes = 64 << 10
 	if egressRecheckMaxBodyBytes < realisticBodyFloorBytes {

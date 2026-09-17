@@ -27,7 +27,7 @@
 # (below-threshold) clean body with a known secret, where the re-check actually
 # normalises and costs tens of milliseconds. That case is printed as an
 # "INFO (not a bound)" line and never asserted: the <15% bound above is
-# satisfied via the large-body short-circuit (the 192 KiB body skips the
+# satisfied via the large-body short-circuit (the 320 KiB body skips the
 # re-check), so the pass must not be misread as "the enabled path is cheap".
 # The final SUMMARY line states exactly that.
 #
@@ -115,7 +115,7 @@ main() {
   check_bound "EgressRecheck/CleanBodyWithSecrets" 15 "known secrets + clean body"
 
   # Informational companion metric; never gates the run. The <15% bound above is
-  # satisfied via the >128 KiB body-size short-circuit, which skips the
+  # satisfied via the >256 KiB body-size short-circuit, which skips the
   # re-check; below the threshold the re-check actually normalises and is
   # materially more expensive. Printing that cost keeps the pass honest.
   local below
@@ -123,7 +123,7 @@ main() {
   log "INFO (not a bound): below-threshold enabled overhead = $below (n=$COUNT)"
 
   log "PASS: both bounds hold"
-  log "SUMMARY: the <15% CleanBodyWithSecrets bound holds via the >128 KiB body-size short-circuit (that body skips the re-check); below the threshold the enabled re-check is materially more expensive (see the INFO line) - the bound does not mean the enabled path is cheap"
+  log "SUMMARY: the <15% CleanBodyWithSecrets bound holds via the >256 KiB body-size short-circuit (that body skips the re-check); below the threshold the enabled re-check is materially more expensive (see the INFO line) - the bound does not mean the enabled path is cheap"
 }
 
 main "$@"

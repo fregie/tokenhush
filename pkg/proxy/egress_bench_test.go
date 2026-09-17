@@ -42,11 +42,12 @@ const (
 	benchTypicalBodyKiB = 4
 
 	// benchLongContextBodyKiB is a realistic long-context request (a coding
-	// agent's context, on the order of 50k tokens) and sits above the size
+	// agent's context, on the order of 80k tokens) and sits above the size
 	// bound, so CleanBodyWithSecrets exercises the oversized-body
-	// short-circuit. pkg/proxy/bench_egress.sh's falsification gate removes
-	// that bound and shows the full pass cost; see egress.go.
-	benchLongContextBodyKiB = 192
+	// short-circuit. It must stay above egressRecheckMaxBodyBytes (256 KiB):
+	// at 192 KiB it stopped being an oversized body when the bound rose to the
+	// normaliser's cap, and the measured delta jumped to +102%. See egress.go.
+	benchLongContextBodyKiB = 320
 )
 
 // benchParagraph is realistic, detector-clean request prose: no credential

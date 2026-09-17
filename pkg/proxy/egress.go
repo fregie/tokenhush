@@ -49,28 +49,31 @@ func (p *Pipeline) EgressBlocks() uint64 {
 var egressRecheckDisabled = false
 
 // egressRecheckMaxBodyBytes bounds the body size the outbound re-check will
-// normalise, in the same spirit as redact.NormalizeMaxInputBytes (the
-// normaliser's own cap, which declines oversized input rather than truncating
-// it): a larger body skips the re-check instead of paying the normalisation
-// pass. The pass costs tens of milliseconds on realistic text — it saturates
-// the normaliser's candidate caps regardless of input size — so it must not
-// run on the oversized tail. Half the normaliser's cap, 128 KiB, sits
-// comfortably above realistic LLM request bodies (typically a few KB to a few
-// tens of KB) while keeping that tail off the hot path: see
+// normalise. It is exactly redact.NormalizeMaxInputBytes, the normaliser's own
+// cap, so the short-circuit coincides with the point past which
+// NormalizeCandidates would decline the input anyway: every body the normaliser
+// could scan is scanned. It was half the cap (128 KiB), which left a 128–256 KiB
+// window where NormalizeCandidates could still have decoded an encoded secret
+// but the re-check returned before calling it — a measured leak (a base64 copy
+// of a known secret in a 131200-byte body reached the upstream). At the full cap
+// the body-size skip and the normaliser's own refusal are the same boundary.
+//
+// The pass costs tens of milliseconds on realistic text — it saturates the
+// normaliser's candidate caps regardless of input size, so raising the bound
+// widens the scanned range without adding a new cost class: see
 // BenchmarkEgressRecheck and pkg/proxy/bench_egress.sh for the measured cost.
 //
-// The bound is what keeps the asserted benchmark deltas small, and it must not
-// be read as "the enabled path is cheap": below the bound, with any known
-// secret, the re-check still pays that tens-of-milliseconds normalisation pass.
-// bench_egress.sh reports the below-threshold cost as an explicitly
-// informational metric (BenchmarkEgressRecheck/CleanSmallBodyWithSecrets),
+// The bound must not be read as "the enabled path is cheap": below the bound,
+// with any known secret, the re-check still pays that tens-of-milliseconds
+// normalisation pass. bench_egress.sh reports the below-threshold cost as an
+// explicitly informational metric (BenchmarkEgressRecheck/CleanSmallBodyWithSecrets),
 // never as a bound. This is a documented gap of the same class as the
 // normaliser's own cap; W6.6 owns the public write-up of it.
 //
 // Zero disables the bound (every non-empty body is normalised). That is the
 // falsification point bench_egress.sh flips to show the bound is load-bearing;
 // production never sets it to zero.
-const egressRecheckMaxBodyBytes = redact.NormalizeMaxInputBytes / 2
+const egressRecheckMaxBodyBytes = redact.NormalizeMaxInputBytes
 
 // egressRecheck runs the W2.3 outbound re-check over body, the bytes the
 // request transform is about to return, and returns nil when nothing was found.
