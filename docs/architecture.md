@@ -1,5 +1,7 @@
 # tokenhush architecture
 
+**English** | [中文](architecture.zh-CN.md)
+
 tokenhush v0.5.0 is a from-scratch rewrite of the tokenhush core. It keeps the
 security invariants and the supply-chain wire format, and it drops everything
 the evidence showed to be vestigial or duplicated. This document is the

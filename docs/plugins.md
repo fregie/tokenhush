@@ -1,5 +1,7 @@
 # tokenhush plugins
 
+**English** | [中文](plugins.zh-CN.md)
+
 tokenhush has exactly one extension point: the `Rule` interface in
 `pkg/filter`. A detector is not a special kind of object — the six built-in
 detectors, the rules in a signed remote pack, and rules a third party compiles

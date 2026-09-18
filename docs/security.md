@@ -1,5 +1,7 @@
 # tokenhush security model
 
+**English** | [中文](security.zh-CN.md)
+
 This document is the operator-facing security contract of the v0.5.0 rewrite.
 It lists the eight invariants the core keeps and the seven residual risks it does
 not hide, states what is enforced where, and names the test that pins each
