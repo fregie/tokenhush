@@ -14,10 +14,10 @@
 # Windows uses install.ps1:
 #   irm https://raw.githubusercontent.com/fregie/tokenhush/main/install.ps1 | iex
 #
-# Until the v0.5.0 release wave ships, the newest published release is the
-# older v0.4 line. Installing the current v0.5 line therefore falls back to
+# A published release older than the minimum line is never installed by
+# default; the script falls back to
 # `go install github.com/fregie/tokenhush/cmd/tokenhush@main` when a Go 1.25+
-# toolchain is on PATH; an explicitly requested version is always installed as
+# toolchain is on PATH. An explicitly requested version is always installed as
 # given.
 #
 # Exit codes: 0 success, 1 runtime failure, 2 usage error.

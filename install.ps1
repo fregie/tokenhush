@@ -17,10 +17,10 @@
 # The archive name is frozen: tokenhush_<version>_windows_<arch>.zip. It must
 # stay in lockstep with .goreleaser.yaml.
 #
-# Until the v0.5.0 release wave ships, the newest published release is the
-# older v0.4 line. Installing the current v0.5 line therefore falls back to
+# A published release older than the minimum line is never installed by
+# default; the script falls back to
 # `go install github.com/fregie/tokenhush/cmd/tokenhush@main` when a Go 1.25+
-# toolchain is on PATH; an explicitly requested version is always installed as
+# toolchain is on PATH. An explicitly requested version is always installed as
 # given.
 #
 # The script is safe under `irm | iex`: it uses parameters and $env: only, and
