@@ -1,5 +1,7 @@
 # Pro migration note
 
+**English** | [中文](PRO-MIGRATION.zh-CN.md)
+
 This note records the relationship between this rewrite and the private Pro
 repository. **The Pro migration is documented here; it is not performed by this
 plan.** Pro is explicitly out of scope for the rewrite.
