@@ -316,3 +316,62 @@ func TestEvaluateFindingCarriesNoContentBytes(t *testing.T) {
 		}
 	}
 }
+
+// TestEvaluateEmailOptions pins the evaluator's final dispatch end to end: a
+// compiled primitive rule evaluates through the matcher the compiler bound from
+// its type and options, so a declared additive suffix finds the address the
+// built-in table rejects while a shared byte tail still does not match, and the
+// global and per-rule allowlists, the never-suppressed blocklist and phase
+// scoping are unchanged. The fixtures are fresh readable addresses assembled
+// from parts.
+func TestEvaluateEmailOptions(t *testing.T) {
+	const at = "@"
+	const (
+		evalAddrBuiltin  = "alice" + at + "example.com"     // .com: a built-in suffix
+		evalAddrAdditive = "bob" + at + "sub.corp.example"  // .corp.example: declared suffix only
+		evalAddrGlobal   = "carol" + at + "example.com"     // covered by the global allowlist
+		evalAddrRule     = "dave" + at + "sub.corp.example" // covered by the mail rule's allowlist
+		evalAddrTail     = "erin" + at + "evilcorp.example" // shared byte tail of the declared suffix
+		evalAddrBlocked  = "frank" + at + "example.com"     // blocklisted and globally allowlisted
+	)
+	set := compileDoc(t, `{
+	  "allowlist": ["`+evalAddrGlobal+`", "`+evalAddrBlocked+`"],
+	  "blocklist": ["`+evalAddrBlocked+`"],
+	  "rules": [
+	    {"id": "mail", "type": "email", "category": "email", "action": "warn",
+	     "allowlist": ["`+evalAddrRule+`"],
+	     "options": {"email": {"suffixes": ["corp.example"]}}},
+	    {"id": "resp-mail", "type": "email", "category": "email", "action": "warn", "scope": "response"}
+	  ]
+	}`)
+	content := strings.Join([]string{evalAddrAdditive, evalAddrBuiltin, evalAddrGlobal, evalAddrRule, evalAddrTail, evalAddrBlocked}, " ")
+	for _, addr := range []string{evalAddrAdditive, evalAddrBuiltin, evalAddrGlobal, evalAddrRule, evalAddrTail, evalAddrBlocked} {
+		if !strings.Contains(content, addr) {
+			t.Fatalf("fixture %q is absent from the content, so its assertion would be vacuous", addr)
+		}
+	}
+	leaves := []protocol.Leaf{leaf(content)}
+	contentBytes := []byte(content)
+	additiveSpan := builderSpanOf(t, contentBytes, evalAddrAdditive)
+	builtinSpan := builderSpanOf(t, contentBytes, evalAddrBuiltin)
+	blockedSpan := builderSpanOf(t, contentBytes, evalAddrBlocked)
+
+	gotRequest := mustEvaluate(t, set, leaves, ScopeRequest)
+	wantRequest := []Finding{
+		{RuleID: "mail", Category: CategoryEmail, Action: ActionWarn, LeafIndex: 0, Start: additiveSpan.Start, End: additiveSpan.End, Confidence: DefaultConfidence},
+		{RuleID: "mail", Category: CategoryEmail, Action: ActionWarn, LeafIndex: 0, Start: builtinSpan.Start, End: builtinSpan.End, Confidence: DefaultConfidence},
+		{RuleID: RuleIDBlocklist, Category: CategoryCustom, Action: ActionBlock, LeafIndex: 0, Start: blockedSpan.Start, End: blockedSpan.End, Confidence: 1},
+	}
+	if !reflect.DeepEqual(gotRequest, wantRequest) {
+		t.Errorf("request findings = %+v, want the additive and built-in mail findings (the global- and rule-allowlisted occurrences and the shared-tail lookalike suppressed) plus the block finding %+v", gotRequest, wantRequest)
+	}
+
+	gotResponse := mustEvaluate(t, set, leaves, ScopeResponse)
+	wantResponse := []Finding{
+		{RuleID: "resp-mail", Category: CategoryEmail, Action: ActionWarn, LeafIndex: 0, Start: builtinSpan.Start, End: builtinSpan.End, Confidence: DefaultConfidence},
+		{RuleID: RuleIDBlocklist, Category: CategoryCustom, Action: ActionBlock, LeafIndex: 0, Start: blockedSpan.Start, End: blockedSpan.End, Confidence: 1},
+	}
+	if !reflect.DeepEqual(gotResponse, wantResponse) {
+		t.Errorf("response findings = %+v, want the response-scoped rule and the block finding only %+v", gotResponse, wantResponse)
+	}
+}

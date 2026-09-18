@@ -24,8 +24,8 @@ type primitiveBuilder func(opts *RuleOptions, budget int) (func([]byte) []Span, 
 // matching the decoder's `options: {}` contract; a present email sub-object is
 // rejected with ErrInvalidValue because silently dropping it would ignore an
 // operator's declared intent. The closure normalizes the budget once and
-// delegates to the bundled algorithm, so its spans are identical to the
-// pre-builder primitiveInspect dispatch.
+// delegates to the bundled algorithm, so its spans are identical to a direct
+// call of that algorithm under the same budget.
 func buildOptionlessPrimitive(typ string, inspect func([]byte, int) []Span) primitiveBuilder {
 	return func(opts *RuleOptions, budget int) (func([]byte) []Span, error) {
 		if opts != nil && opts.Email != nil {

@@ -52,18 +52,6 @@ var compiledTypes = map[string]bool{
 	TypeLuhn: true, TypeJWT: true, TypePEM: true, TypeEntropy: true,
 }
 
-// primitiveInspect maps the six detector rule types onto the bundled
-// algorithms, each called with the compiled set's per-primitive byte budget.
-// Every entry is a stateless, concurrency-safe Inspect.
-var primitiveInspect = map[string]func([]byte, int) []Span{
-	TypePrefix:  inspectPrefix,
-	TypeEmail:   inspectEmail,
-	TypeLuhn:    inspectLuhn,
-	TypeJWT:     inspectJWT,
-	TypePEM:     inspectPEM,
-	TypeEntropy: inspectEntropy,
-}
-
 // compiledRule is the immutable, validated form of one rule. Exactly one of re,
 // keywords or inspect decides how it matches, selected by the rule type: a
 // regex rule carries re, a keyword rule carries keywords, and a primitive rule

@@ -591,10 +591,23 @@ func TestPrimitiveBuildersCoverEveryPrimitiveType(t *testing.T) {
 	}
 }
 
+// nonEmailInspectOracle is the test-local oracle of the deleted production
+// primitive dispatch map: the surviving top-level inspect functions, one per
+// primitive type.
+var nonEmailInspectOracle = map[string]func([]byte, int) []Span{
+	TypePrefix:  inspectPrefix,
+	TypeEmail:   inspectEmail,
+	TypeLuhn:    inspectLuhn,
+	TypeJWT:     inspectJWT,
+	TypePEM:     inspectPEM,
+	TypeEntropy: inspectEntropy,
+}
+
 // TestCompileNonEmailMatcherOutputUnchanged proves the builder channel changed
 // no non-email matcher: for every primitive type the compiled rule's inspect
-// output is byte-identical to the pre-builder primitiveInspect dispatch under
-// the same budget, and a regex or keyword rule still carries no inspect
+// output is byte-identical to a direct call of the surviving top-level inspect
+// function under the same budget (the deleted map was a pure alias of these),
+// and a regex or keyword rule still carries no inspect
 // matcher. Every bait is asserted non-empty, so the equality is never vacuous.
 func TestCompileNonEmailMatcherOutputUnchanged(t *testing.T) {
 	const budget = 64
@@ -620,7 +633,7 @@ func TestCompileNonEmailMatcherOutputUnchanged(t *testing.T) {
 		if len(got) == 0 {
 			t.Fatalf("%s: the bait yields no spans, so equality would be vacuous", typ)
 		}
-		want := primitiveInspect[typ](bait, budget)
+		want := nonEmailInspectOracle[typ](bait, budget)
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: builder spans %v, pre-builder dispatch spans %v", typ, got, want)
 		}
