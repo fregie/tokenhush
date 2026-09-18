@@ -243,7 +243,7 @@ detector_timeout:  30s
 | `listen.port` | integer | `8787` | 1..65535. |
 | `log.level` | string | `info` | One of `debug`, `info`, `warn`, `error`. |
 | `detectors.prefix` | boolean | `true` | Known key shapes: `sk-`, `AKIA`, `ghp_`, `glpat-`, `xox*`, `AIza`, `npm_`. |
-| `detectors.email` | boolean | `true` | Email addresses. |
+| `detectors.email` | boolean | `true` | Email addresses; a match requires a domain that ends at a label boundary with a known public suffix. |
 | `detectors.luhn` | boolean | `true` | Card numbers, Luhn-checked. |
 | `detectors.jwt` | boolean | `true` | JSON Web Tokens. |
 | `detectors.pem` | boolean | `true` | PEM private-key headers. |
@@ -255,6 +255,12 @@ detector_timeout:  30s
 
 The detector keys are exactly `prefix`, `email`, `luhn`, `jwt`, `pem`, and
 `entropy`. They are not `prefixes`, not `high_entropy`, and not `private_keys`.
+
+The `email` detector matches precisely: an address is a match only when its
+domain ends at a label boundary with a known public suffix (`.com`, `.co.uk`),
+so subdomains count and a look-alike such as `evilcorp.com` is rejected when the
+configured suffix is the narrower `.corp.com`. The built-in suffix table is
+compiled in, frozen, and always on.
 
 ## Config and data directories
 

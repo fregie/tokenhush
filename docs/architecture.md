@@ -124,6 +124,14 @@ The properties a rule author can rely on, and the ones the core refuses:
   `scan_budget_bytes` for admitted requests, so detection cost stays O(budget)
   and the budget is never a silent blind spot: a request leaf past the budget
   is reported on stderr (metadata only) and moves no counter.
+- **Typed, strictly validated options.** A compiled rule document may carry an
+  `options` object: a typed sub-object per parameterizable detector, never a
+  free-form map. Strict decode rejects an unknown option key by name with a
+  typed error, and the same validation runs again at compile time. The only
+  option today is `email`: additive `suffixes` extend the built-in public-suffix
+  set, and `replace` swaps that set out for the declared suffixes — permitted
+  for a non-remote local document only, because the floor refuses a remote pack
+  that sets it.
 
 See [plugins.md](plugins.md) for the third-party example and the full
 registration semantics, and [security.md](security.md) for the invariants the
@@ -210,7 +218,7 @@ the duplicated machinery was unified); the surfaces below may not change.
 | The two document size caps | Update documents (`manifest`, `revocations`, `keylist`): **128 KiB**. Rules documents (`manifest`, `bundle`, `revocations`): **256 KiB**. Neither is tightened or raised. |
 | Artifact cap | The downloaded binary artifact: **256 MiB** (`MaxArtifactBytes`), fetched by a separate bounded fetcher that must not inherit a document cap. |
 | Wire detector and category ids | Detectors `prefix`, `high_entropy`, `jwt`, `private_key`, `luhn`, `email`; categories `api_key`, `high_entropy`, `jwt`, `private_key`, `credit_card`, `email` |
-| The floor's behaviour | It rejects exactly three things: a pack that disables a baseline detector, a pack that drops a required category, and a rule carrying an `allow` action. It is allowlist-neutral (OD-3). |
+| The floor's behaviour | It rejects exactly four things: a pack that disables a baseline detector, a pack that drops a required category, a rule carrying an `allow` action, and a rule that sets the email `replace` flag. Additive `email.suffixes` extend the built-in public-suffix set and stay allowed. It is allowlist-neutral (OD-3). |
 | Cache and anti-rollback layout | `<DataDir>/rules/{active,revoked.json,<serial>/{manifest,bundle}.json,highwater.json}` and `<DataDir>/update/highwater.json`; atomic writes, mode `0600` |
 | Session files | `<DataDir>/run.json` (`pid`, `port`, `addrs`, `started_at`; never the token) and `<DataDir>/control.token`; atomic, mode `0600`, removed on clean shutdown |
 | Placeholder grammar | `__PII_<type>_<digest>__` |

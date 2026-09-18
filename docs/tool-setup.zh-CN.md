@@ -220,7 +220,7 @@ detector_timeout:  30s
 | `listen.port` | 整数 | `8787` | 1..65535。 |
 | `log.level` | 字符串 | `info` | `debug`、`info`、`warn`、`error` 之一。 |
 | `detectors.prefix` | 布尔值 | `true` | 已知 key 形态：`sk-`、`AKIA`、`ghp_`、`glpat-`、`xox*`、`AIza`、`npm_`。 |
-| `detectors.email` | 布尔值 | `true` | 邮箱地址。 |
+| `detectors.email` | 布尔值 | `true` | 邮箱地址；匹配要求域名在标签边界处结束于已知公共后缀。 |
 | `detectors.luhn` | 布尔值 | `true` | 卡号，经 Luhn 校验。 |
 | `detectors.jwt` | 布尔值 | `true` | JSON Web Token。 |
 | `detectors.pem` | 布尔值 | `true` | PEM 私钥头。 |
@@ -231,6 +231,10 @@ detector_timeout:  30s
 | `detector_timeout` | 时长 | `30s` | 检测兜底。 |
 
 检测器键名恰好是 `prefix`、`email`、`luhn`、`jwt`、`pem` 和 `entropy`。它们不是 `prefixes`，不是 `high_entropy`，也不是 `private_keys`。
+
+`email` 检测器精确匹配：只有当地址域名在标签边界上以已知公共后缀（`.com`、
+`.co.uk`）结尾时才算命中，因此子域名同样计入，而 `evilcorp.com` 这类形似地址
+在配置了更窄的 `.corp.com` 后缀时会被拒绝。内置后缀表编译进程序、已冻结、始终生效。
 
 ## 配置目录与数据目录
 

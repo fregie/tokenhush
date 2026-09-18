@@ -103,6 +103,11 @@ type Rule interface {
   对已准入的请求把该预算与 `scan_budget_bytes` 对齐，因此检测成本保持 O(budget)，
   预算也绝不是静默盲区：超过预算的请求叶会在 stderr 上报（仅元数据），且不移动
   任何计数器。
+- **带类型、严格校验的 options。** 编译后的规则文档可以携带 `options` 对象：每个
+  可参数化检测器一个带类型的子对象，绝不是自由形式的 map。严格解码会按名以带类型
+  的错误拒绝未知选项键，同一套校验在编译期还会再跑一次。目前唯一的选项是 `email`：
+  追加式 `suffixes` 扩展内置公共后缀集合，`replace` 则用声明的后缀整体换掉内置
+  集合——只允许非远程的本地文档，因为远程包设置它会被 floor 拒绝。
 
 第三方示例与完整注册语义见 [plugins.md](plugins.md)，注册表强制的不变量见
 [security.md](security.md)。
@@ -169,7 +174,7 @@ revocations 各自精确复刻旧实现的字段集、字段顺序、JSON 名、
 | 两个文档大小上限 | update 文档（`manifest`、`revocations`、`keylist`）：**128 KiB**。rules 文档（`manifest`、`bundle`、`revocations`）：**256 KiB**。既不收紧也不放宽。 |
 | 制品上限 | 下载的二进制制品：**256 MiB**（`MaxArtifactBytes`），由独立的有界 fetcher 抓取，不得继承文档上限。 |
 | 线上检测器与类别 ID | 检测器 `prefix`、`high_entropy`、`jwt`、`private_key`、`luhn`、`email`；类别 `api_key`、`high_entropy`、`jwt`、`private_key`、`credit_card`、`email` |
-| floor 行为 | 恰好拒绝三件事：禁用基线检测器的包、丢弃必需类别的包、携带 `allow` 动作的规则。它对 allowlist 保持中立（OD-3）。 |
+| floor 行为 | 恰好拒绝四件事：禁用基线检测器的包、丢弃必需类别的包、携带 `allow` 动作的规则，以及设置 email `replace` 标志的规则。追加式 `email.suffixes` 扩展内置公共后缀集合，仍然允许。它对 allowlist 保持中立（OD-3）。 |
 | 缓存与防回滚布局 | `<DataDir>/rules/{active,revoked.json,<serial>/{manifest,bundle}.json,highwater.json}` 与 `<DataDir>/update/highwater.json`；原子写入，权限 `0600` |
 | 会话文件 | `<DataDir>/run.json`（`pid`、`port`、`addrs`、`started_at`；绝不含 token）与 `<DataDir>/control.token`；原子、权限 `0600`、干净退出时删除 |
 | 占位符语法 | `__PII_<type>_<digest>__` |

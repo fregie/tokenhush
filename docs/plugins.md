@@ -9,6 +9,7 @@ in from its own package all implement the same contract and arrive through the
 same public registry.
 
 - [The contract](#the-contract)
+- [Detector options](#detector-options)
 - [Compiling a rule in from your own package](#compiling-a-rule-in-from-your-own-package)
 - [What the core does and does not offer](#what-the-core-does-and-does-not-offer)
 - [The response-phase restriction](#the-response-phase-restriction)
@@ -64,6 +65,25 @@ admitted requests; `filter.CompileWithBudget`, `filter.BuiltinDetectorsBudget`
 and the `New*RuleBudget` constructors set it explicitly, and
 `Compiled.Budget()` reports the effective value. A request leaf past the budget
 is reported on stderr (metadata only), never silently skipped.
+
+## Detector options
+
+A compiled document's rule may carry an `options` object beside its `type`. It
+is a typed sub-object per parameterizable detector, never a free-form map:
+strict decode rejects an unknown option key by name with a typed error, and the
+same validation runs again at compile time, so a hand-built document cannot
+bypass it.
+
+The only detector option today is `email`:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `email.suffixes` | list of strings | Additive: each entry extends the built-in public-suffix set. Entries are canonicalized (trimmed, lowercased, one leading dot) and the list is capped at 256 entries. |
+| `email.replace` | boolean | Swaps the built-in public-suffix set out for the declared `suffixes`. Permitted only for a non-remote local document; a remote pack that sets it is refused by the floor. |
+
+Additive `email.suffixes` can only extend the built-in set, so a signed pack
+may add a suffix it needs but can never remove or narrow a built-in one. The
+built-in suffix table itself is compiled in and frozen.
 
 ## Compiling a rule in from your own package
 
