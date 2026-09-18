@@ -136,7 +136,7 @@ func TestPrimitiveEmail(t *testing.T) {
 	addresses := []string{
 		"user@example.com",
 		"user.name+tag@example.co.uk",
-		"a_b%c-d@sub.domain.example",
+		"a_b%c-d@sub.domain.com",
 	}
 	for _, addr := range addresses {
 		input := "mail " + addr + " end"

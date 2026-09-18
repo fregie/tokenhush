@@ -2,26 +2,29 @@ package filter
 
 // email_suffixes.go owns the built-in email public-suffix table, the
 // single-owner effective-suffix union, and the label-boundary domain matcher
-// that gates the email detector's candidates. The table is PROVISIONAL: it is
-// a curated list of real public suffixes, and todo 6 reconciles it against the
-// repository's positive fixtures before freezing it. It deliberately contains
-// no reserved or special-use name (localhost, test, example, invalid), because
-// a matcher that accepted those would treat every documentation address as a
-// secret. A frozen marker is added only when todo 6 lands.
+// that gates the email detector's candidates. The table is FROZEN: it was
+// reconciled empirically against the repository's positive email fixtures, and
+// every such fixture's suffix is a member, while the reserved and special-use
+// names (localhost, test, example, invalid) stay deliberately absent because a
+// matcher that accepted them would treat every documentation address as a
+// secret. A future addition requires the same empirical reconciliation: add a
+// suffix only when a positive fixture or a real deployment needs it, and
+// extend the coverage guard's evidence-backed corpus in the same change.
 
 import (
 	"slices"
 	"strings"
 )
 
-// builtinEmailSuffixes is the PROVISIONAL curated public-suffix list, in
+// builtinEmailSuffixes is the FROZEN curated public-suffix list, in
 // dot-prefixed canonical form. It contains REAL public suffixes only: the
 // reserved and special-use names (localhost, test, example, invalid) and the
 // bare reserved TLDs are deliberately absent. Compound entries such as .co.uk
-// are redundant given .uk and are kept as documentation of intent. The list is
-// NOT frozen until todo 6 has reconciled it with the repository's email
-// fixtures; only normalizeEmailSuffix canonicalization and this table's own
-// accessors may read it.
+// are redundant given .uk and are kept as documentation of intent. The list
+// was reconciled against the repository's positive fixtures and is guarded by
+// TestBuiltinSuffixesCoverRepoFixtures; a future addition requires the same
+// empirical reconciliation. Only normalizeEmailSuffix canonicalization and
+// this table's own accessors may read it.
 var builtinEmailSuffixes = []string{
 	".com", ".org", ".net", ".edu", ".gov", ".mil", ".int",
 	".info", ".biz", ".name", ".pro", ".app", ".dev", ".io", ".ai",

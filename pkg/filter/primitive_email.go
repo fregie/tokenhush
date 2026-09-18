@@ -11,10 +11,7 @@ package filter
 
 import (
 	"bytes"
-	"fmt"
-	"os"
 	"regexp"
-	"strings"
 )
 
 // emailConfidence is the fixed confidence of the email rule: mail addresses
@@ -42,25 +39,11 @@ func findEmailSpans(content []byte, suffixes []string) []Span {
 			continue
 		}
 		if !domainHasSuffix(string(domain), suffixes) {
-			reportRejectedEmailSuffix(string(domain))
 			continue
 		}
 		spans = append(spans, Span{Start: m[0], End: m[1]})
 	}
 	return spans
-}
-
-// TEMPORARY (plan todo 6 removes this): reportRejectedEmailSuffix writes one
-// line to stderr holding only the candidate domain's trailing label — the
-// lowercased substring from the last '.' to the end, e.g. ".zz" — so the
-// fixture reconciliation can discover which suffixes the repository's
-// addresses need. It never prints the local part, the full domain, or the
-// address, and it changes no returned span.
-//
-// The suffix gate only ever sees a candidate the email pattern matched, so the
-// domain always contains a dot and the slice start cannot be negative.
-func reportRejectedEmailSuffix(domain string) {
-	fmt.Fprintln(os.Stderr, strings.ToLower(domain[strings.LastIndexByte(domain, '.'):]))
 }
 
 // splitEmail splits candidate at its single '@'. It reports false for an empty

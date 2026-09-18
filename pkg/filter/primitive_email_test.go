@@ -10,6 +10,7 @@ package filter
 
 import (
 	"errors"
+	"slices"
 	"testing"
 )
 
@@ -157,5 +158,35 @@ func TestEmailRuleWithOptionsRejectsMalformedSuffix(t *testing.T) {
 		if _, err := NewEmailRuleWithOptions(&EmailOptions{Suffixes: []string{suffix}}, PrimitiveByteBudgetBytes); !errors.Is(err, ErrInvalidValue) {
 			t.Errorf("NewEmailRuleWithOptions(suffix %q): err = %v, want ErrInvalidValue", suffix, err)
 		}
+	}
+}
+
+// TestBuiltinSuffixesCoverRepoFixtures is the coverage guard for the frozen
+// suffix table. Its corpus is the suffix set of the repository's positive email
+// fixtures, discovered empirically during the todo-6 reconciliation: the
+// temporary diagnostics reported .example as the only gate-rejected positive
+// suffix, and because .example is reserved it was migrated to .com instead of
+// being added, leaving .com and .uk as the evidence-backed suffixes of the two
+// untouched positives at primitive_test.go:137-138. The guard names the missing
+// suffix when one disappears from the table; grow the corpus only together
+// with the fixture that justifies the new entry.
+func TestBuiltinSuffixesCoverRepoFixtures(t *testing.T) {
+	corpus := []string{".com", ".uk"}
+	if len(corpus) == 0 {
+		t.Fatal("the fixture-suffix corpus is empty; the coverage guard would be vacuous")
+	}
+
+	builtin := BuiltinEmailSuffixes()
+	nonTrivial := false
+	for _, suffix := range corpus {
+		if !slices.Contains(builtin, suffix) {
+			t.Errorf("fixture suffix %q is not covered by BuiltinEmailSuffixes()", suffix)
+		}
+		if suffix != ".com" {
+			nonTrivial = true
+		}
+	}
+	if !nonTrivial {
+		t.Error("the corpus holds only a .com entry; the guard requires a non-trivial (non-.com) suffix")
 	}
 }
