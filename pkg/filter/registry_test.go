@@ -491,3 +491,195 @@ func TestRuleShapeIsFrozen(t *testing.T) {
 		t.Fatal("no production Go files parsed")
 	}
 }
+
+// registryAddress assembles an address from its parts so the source file never
+// holds a contiguous address literal; the session's redaction pass rewrites
+// those and would leave an unmatchable placeholder behind.
+func registryAddress(local, domain string) string { return local + "@" + domain }
+
+// TestRegistryCompiledRuleUsesOptionsMatcher pins the options-aware compiled
+// path through the registry: RegisterCompiled presents every compiled rule as a
+// compiledView whose Inspect runs the matcher built from that rule's options,
+// so a declared email suffix decides the match instead of the built-in suffix
+// table. The additive case proves the declared suffix reaches the registry path
+// (a suffix absent from the built-in table still matches); the replace case
+// proves the built-in table no longer decides (the byte-tail look-alike
+// evilcorp.com stops matching even though the built-in table alone accepts it,
+// which the in-test control asserts).
+func TestRegistryCompiledRuleUsesOptionsMatcher(t *testing.T) {
+	const (
+		declared  = "corp.com"
+		lookAlike = "evilcorp.com"
+	)
+
+	t.Run("additive declared suffix reaches the matcher", func(t *testing.T) {
+		set := compileDoc(t, `{"rules":[
+			{"id":"corp-email","type":"email","action":"redact","scope":"request","priority":10,
+			 "category":"email",
+			 "options":{"email":{"suffixes":["corp.com","corp"]}}}
+		]}`)
+		reg := NewRegistry()
+		if err := reg.RegisterCompiled(set); err != nil {
+			t.Fatalf("RegisterCompiled() error = %v", err)
+		}
+		corpAddr := registryAddress("alice", declared)   // matches the declared .corp.com
+		intraAddr := registryAddress("bob", "mail.corp") // .corp is not builtin: only the options matcher can match it
+		value := "mail " + corpAddr + " and " + intraAddr + " end"
+		corpStart := len("mail ")
+		intraStart := corpStart + len(corpAddr) + len(" and ")
+		findings := mustRegistryEvaluate(t, reg, []protocol.Leaf{leaf(value)}, ScopeRequest)
+		want := []AttributedFinding{
+			{Finding: Finding{RuleID: "corp-email", Category: CategoryEmail, Action: ActionRedact, LeafIndex: 0, Start: corpStart, End: corpStart + len(corpAddr), Confidence: DefaultConfidence}, Origin: OriginRemotePack},
+			{Finding: Finding{RuleID: "corp-email", Category: CategoryEmail, Action: ActionRedact, LeafIndex: 0, Start: intraStart, End: intraStart + len(intraAddr), Confidence: DefaultConfidence}, Origin: OriginRemotePack},
+		}
+		if !reflect.DeepEqual(findings, want) {
+			t.Fatalf("findings = %+v, want %+v", findings, want)
+		}
+	})
+
+	t.Run("replace declared suffix drops the built-in table", func(t *testing.T) {
+		set := compileDoc(t, `{"rules":[
+			{"id":"corp-replace","type":"email","action":"redact","scope":"request","priority":10,
+			 "category":"email",
+			 "options":{"email":{"suffixes":["corp.com"],"replace":true}}}
+		]}`)
+		reg := NewRegistry()
+		if err := reg.RegisterCompiled(set); err != nil {
+			t.Fatalf("RegisterCompiled() error = %v", err)
+		}
+		corpAddr := registryAddress("alice", declared)
+		lookAddr := registryAddress("bob", lookAlike)
+		value := "mail " + corpAddr + " and " + lookAddr + " end"
+		// Control: the candidate shape is not why the look-alike is rejected.
+		// The built-in matcher accepts both addresses, so only the replace-mode
+		// matcher (the options path) can be the reason it yields one span.
+		if spans := NewEmailRule().Inspect([]byte(value)); len(spans) != 2 {
+			t.Fatalf("built-in email rule spans = %v, want both addresses (control)", spans)
+		}
+		findings := mustRegistryEvaluate(t, reg, []protocol.Leaf{leaf(value)}, ScopeRequest)
+		want := []AttributedFinding{
+			{Finding: Finding{RuleID: "corp-replace", Category: CategoryEmail, Action: ActionRedact, LeafIndex: 0, Start: len("mail "), End: len("mail ") + len(corpAddr), Confidence: DefaultConfidence}, Origin: OriginRemotePack},
+		}
+		if !reflect.DeepEqual(findings, want) {
+			t.Fatalf("findings = %+v, want only the declared-suffix address", findings)
+		}
+	})
+}
+
+// TestRegistryCompiledViewPreservesProvenanceOrderAndDirection pins the
+// compiledView forwarding contract: a compiled rule is stamped OriginRemotePack
+// at registration, ordered among builtin and plugin registrations by ascending
+// priority with the id tie-break, and filtered by its scope per phase exactly
+// like every other registration route. Every rule reports the same span, so the
+// stable (leaf, start, end) sort leaves the invocation order visible.
+func TestRegistryCompiledViewPreservesProvenanceOrderAndDirection(t *testing.T) {
+	set := compileDoc(t, `{"rules":[
+		{"id":"pack-bravo","type":"keyword","keywords":["SECRET"],"action":"warn","scope":"request","priority":20},
+		{"id":"pack-alpha","type":"keyword","keywords":["SECRET"],"action":"warn","scope":"request","priority":20},
+		{"id":"pack-response","type":"keyword","keywords":["SECRET"],"action":"warn","scope":"response","priority":5},
+		{"id":"pack-both","type":"keyword","keywords":["SECRET"],"action":"warn","scope":"both","priority":40}
+	]}`)
+	reg := NewRegistry()
+	if err := reg.RegisterBuiltin(matches("builtin-echo", 20, "SECRET", ActionWarn)); err != nil {
+		t.Fatalf("RegisterBuiltin() error = %v", err)
+	}
+	if err := reg.RegisterCompiled(set); err != nil {
+		t.Fatalf("RegisterCompiled() error = %v", err)
+	}
+	mustRegister(t, reg,
+		matches("ext-early", 10, "SECRET", ActionWarn),
+		matches("ext-late", 30, "SECRET", ActionWarn),
+	)
+
+	leaves := []protocol.Leaf{leaf("a SECRET b")}
+	origins := map[string]Origin{
+		"ext-early":     OriginPlugin,
+		"ext-late":      OriginPlugin,
+		"builtin-echo":  OriginBuiltin,
+		"pack-alpha":    OriginRemotePack,
+		"pack-bravo":    OriginRemotePack,
+		"pack-response": OriginRemotePack,
+		"pack-both":     OriginRemotePack,
+	}
+	request := mustRegistryEvaluate(t, reg, leaves, ScopeRequest)
+	wantRequest := []string{"ext-early", "builtin-echo", "pack-alpha", "pack-bravo", "ext-late", "pack-both"}
+	if got := ruleIDs(request); !reflect.DeepEqual(got, wantRequest) {
+		t.Fatalf("request invocation order = %v, want %v", got, wantRequest)
+	}
+	for _, finding := range request {
+		if got := finding.Origin; got != origins[finding.RuleID] {
+			t.Errorf("rule %q origin = %q, want %q", finding.RuleID, got, origins[finding.RuleID])
+		}
+		if finding.Start != 2 || finding.End != 8 {
+			t.Errorf("rule %q span = [%d,%d), want the identical [2,8) that exposes invocation order", finding.RuleID, finding.Start, finding.End)
+		}
+	}
+
+	response := mustRegistryEvaluate(t, reg, leaves, ScopeResponse)
+	wantResponse := []string{"pack-response", "pack-both"}
+	if got := ruleIDs(response); !reflect.DeepEqual(got, wantResponse) {
+		t.Fatalf("response invocation order = %v, want %v (only response-capable rules, priority-then-id)", got, wantResponse)
+	}
+	for _, finding := range response {
+		if finding.Origin != OriginRemotePack {
+			t.Errorf("rule %q origin = %q, want %q", finding.RuleID, finding.Origin, OriginRemotePack)
+		}
+	}
+}
+
+// TestRegistryCompiledRuleFailureIsLabelled pins the fail-closed contract on
+// the compiled route: a compiled rule whose spans overrun a bound yields the
+// same labelled *RuleFailure as any other rule — the compiled rule's id, the
+// remote-pack origin stamped at registration and the classified reason — with
+// no findings and no partial result.
+func TestRegistryCompiledRuleFailureIsLabelled(t *testing.T) {
+	t.Run("span budget", func(t *testing.T) {
+		set := compileDoc(t, `{"rules":[{"id":"greedy-regex","type":"regex","pattern":"ab","action":"warn","scope":"request"}]}`)
+		reg := NewRegistry()
+		if err := reg.RegisterCompiled(set); err != nil {
+			t.Fatalf("RegisterCompiled() error = %v", err)
+		}
+		value := strings.Repeat("ab", MaxRuleSpans+1)
+		findings, err := reg.Evaluate([]protocol.Leaf{leaf(value)}, ScopeRequest)
+		if findings != nil {
+			t.Fatalf("findings = %v, want none on a refusal", findings)
+		}
+		var failure *RuleFailure
+		if !errors.As(err, &failure) {
+			t.Fatalf("error = %v, want *RuleFailure", err)
+		}
+		if failure.RuleID != "greedy-regex" || failure.Origin != OriginRemotePack || failure.Reason != ReasonBudget {
+			t.Fatalf("failure = %+v, want greedy-regex/remote_pack/budget", failure)
+		}
+		if !errors.Is(err, ErrRuleFailure) {
+			t.Errorf("errors.Is(%v, ErrRuleFailure) = false", err)
+		}
+		if got := err.Error(); got != "filter: rule greedy-regex failed: budget" {
+			t.Errorf("failure message = %q, want the labelled form", got)
+		}
+	})
+
+	t.Run("document total budget", func(t *testing.T) {
+		set := compileDoc(t, `{"rules":[
+			{"id":"first-fill","type":"regex","pattern":"ab","action":"warn","scope":"request","priority":10},
+			{"id":"second-overrun","type":"regex","pattern":"cd","action":"warn","scope":"request","priority":20}
+		]}`)
+		reg := NewRegistry()
+		if err := reg.RegisterCompiled(set); err != nil {
+			t.Fatalf("RegisterCompiled() error = %v", err)
+		}
+		half := MaxRuleSpans/2 + 1
+		value := strings.Repeat("ab", half) + strings.Repeat("cd", half)
+		findings, err := reg.Evaluate([]protocol.Leaf{leaf(value)}, ScopeRequest)
+		if findings != nil {
+			t.Fatalf("findings = %v, want none on a refusal", findings)
+		}
+		var failure *RuleFailure
+		if !errors.As(err, &failure) {
+			t.Fatalf("error = %v, want *RuleFailure", err)
+		}
+		if failure.RuleID != "second-overrun" || failure.Origin != OriginRemotePack || failure.Reason != ReasonBudget {
+			t.Fatalf("failure = %+v, want second-overrun/remote_pack/budget", failure)
+		}
+	})
+}
