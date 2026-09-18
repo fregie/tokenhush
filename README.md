@@ -1,5 +1,7 @@
 # Tokenhush
 
+**English** | [中文](README.zh-CN.md)
+
 > Local, reversible secret redaction for AI coding tools. No MITM, no root certificate.
 
 [![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
@@ -341,16 +343,16 @@ Until the v0.5.0 release wave ships, the newest published release is the older v
 
 | Document | What's inside |
 |---|---|
-| [docs/tool-setup.md](docs/tool-setup.md) | Per-tool setup for the 14 tools, request routing, and the config reference. |
-| [docs/verify.md](docs/verify.md) | The echo-upstream verification recipe in full. |
-| [docs/deployment.md](docs/deployment.md) | Install and build paths, service wrappers, release status. |
-| [docs/architecture.md](docs/architecture.md) | Layered architecture, the rule abstraction, and the data path. |
-| [docs/security.md](docs/security.md) | Security model, the eight invariants, and the residual-risk register. |
-| [docs/plugins.md](docs/plugins.md) | The `Rule` extension point and its restrictions. |
-| [docs/generated/network-egress.md](docs/generated/network-egress.md) | The two switchable vendor-bound egress categories, generated from `egress.yaml`. |
-| [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) | What the Pro repository must do after this rewrite. |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and contribute. |
-| [SECURITY.md](SECURITY.md) | Vulnerability disclosure policy. |
+| [docs/tool-setup.md](docs/tool-setup.md) / [中文](docs/tool-setup.zh-CN.md) | Per-tool setup for the 14 tools, request routing, and the config reference. |
+| [docs/verify.md](docs/verify.md) / [中文](docs/verify.zh-CN.md) | The echo-upstream verification recipe in full. |
+| [docs/deployment.md](docs/deployment.md) / [中文](docs/deployment.zh-CN.md) | Install and build paths, service wrappers, release status. |
+| [docs/architecture.md](docs/architecture.md) / [中文](docs/architecture.zh-CN.md) | Layered architecture, the rule abstraction, and the data path. |
+| [docs/security.md](docs/security.md) / [中文](docs/security.zh-CN.md) | Security model, the eight invariants, and the residual-risk register. |
+| [docs/plugins.md](docs/plugins.md) / [中文](docs/plugins.zh-CN.md) | The `Rule` extension point and its restrictions. |
+| [docs/generated/network-egress.md](docs/generated/network-egress.md) / [中文](docs/generated/network-egress.zh-CN.md) | The two switchable vendor-bound egress categories, generated from `egress.yaml`. |
+| [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) / [中文](docs/PRO-MIGRATION.zh-CN.md) | What the Pro repository must do after this rewrite. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) / [中文](CONTRIBUTING.zh-CN.md) | How to build, test, and contribute. |
+| [SECURITY.md](SECURITY.md) / [中文](SECURITY.zh-CN.md) | Vulnerability disclosure policy. |
 | [LICENSE](LICENSE) | Apache License 2.0. |
 
 ## Project status

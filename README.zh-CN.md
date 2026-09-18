@@ -347,16 +347,16 @@ Linux 与 Windows 的脚本在安装前会用发布页的 `checksums.txt` 校验
 
 | 文档 | 内容 |
 |---|---|
-| [docs/tool-setup.md](docs/tool-setup.md) | 十四种工具的接入、请求路由与 `tokenhush.yaml` 参考 |
-| [docs/verify.md](docs/verify.md) | 用本地 echo 上游亲自验证脱敏 |
-| [docs/deployment.md](docs/deployment.md) | 安装路径、服务包装、发布状态 |
+| [docs/tool-setup.md](docs/tool-setup.md) / [docs/tool-setup.zh-CN.md](docs/tool-setup.zh-CN.md) | 十四种工具的接入、请求路由与 `tokenhush.yaml` 参考（英文 / 中文） |
+| [docs/verify.md](docs/verify.md) / [docs/verify.zh-CN.md](docs/verify.zh-CN.md) | 用本地 echo 上游亲自验证脱敏（英文 / 中文） |
+| [docs/deployment.md](docs/deployment.md) / [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md) | 安装路径、服务包装、发布状态（英文 / 中文） |
 | [docs/architecture.md](docs/architecture.md) / [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) | 核心架构、数据流、模块划分（英文 / 中文） |
 | [docs/security.md](docs/security.md) / [docs/security.zh-CN.md](docs/security.zh-CN.md) | 安全模型、威胁模型、硬不变量（英文 / 中文） |
 | [docs/plugins.md](docs/plugins.md) / [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`）（英文 / 中文） |
-| [docs/generated/network-egress.md](docs/generated/network-egress.md) | 两个可开关的厂商绑定出口类别全文 |
-| [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) | Pro 仓库需要单独完成的迁移 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 如何构建、测试与贡献 |
-| [SECURITY.md](SECURITY.md) | 漏洞披露流程与响应时间 |
+| [docs/generated/network-egress.md](docs/generated/network-egress.md) / [docs/generated/network-egress.zh-CN.md](docs/generated/network-egress.zh-CN.md) | 两个可开关的厂商绑定出口类别全文（英文 / 中文） |
+| [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) / [docs/PRO-MIGRATION.zh-CN.md](docs/PRO-MIGRATION.zh-CN.md) | Pro 仓库需要单独完成的迁移（英文 / 中文） |
+| [CONTRIBUTING.md](CONTRIBUTING.md) / [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) | 如何构建、测试与贡献（英文 / 中文） |
+| [SECURITY.md](SECURITY.md) / [SECURITY.zh-CN.md](SECURITY.zh-CN.md) | 漏洞披露流程与响应时间（英文 / 中文） |
 | [LICENSE](LICENSE) | Apache-2.0 许可证全文 |
 
 ## 项目状态
