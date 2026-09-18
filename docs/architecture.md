@@ -156,6 +156,11 @@ At runtime the pieces line up like this:
    `scan_budget_bytes` of one leaf — the per-primitive budget is aligned with
    the configured scan budget for admitted requests — and a leaf past the
    budget is reported on stderr (metadata only) instead of failing silently.
+   Redaction runs once per request over the whole client-supplied conversation,
+   so a long session re-scans and re-redacts the same secrets on every turn: the
+   `redactions` counter and the stderr log grow with the number of carried
+   occurrences, not with the number of distinct secrets; that is metadata-only,
+   per-request work, never a persisted body.
 5. **Client-bound responses are decoded before any status is committed.**
    Identity-encoded `text/event-stream` bodies stream through the SSE handler
    with a bounded backfill window; everything else is buffered, decoded and

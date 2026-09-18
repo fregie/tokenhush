@@ -224,7 +224,7 @@ TOKENHUSH_NO_RULE_SYNC=1 tokenhush rules sync  # 输出 "no request was sent"
 - [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)——分层依赖图、单一规则
   抽象、两个签名输入投影与冻结的字节表面。
 - [docs/security.zh-CN.md](docs/security.zh-CN.md)——八条不变量及其具名测试、方向
-  契约，以及被诚实记录的四项残余风险。
+  契约，以及被诚实记录的残余风险。
 - [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md)——扩展点、可运行的第三方示例，以及
   内核有意不提供的东西。
 - [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md)——Pro 仓库必须单独完成的迁移。

@@ -79,5 +79,5 @@ legacy versions must be ported rather than shimmed:
 
 - [architecture.md](architecture.md) — the layered graph and the frozen byte
   surfaces, including the wire format Pro's backend already implements.
-- [security.md](security.md) — the invariants and the four residual risks.
+- [security.md](security.md) — the invariants and the residual risks.
 - [plugins.md](plugins.md) — the compile-time-only extension point.

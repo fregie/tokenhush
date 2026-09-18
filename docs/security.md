@@ -1,7 +1,7 @@
 # tokenhush security model
 
 This document is the operator-facing security contract of the v0.5.0 rewrite.
-It lists the eight invariants the core keeps and the six residual risks it does
+It lists the eight invariants the core keeps and the seven residual risks it does
 not hide, states what is enforced where, and names the test that pins each
 invariant.
 
@@ -10,7 +10,7 @@ invariant.
 - [Response-phase effects](#response-phase-effects)
 - [The SSE limitation](#the-sse-limitation)
 - [What is on disk](#what-is-on-disk)
-- [The six residual risks](#the-six-residual-risks)
+- [The seven residual risks](#the-seven-residual-risks)
 
 ## The direction contract
 
@@ -136,8 +136,13 @@ mapping are never written to disk. The redaction log line
 `tokenhush: redacted request <type> (len=<N>) <masked>` goes to stderr only and
 is never persisted; its masked form either reveals nothing (`****`,
 `[redacted]`) or a bounded prefix and suffix of an opaque credential type.
+Redaction runs once per request over the whole client-supplied conversation, so
+a long session re-scans and re-redacts the same secrets on every turn: the
+`redactions` counter and this stderr log grow with the number of carried
+occurrences, not with the number of distinct secrets. That is metadata-only,
+per-request work, never a persisted body.
 
-## The six residual risks
+## The seven residual risks
 
 These are recorded honestly rather than left implicit. Listing them is not a
 claim that they are absent; each one is a known limit of this design.
@@ -149,7 +154,8 @@ claim that they are absent; each one is a known limit of this design.
 | R3 | A signed remote pack may weaken detection through its own allowlist | A signed remote pack may suppress matches through its own global or per-rule allowlist: the non-weakening floor is allowlist-neutral per OD-3 and does not inspect allowlists, while the rule-signing key `rules-2026-09` remains the trust root. | Recorded and accepted |
 | R4 | The OD-2 command-rule rejection is dormant and the v2 manifest bump is backward-incompatible | The OD-2 `command`-rule rejection stays dormant until the OD-4 gate opens, and the gate opens only when the rules manifest `schema_version` reaches 2; that bump is backward-incompatible with clients pinning `== 1`, so the backend must keep serving a v1 manifest until the legacy line is out of support. | Recorded and accepted |
 | R5 | Response-path bodies are not capped by scan_budget_bytes | A response body is not limited by the request `scan_budget_bytes` gate, while a response-scoped primitive detector still scans at most the per-primitive `budget`: a response leaf past that budget is truncated with no stderr report and no counter, so response-scoped detection can miss content beyond the budget. The budget report is deliberately request-path only and moves no status key. | Recorded and accepted |
-| R6 | A placeholder split across two SSE JSON-envelope `data:` events is restored without depth awareness | When a JSON-envelope SSE stream splits a placeholder across two `data:` values, the `data:` envelope bytes between the halves mean neither value is a JSON document at the enclosing depth that contains the whole token, so the completing replacement is spliced with the raw spelling rather than re-spelled at the enclosing JSON depth; a secret carrying a quote, backslash or control byte can then sit raw inside an envelope fragment. Raw-fragment splits are handled: with no envelope intervening, the bounded reassembler restores the token completed across consecutive data deltas, byte-identically. | Recorded and accepted |
+| R6 | A placeholder split across two SSE JSON-envelope `data:` events is not restored at the enclosing depth | A JSON-envelope stream that splits either the placeholder or the envelope itself across two `data:` values cannot be restored with the enclosing JSON depth. When the upstream tears the JSON document across the split, the placeholder bytes stay contiguous so the bounded reassembler still completes the token, but the completing value is not a JSON document, so the secret is spliced with its raw spelling — a secret carrying a quote, backslash or control byte then sits raw inside an envelope fragment. When each event is a complete envelope and the placeholder is split at the content level, the envelope bytes between the halves mean the token never completes and the placeholder fragments reach the client unreplaced. Raw-fragment splits are handled: with no envelope intervening, the bounded reassembler restores the token completed across consecutive data deltas, byte-identically. | Recorded and accepted |
+| R7 | The opt-in `high_entropy` detector replaces legitimate base64 payloads | `entropy` is off by default because a legitimate high-entropy payload is indistinguishable from a secret by construction: with `detectors: {entropy: true}`, a ~2.7 KB base64 image in an OpenAI `image_url` part or an Anthropic `image` content block is replaced by a single placeholder before the request reaches the upstream, so the model never sees the image — the client still receives it back through backfill, but the upstream payload is substituted. Enable it only for a workload that carries no images, data URLs or long random identifiers, or accept the substitution. Pure-hex runs stay excluded, so hex digests are unaffected. | Recorded and accepted |
 
 Why each one stays as it is:
 
@@ -182,7 +188,16 @@ Why each one stays as it is:
   preserve; the bounded reassembler still completes the token across the split
   with the raw spelling. Raw-fragment streams are not JSON by contract, keep the
   raw spelling too, and stay byte-identical. Buffered bodies and unsplit JSON
-  envelopes keep the depth-aware, valid-JSON restore.
+  envelopes keep the depth-aware, valid-JSON restore. When the envelope itself
+  is torn the token completes but only the raw spelling is knowable; when the
+  envelopes are complete and the placeholder is content-split the token cannot
+  complete at all. Both are the upstream's choice of framing, and neither
+  conceals a secret from a third party: the client is the intended recipient.
+- **R7 — entropy is opt-in for a reason.** High entropy is not evidence of a
+  secret: an image, a data URL or a random identifier looks exactly like one.
+  The detector is therefore off by default and the substitution it performs on a
+  legitimate base64 payload is recorded here rather than hidden. A workload that
+  never carries such payloads can enable it; one that does should not.
 
 ## Related documents
 

@@ -254,7 +254,7 @@ TOKENHUSH_NO_RULE_SYNC=1 tokenhush rules sync  # prints "no request was sent"
   the single rule abstraction, the two signing-input projections and the frozen
   byte surfaces.
 - [docs/security.md](docs/security.md) — all eight invariants with their named
-  tests, the direction contract, and the four residual risks recorded honestly.
+  tests, the direction contract, and the residual risks recorded honestly.
 - [docs/plugins.md](docs/plugins.md) — the extension point, a working
   third-party example, and what the core deliberately does not offer.
 - [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) — the Pro repository's
