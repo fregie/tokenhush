@@ -1,5 +1,7 @@
 # Contributing to Tokenhush
 
+**English** | [中文](CONTRIBUTING.zh-CN.md)
+
 Tokenhush is the public Apache-2.0 core, maintained in English. Bug reports, documentation, tests, and new rules are welcome.
 
 The Pro and enterprise layer lives in a separate private repository that imports this Go module. Don't contribute paid-feature code, algorithms, or gating switches here.

@@ -1,6 +1,8 @@
 # Security Policy
 
-Tokenhush exists to keep secrets out of AI coding tool requests, so a security report is worth taking seriously. This policy covers the public Apache-2.0 core repository at `github.com/fregie/tokenhush`. It is maintained in English only.
+**English** | [中文](SECURITY.zh-CN.md)
+
+Tokenhush exists to keep secrets out of AI coding tool requests, so a security report is worth taking seriously. This policy covers the public Apache-2.0 core repository at `github.com/fregie/tokenhush`. It is maintained in English.
 
 [docs/security.md](docs/security.md) is the operator-facing security contract: the eight invariants, the response-phase effects, the SSE limitation, and the full residual-risk register. This document covers how to report a problem and what to expect afterward.
 
