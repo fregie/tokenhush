@@ -65,10 +65,11 @@ var primitiveInspect = map[string]func([]byte, int) []Span{
 }
 
 // compiledRule is the immutable, validated form of one rule. Exactly one of re,
-// keywords or the primitive dispatch (by typ) decides how it matches, selected
-// by the rule type. budget is the per-primitive byte budget (unused by regex
-// and keyword rules). Every byte slice is owned by the set, never aliased from
-// the document.
+// keywords or inspect decides how it matches, selected by the rule type: a
+// regex rule carries re, a keyword rule carries keywords, and a primitive rule
+// carries the bound matcher compileRule built through primitiveBuilders. budget
+// is the per-primitive byte budget (unused by regex and keyword rules). Every
+// byte slice is owned by the set, never aliased from the document.
 type compiledRule struct {
 	id         string
 	typ        string
@@ -82,6 +83,7 @@ type compiledRule struct {
 	fold       bool
 	allow      [][]byte
 	budget     int
+	inspect    func([]byte) []Span
 }
 
 // Compiled is a compiled, immutable rule set. It is safe for concurrent use:
@@ -137,7 +139,7 @@ func CompileWithBudget(doc *Document, budget int) (*Compiled, error) {
 			set.commandIDs = append(set.commandIDs, rule.ID)
 			continue
 		}
-		compiled, err := compileRule(rule, budget)
+		compiled, err := compileRule(rule, fmt.Sprintf("rules[%d]", i), budget)
 		if err != nil {
 			return nil, err
 		}
@@ -153,11 +155,13 @@ func CompileWithBudget(doc *Document, budget int) (*Compiled, error) {
 }
 
 // compileRule validates one non-command rule and builds its immutable form.
-// Absent scope, category and confidence fall back to the documented defaults,
-// so an in-memory document compiles like a decoded one; priority is kept as
-// written because zero is a legal explicit priority. budget becomes the rule's
+// path is the rule's document path, so an options rejection the decoder
+// re-asserts here names the same location the decoder names. Absent scope,
+// category and confidence fall back to the documented defaults, so an
+// in-memory document compiles like a decoded one; priority is kept as written
+// because zero is a legal explicit priority. budget becomes the rule's
 // per-primitive budget; the caller has already normalized it.
-func compileRule(rule *RuleDoc, budget int) (compiledRule, error) {
+func compileRule(rule *RuleDoc, path string, budget int) (compiledRule, error) {
 	if !compiledTypes[rule.Type] {
 		return compiledRule{}, compileError(rule.ID, ErrCompile, "unknown detector type %q", rule.Type)
 	}
@@ -201,6 +205,13 @@ func compileRule(rule *RuleDoc, budget int) (compiledRule, error) {
 	if rule.Action == ActionRedact && scope != ScopeRequest {
 		return compiledRule{}, compileError(rule.ID, ErrDirection, "a rule that includes the response phase must not redact")
 	}
+	// The decoder is the first options gate, but a hand-built document skipped
+	// it, so the contract is re-asserted here before any matcher reads options.
+	// validateRuleOptions also canonicalizes every declared suffix in place, so
+	// a builder only ever sees canonical values.
+	if err := validateRuleOptions(rule, path); err != nil {
+		return compiledRule{}, compileError(rule.ID, ErrCompile, "%v", err)
+	}
 	r := compiledRule{
 		id:         rule.ID,
 		typ:        rule.Type,
@@ -241,6 +252,12 @@ func compileRule(rule *RuleDoc, budget int) (compiledRule, error) {
 				r.keywords[i] = foldASCII(r.keywords[i])
 			}
 		}
+	default:
+		matcher, buildErr := primitiveBuilders[rule.Type](rule.Options, budget)
+		if buildErr != nil {
+			return compiledRule{}, compileError(rule.ID, ErrCompile, "%v", buildErr)
+		}
+		r.inspect = matcher
 	}
 	return r, nil
 }
