@@ -1,5 +1,7 @@
 # Deployment
 
+**English** | [中文](deployment.zh-CN.md)
+
 Tokenhush is a single binary that runs in the foreground. This page covers how
 to build or install it, where it keeps config and data, how to keep it running
 with your operating system's own tools, and what the release status actually is

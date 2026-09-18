@@ -1,5 +1,7 @@
 # Verify redaction with a local echo upstream
 
+**English** | [中文](verify.zh-CN.md)
+
 This check proves the whole round trip without sending anything to a real
 provider. You run a fake vendor that echoes request bodies, point a throwaway
 gateway at it, send one request that carries a fake secret, and watch where the
