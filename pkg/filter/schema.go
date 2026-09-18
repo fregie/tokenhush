@@ -101,10 +101,6 @@ func (e *FieldError) Error() string {
 // Unwrap returns the sentinel Kind.
 func (e *FieldError) Unwrap() error { return e.Kind }
 
-func fieldError(kind error, path, format string, args ...any) error {
-	return &FieldError{Kind: kind, Path: path, Problem: fmt.Sprintf(format, args...)}
-}
-
 // defaulted returns value when the key is present in the raw document, and the
 // fallback only when the key is absent, so an explicit value always wins.
 func defaulted[T any](value T, fields map[string]json.RawMessage, key string, fallback T) T {
@@ -159,6 +155,12 @@ type RuleDoc struct {
 	PureHexExcluded bool     `json:"pure_hex_excluded,omitempty"`
 	PEMHeaders      []string `json:"pem_headers,omitempty"`
 
+	// Options is the typed per-detector settings object. strictDecodeRuleOptions
+	// rejects unknown keys inside it and validateRuleOptions requires a present
+	// sub-object to match Type, so a rule carries settings only for its own
+	// detector and never an accepted-but-ignored key.
+	Options *RuleOptions `json:"options,omitempty"`
+
 	// Legacy command-rule fields: parsed so they can be detected and signalled,
 	// never evaluated.
 	Command    string   `json:"command,omitempty"`
@@ -185,7 +187,7 @@ var actionValues = map[string]bool{"allow": true, "warn": true, "redact": true, 
 // key is rejected by name with ErrUnknownField.
 var documentFields = map[string]bool{"channel": true, "schema_version": true, "min_binary_version": true, "serial": true, "key_id": true, "not_before": true, "expires": true, "detectors": true, "disabled_categories": true, "allowlist": true, "blocklist": true, "rules": true}
 
-var ruleFields = map[string]bool{"id": true, "type": true, "category": true, "scope": true, "action": true, "priority": true, "pattern": true, "keywords": true, "case_sensitive": true, "confidence": true, "allowlist": true, "min_digits": true, "max_digits": true, "alphabet": true, "min_length": true, "min_entropy": true, "pure_hex_excluded": true, "pem_headers": true, "command": true, "subcommand": true, "verbs": true, "targets": true}
+var ruleFields = map[string]bool{"id": true, "type": true, "category": true, "scope": true, "action": true, "priority": true, "pattern": true, "keywords": true, "case_sensitive": true, "confidence": true, "allowlist": true, "min_digits": true, "max_digits": true, "alphabet": true, "min_length": true, "min_entropy": true, "pure_hex_excluded": true, "pem_headers": true, "command": true, "subcommand": true, "verbs": true, "targets": true, "options": true}
 
 // DecodeDocument strictly decodes one rule document, local or remote pack. The
 // presence of serial and key_id makes a document a remote pack, and the two
@@ -246,6 +248,11 @@ func finalizeDocument(doc *Document, rawRules json.RawMessage) error {
 			if err != nil {
 				return err
 			}
+			if rawOptions, ok := fields["options"]; ok {
+				if err := strictDecodeRuleOptions(rawOptions, path); err != nil {
+					return err
+				}
+			}
 			rule := &doc.Rules[i]
 			rule.Category = defaulted(rule.Category, fields, "category", CategoryCustom)
 			rule.Scope = defaulted(rule.Scope, fields, "scope", ScopeRequest)
@@ -269,19 +276,6 @@ func finalizeDocument(doc *Document, rawRules json.RawMessage) error {
 	for i := range doc.Rules {
 		if err := validateRule(&doc.Rules[i], i, ids); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-// checkLiterals enforces the entry-count bound and the per-literal byte bound.
-func checkLiterals(values []string, maxEntries int, path string) error {
-	if len(values) > maxEntries {
-		return fieldError(ErrBoundExceeded, path, "%d entries exceed the %d-entry bound", len(values), maxEntries)
-	}
-	for i, value := range values {
-		if len(value) > MaxLiteralBytes {
-			return fieldError(ErrBoundExceeded, fmt.Sprintf("%s[%d]", path, i), "literal is %d bytes, above the %d-byte bound", len(value), MaxLiteralBytes)
 		}
 	}
 	return nil
@@ -314,6 +308,9 @@ func validateRule(rule *RuleDoc, index int, ids map[string]bool) error {
 	}
 	if len(rule.Pattern) > MaxPatternBytes {
 		return fieldError(ErrBoundExceeded, path+".pattern", "pattern is %d bytes, above the %d-byte bound", len(rule.Pattern), MaxPatternBytes)
+	}
+	if err := validateRuleOptions(rule, path); err != nil {
+		return err
 	}
 	if rule.Type == TypeCommand {
 		return nil
