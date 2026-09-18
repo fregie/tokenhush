@@ -74,6 +74,93 @@ func TestBuiltinDefaultSetExcludesEntropy(t *testing.T) {
 	}
 }
 
+// Built-in email fixtures are assembled from parts, so no contiguous
+// address-shaped literal reaches this source; the constants stay readable and
+// the joined address is a real input at run time.
+const (
+	builtinEmailLocal    = "alice"
+	builtinEmailDomain   = "example.com"
+	builtinEmailUnlisted = "example.zz"
+	builtinEmailReserved = "example.invalid"
+	builtinEmailBare     = "example"
+)
+
+// builtinEmailRuleOf returns the email rule of the built-in set rules, or fails
+// the test naming the ids the set actually carries.
+func builtinEmailRuleOf(t *testing.T, rules []Rule) Rule {
+	t.Helper()
+	for _, rule := range rules {
+		if rule.ID() == DetectorEmail {
+			return rule
+		}
+	}
+	t.Fatalf("built-in set %v carries no %s rule", builtinIDs(rules), DetectorEmail)
+	return nil
+}
+
+// TestBuiltinEmailRuleIsPrecise pins the precise email default through the
+// built-in table wiring — BuiltinDetectors() and the default enabled set — not
+// only through the NewEmailRule constructor: the rule the built-in table builds
+// must accept an example.com address with an exact len()-derived span and
+// reject an unlisted suffix, a reserved suffix and a TLD-less domain. It
+// restates the wiring the precision rests on: six rules in frozen id order, the
+// five non-entropy defaults, and the email rule built by NewEmailRuleBudget
+// with the documented default budget and no options matcher.
+func TestBuiltinEmailRuleIsPrecise(t *testing.T) {
+	all := BuiltinDetectors()
+	if len(all) != 6 {
+		t.Fatalf("BuiltinDetectors() returned %d rules, want exactly 6", len(all))
+	}
+	wantIDs := []string{DetectorPrefix, DetectorEmail, DetectorLuhn, DetectorJWT, DetectorPrivateKey, DetectorHighEntropy}
+	if got := builtinIDs(all); !slices.Equal(got, wantIDs) {
+		t.Fatalf("BuiltinDetectors() ids = %v, want frozen order %v", got, wantIDs)
+	}
+	defaults := EnabledBuiltinDetectors(BuiltinConfig{})
+	if len(defaults) != 5 {
+		t.Fatalf("EnabledBuiltinDetectors(BuiltinConfig{}) returned %d rules, want the five non-entropy defaults", len(defaults))
+	}
+
+	allowed := builtinEmailLocal + "@" + builtinEmailDomain
+	content := "reach " + allowed + " today"
+	want := Span{Start: len("reach "), End: len("reach ") + len(allowed)}
+
+	for _, tc := range []struct {
+		name  string
+		rules []Rule
+	}{
+		{"BuiltinDetectors", all},
+		{"EnabledBuiltinDetectors", defaults},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rule := builtinEmailRuleOf(t, tc.rules)
+			builtin, ok := rule.(emailRule)
+			if !ok {
+				t.Fatalf("built-in %s rule is %T, want the emailRule built by NewEmailRuleBudget", DetectorEmail, rule)
+			}
+			if builtin.matcher != nil {
+				t.Errorf("built-in %s rule carries an options matcher; the default must read the package suffix table", DetectorEmail)
+			}
+			if builtin.budget != PrimitiveByteBudgetBytes {
+				t.Errorf("built-in %s rule budget = %d, want the documented default %d", DetectorEmail, builtin.budget, PrimitiveByteBudgetBytes)
+			}
+
+			if got := rule.Inspect([]byte(content)); len(got) != 1 || got[0] != want {
+				t.Errorf("Inspect(%q) = %v, want exactly [%v]", content, got, want)
+			}
+			rejected := map[string]string{
+				"unlisted suffix": builtinEmailLocal + "@" + builtinEmailUnlisted,
+				"reserved suffix": builtinEmailLocal + "@" + builtinEmailReserved,
+				"no TLD":          builtinEmailLocal + "@" + builtinEmailBare,
+			}
+			for name, address := range rejected {
+				if got := rule.Inspect([]byte("reach " + address + " today")); len(got) != 0 {
+					t.Errorf("%s: Inspect(%q) = %v, want no span", name, address, got)
+				}
+			}
+		})
+	}
+}
+
 // TestBuiltinsRegisterThroughTheRegistry proves the built-ins take the same
 // registration path as any other rule and that the core stamps OriginBuiltin:
 // the default set flags nothing on a high-entropy token because entropy is off,
