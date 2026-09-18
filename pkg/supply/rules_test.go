@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/fregie/tokenhush/pkg/filter"
+	"github.com/fregie/tokenhush/pkg/protocol"
 )
 
 // Fixture rule ids and documents. Every pack is schema v1, exactly like a real
@@ -827,5 +829,128 @@ func TestRulesPayloadCarriesOptions(t *testing.T) {
 		if !strings.Contains(err.Error(), "bogus") {
 			t.Errorf("decode error %q does not name the unknown field", err)
 		}
+	})
+}
+
+// TestRulesAcceptsAdditiveEmailOptions proves the signed-pack path carries an
+// ADDITIVE email options list through the floor and into compile: the pack is
+// accepted, the compiled rule's matcher really uses the declared suffix at a
+// label boundary, a byte-tail look-alike is rejected, and the built-in suffixes
+// stay active alongside the declared one.
+//
+// The declared suffix is deliberately absent from the built-in table (reserved
+// .example is not a public suffix), so the positive address can only match
+// through the options the pack declared: a builtin-only matcher yields zero
+// spans for it. The look-alike shares the raw tail "corp.example" but not a
+// dot-aligned label boundary — and .example is not built-in either, so a
+// builtin-only matcher cannot "rescue" it into a match.
+func TestRulesAcceptsAdditiveEmailOptions(t *testing.T) {
+	const (
+		declaredSuffix = "corp.example"
+		positive       = "alice" + "@" + "mail." + declaredSuffix
+		lookalike      = "bob" + "@" + "evil" + declaredSuffix
+		builtinAddress = "carol" + "@" + "example.com"
+	)
+	for _, absent := range []string{".corp.example", ".example"} {
+		if slices.Contains(filter.BuiltinEmailSuffixes(), absent) {
+			t.Fatalf("fixture assumption broken: the built-in table already contains %s", absent)
+		}
+	}
+
+	h := newRulesHarness(t)
+	rule := `{"id":"email.corp","type":"email","action":"redact",` +
+		`"options":{"email":{"suffixes":["` + declaredSuffix + `"]}}}`
+	h.publishPack(7, 1, rulesPackDoc(7, "", "", rule))
+	syncer := h.newSync(t)
+	if err := syncer.Sync(context.Background()); err != nil {
+		t.Fatalf("additive email options pack = %v, want accepted", err)
+	}
+	state := syncer.Active()
+	if state.Source != SourceRemote || state.Serial != 7 || state.Pack == nil || state.Pack.Len() != 1 {
+		t.Fatalf("active = {%s %d %v}, want the remote pack 7 with one rule", state.Source, state.Serial, state.Pack)
+	}
+
+	leafText := positive + " " + lookalike + " " + builtinAddress
+	findings, err := state.Pack.Evaluate(
+		[]protocol.Leaf{{Path: "/messages/0/content", Value: []byte(leafText), Length: len(leafText)}},
+		filter.ScopeRequest,
+	)
+	if err != nil {
+		t.Fatalf("Evaluate(accepted pack) = %v, want nil", err)
+	}
+	builtinStart := len(positive) + 1 + len(lookalike) + 1
+	want := []filter.Finding{
+		{RuleID: "email.corp", Category: filter.CategoryCustom, Action: filter.ActionRedact, LeafIndex: 0, Start: 0, End: len(positive), Confidence: filter.DefaultConfidence},
+		{RuleID: "email.corp", Category: filter.CategoryCustom, Action: filter.ActionRedact, LeafIndex: 0, Start: builtinStart, End: builtinStart + len(builtinAddress), Confidence: filter.DefaultConfidence},
+	}
+	if !reflect.DeepEqual(findings, want) {
+		t.Errorf("findings = %+v, want exactly the declared-suffix and built-in addresses %+v", findings, want)
+	}
+	t.Logf("QA: additive email pack accepted at serial 7; declared %s matched at [0,%d), look-alike %q produced no finding, built-in .com still matched at [%d,%d)",
+		declaredSuffix, len(positive), lookalike, builtinStart, builtinStart+len(builtinAddress))
+}
+
+// TestRulesRejectsEmailReplace proves the fourth floor rejection reaches the
+// sync path: a signed pack whose email rule sets replace:true is refused with
+// ErrFloorNarrowsEmail and the built-in defaults stay active — no partial
+// activation and no cache write. The ordering subtest makes the
+// floor-before-compile order observable: a pack that would also fail
+// CompileWithBudget reports the FLOOR rejection, so the floor is what the
+// operator sees.
+func TestRulesRejectsEmailReplace(t *testing.T) {
+	const replaceRule = `{"id":"email.corp","type":"email","action":"redact","options":{"email":{"replace":true}}}`
+
+	t.Run("a replace pack is refused and the built-ins stay active", func(t *testing.T) {
+		h := newRulesHarness(t)
+		h.publishPack(7, 1, rulesPackDoc(7, "", "", replaceRule))
+		syncer := h.newSync(t)
+		err := syncer.Sync(context.Background())
+		if !errors.Is(err, filter.ErrFloorNarrowsEmail) {
+			t.Fatalf("replace pack = %v, want ErrFloorNarrowsEmail", err)
+		}
+		if !errors.Is(err, filter.ErrFloor) {
+			t.Errorf("replace pack = %v, want the ErrFloor family", err)
+		}
+		var floorErr *filter.FloorError
+		if !errors.As(err, &floorErr) {
+			t.Fatalf("replace pack = %v, want a typed *filter.FloorError", err)
+		}
+		if floorErr.Item != "email.corp" {
+			t.Errorf("floor rejection names %q, want the offending rule id email.corp", floorErr.Item)
+		}
+		state := syncer.Active()
+		if state.Source != SourceBuiltin || state.Serial != 0 || state.Pack != nil {
+			t.Fatalf("active after refusal = {%s %d %v}, want the built-in defaults", state.Source, state.Serial, state.Pack)
+		}
+		h.noCacheDir(t, 7)
+		t.Logf("QA failure: email replace pack -> %v (item %q); built-ins active, no serial 7 cache", err, floorErr.Item)
+	})
+
+	t.Run("the floor rejects before compile runs", func(t *testing.T) {
+		h := newRulesHarness(t)
+		// rules[0] trips the floor (email replace) and would compile fine;
+		// rules[1] decodes but cannot compile ("pattern" is regex-only — the
+		// decoder bounds the pattern length but never checks it against the
+		// rule type). If CompileWithBudget ran first, the refusal would be a
+		// typed ErrCompile naming probe.pattern, never ErrFloorNarrowsEmail.
+		compileBait := `{"id":"probe.pattern","type":"email","action":"warn","pattern":"X"}`
+		h.publishPack(7, 1, rulesPackDoc(7, "", "", replaceRule+","+compileBait))
+		syncer := h.newSync(t)
+		err := syncer.Sync(context.Background())
+		if !errors.Is(err, filter.ErrFloorNarrowsEmail) {
+			t.Fatalf("dual-defect pack = %v, want the FLOOR rejection ErrFloorNarrowsEmail", err)
+		}
+		if errors.Is(err, filter.ErrCompile) {
+			t.Fatalf("dual-defect pack = %v, want no ErrCompile: the floor must run before compile", err)
+		}
+		var floorErr *filter.FloorError
+		if !errors.As(err, &floorErr) || floorErr.Item != "email.corp" {
+			t.Fatalf("dual-defect pack error = %v, want a *filter.FloorError naming email.corp", err)
+		}
+		if state := syncer.Active(); state.Source != SourceBuiltin || state.Serial != 0 || state.Pack != nil {
+			t.Fatalf("active after dual-defect refusal = {%s %d %v}, want the built-in defaults", state.Source, state.Serial, state.Pack)
+		}
+		h.noCacheDir(t, 7)
+		t.Logf("QA order: dual-defect (floor + compile) pack -> %v; compile never reported, built-ins active", err)
 	})
 }
