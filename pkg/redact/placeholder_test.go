@@ -45,11 +45,11 @@ func assertHexDigest(t *testing.T, p, digest string) {
 }
 
 // mustPlaceholder mints a placeholder and fails on error.
-func mustPlaceholder(t *testing.T, e *Engine, secret, kind string) string {
+func mustPlaceholder(t *testing.T, e *engine, secret, kind string) string {
 	t.Helper()
-	p, err := e.Placeholder([]byte(secret), kind)
+	p, err := e.placeholder([]byte(secret), kind)
 	if err != nil {
-		t.Fatalf("Placeholder(%q, %q): %v", secret, kind, err)
+		t.Fatalf("placeholder(%q, %q): %v", secret, kind, err)
 	}
 	return p
 }
@@ -58,7 +58,7 @@ func mustPlaceholder(t *testing.T, e *Engine, secret, kind string) string {
 // placeholder for the engine's lifetime, and the first one starts at the
 // shortest digest.
 func TestPlaceholderDeterministic(t *testing.T) {
-	e := NewEngine()
+	e := newEngine()
 	first := mustPlaceholder(t, e, "alice@example.com", "email")
 	typ, digest := parsePlaceholder(t, first)
 	if typ != "email" {
@@ -79,7 +79,7 @@ func TestPlaceholderDeterministic(t *testing.T) {
 // TestPlaceholderDistinctSecretsUnique: every distinct secret within one engine
 // gets its own placeholder.
 func TestPlaceholderDistinctSecretsUnique(t *testing.T) {
-	e := NewEngine()
+	e := newEngine()
 	seen := map[string]string{}
 	for i := 0; i < 2000; i++ {
 		secret := fmt.Sprintf("secret-value-%d", i)
@@ -99,7 +99,7 @@ func TestPlaceholderDistinctSecretsUnique(t *testing.T) {
 // TestPlaceholderSaltIsolation: engines seed independent random salts that stay
 // in memory, and uniqueness holds per engine.
 func TestPlaceholderSaltIsolation(t *testing.T) {
-	a, b := NewEngine(), NewEngine()
+	a, b := newEngine(), newEngine()
 	if len(a.salt) != saltLen || len(b.salt) != saltLen {
 		t.Fatalf("salt lengths = %d, %d, want %d", len(a.salt), len(b.salt), saltLen)
 	}
@@ -110,7 +110,7 @@ func TestPlaceholderSaltIsolation(t *testing.T) {
 		t.Fatal("salt is all zeroes: crypto/rand did not seed the engine")
 	}
 
-	for _, e := range []*Engine{a, b} {
+	for _, e := range []*engine{a, b} {
 		seen := map[string]bool{}
 		for i := 0; i < 256; i++ {
 			p := mustPlaceholder(t, e, fmt.Sprintf("s-%d", i), "kind")
@@ -125,7 +125,7 @@ func TestPlaceholderSaltIsolation(t *testing.T) {
 // TestPlaceholderTypeSanitization: the <type> segment keeps only [a-z0-9],
 // replaces everything else with '_', and is capped.
 func TestPlaceholderTypeSanitization(t *testing.T) {
-	e := NewEngine()
+	e := newEngine()
 
 	typ, _ := parsePlaceholder(t, mustPlaceholder(t, e, "x", "Email Address!"))
 	if want := "_mail__ddress_"; typ != want {
@@ -166,7 +166,7 @@ func TestPlaceholderCollisionGrowth(t *testing.T) {
 	alwaysSame := func(salt, kind string, secret []byte) []byte {
 		return bytes.Repeat([]byte{0xab}, 32)
 	}
-	e := NewEngine(withDigest(alwaysSame))
+	e := newEngine(withDigest(alwaysSame))
 
 	p1 := mustPlaceholder(t, e, "secret-1", "k")
 	p2 := mustPlaceholder(t, e, "secret-2", "k")
@@ -193,7 +193,7 @@ func TestPlaceholderCollisionGrowth(t *testing.T) {
 		t.Errorf("cached lookup = %q, want %q", again, p1)
 	}
 
-	exhausted := NewEngine(withDigest(alwaysSame))
+	exhausted := newEngine(withDigest(alwaysSame))
 	var last string
 	for i := 0; i < len(digestLadder); i++ {
 		last = mustPlaceholder(t, exhausted, fmt.Sprintf("s-%d", i), "k")
@@ -201,25 +201,25 @@ func TestPlaceholderCollisionGrowth(t *testing.T) {
 	if _, digest := parsePlaceholder(t, last); len(digest) != maxDigestLen {
 		t.Errorf("last ladder digest = %d chars, want %d", len(digest), maxDigestLen)
 	}
-	if _, err := exhausted.Placeholder([]byte("one-too-many"), "k"); !errors.Is(err, ErrDigestExhausted) {
-		t.Fatalf("error after ladder exhaustion = %v, want ErrDigestExhausted", err)
+	if _, err := exhausted.placeholder([]byte("one-too-many"), "k"); !errors.Is(err, errDigestExhausted) {
+		t.Fatalf("error after ladder exhaustion = %v, want errDigestExhausted", err)
 	}
 }
 
 // TestMaxPlaceholderLenBound: the reported bound is exactly the maximum length
 // the engine can produce, and no placeholder ever exceeds it.
 func TestMaxPlaceholderLenBound(t *testing.T) {
-	if want := len(placeholderPrefix) + maxTypeLen + 1 + maxDigestLen + len(placeholderSuffix); MaxPlaceholderLen != want {
-		t.Fatalf("MaxPlaceholderLen = %d, want %d", MaxPlaceholderLen, want)
+	if want := len(placeholderPrefix) + maxTypeLen + 1 + maxDigestLen + len(placeholderSuffix); maxPlaceholderLen != want {
+		t.Fatalf("maxPlaceholderLen = %d, want %d", maxPlaceholderLen, want)
 	}
-	if want := 89; MaxPlaceholderLen != want {
-		t.Fatalf("MaxPlaceholderLen = %d, want the frozen grammar's %d", MaxPlaceholderLen, want)
+	if want := 89; maxPlaceholderLen != want {
+		t.Fatalf("maxPlaceholderLen = %d, want the frozen grammar's %d", maxPlaceholderLen, want)
 	}
 
 	alwaysSame := func(salt, kind string, secret []byte) []byte {
 		return bytes.Repeat([]byte{0xcd}, 32)
 	}
-	e := NewEngine(withDigest(alwaysSame))
+	e := newEngine(withDigest(alwaysSame))
 	longKind := strings.Repeat("z", 100)
 
 	maxSeen := 0
@@ -228,11 +228,11 @@ func TestMaxPlaceholderLenBound(t *testing.T) {
 		if len(p) > maxSeen {
 			maxSeen = len(p)
 		}
-		if len(p) > MaxPlaceholderLen {
-			t.Fatalf("placeholder %q has length %d > MaxPlaceholderLen %d", p, len(p), MaxPlaceholderLen)
+		if len(p) > maxPlaceholderLen {
+			t.Fatalf("placeholder %q has length %d > maxPlaceholderLen %d", p, len(p), maxPlaceholderLen)
 		}
 	}
-	if maxSeen != MaxPlaceholderLen {
-		t.Fatalf("maximum produced length = %d, but MaxPlaceholderLen reports %d", maxSeen, MaxPlaceholderLen)
+	if maxSeen != maxPlaceholderLen {
+		t.Fatalf("maximum produced length = %d, but maxPlaceholderLen reports %d", maxSeen, maxPlaceholderLen)
 	}
 }

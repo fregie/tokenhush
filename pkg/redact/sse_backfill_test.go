@@ -18,7 +18,7 @@ func sseRecord(event, data string) string {
 func mintRestorable(t *testing.T, secret []byte, kind string) (*Backfiller, string) {
 	t.Helper()
 	back := NewBackfiller()
-	p, err := back.Mint(NewForwardWriter(NewEngine()), secret, kind)
+	p, err := back.Mint(NewForwardWriter(newEngine()), secret, kind)
 	if err != nil {
 		t.Fatalf("Mint(%q, %q): %v", secret, kind, err)
 	}
@@ -51,7 +51,7 @@ func TestSSEBackfillRestoresSplitAcrossThreeDeltas(t *testing.T) {
 	}
 
 	in := sseRecord("delta", p[:8]) + sseRecord("delta", p[8:20]) + sseRecord("delta", p[20:]+" tail")
-	out := NewSSEBackfiller(back).Process([]byte(in))
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
 
 	if got := bytes.Count(out, secret); got != 1 {
 		t.Fatalf("secret appears %d times, want exactly 1 in %q", got, out)
@@ -84,7 +84,7 @@ func TestSSEBackfillRestoresSplitAcrossThreeDeltas(t *testing.T) {
 	// The framing is byte-preserved: only the data values changed.
 	want := sseRecord("delta", "") + sseRecord("delta", "") + sseRecord("delta", string(secret)+" tail")
 	if string(out) != want {
-		t.Fatalf("Process:\n got %q\nwant %q", out, want)
+		t.Fatalf("process:\n got %q\nwant %q", out, want)
 	}
 }
 
@@ -96,9 +96,9 @@ func TestSSEBackfillNoMatchIsByteIdentical(t *testing.T) {
 	in := sseRecord("delta", "plain text, nothing to restore") +
 		sseRecord("message", "more plain text") +
 		"id: 7\nretry: 250\ndata: third record\n\n"
-	out := NewSSEBackfiller(back).Process([]byte(in))
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
 	if !bytes.Equal(out, []byte(in)) {
-		t.Fatalf("Process changed a no-match stream:\n got %q\nwant %q", out, in)
+		t.Fatalf("process changed a no-match stream:\n got %q\nwant %q", out, in)
 	}
 }
 
@@ -109,14 +109,14 @@ func TestSSEBackfillPreservesNonDeltaFields(t *testing.T) {
 	back, p := mintRestorable(t, []byte(secret), "email")
 
 	in := "id: 42\nretry: 1000\n: keepalive\nevent: delta\ndata: " + p + "\n\n"
-	out := NewSSEBackfiller(back).Process([]byte(in))
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
 	want := "id: 42\nretry: 1000\n: keepalive\nevent: delta\ndata: " + secret + "\n\n"
 	if string(out) != want {
-		t.Fatalf("Process:\n got %q\nwant %q", out, want)
+		t.Fatalf("process:\n got %q\nwant %q", out, want)
 	}
 	for _, kept := range []string{"id: 42\n", "retry: 1000\n", ": keepalive\n"} {
 		if !strings.Contains(string(out), kept) {
-			t.Fatalf("Process dropped %q from %q", kept, out)
+			t.Fatalf("process dropped %q from %q", kept, out)
 		}
 	}
 }
@@ -131,9 +131,9 @@ func TestSSEBackfillDoneAndPingPassThrough(t *testing.T) {
 		"event: ping\ndata: alive\n\n",
 		"data: [DONE]\n\nevent: ping\ndata: alive\n\n",
 	} {
-		out := NewSSEBackfiller(back).Process([]byte(in))
+		out := NewSSEBackfiller(back, nil).process([]byte(in))
 		if !bytes.Equal(out, []byte(in)) {
-			t.Fatalf("Process(%q) = %q, want byte-identical passthrough", in, out)
+			t.Fatalf("process(%q) = %q, want byte-identical passthrough", in, out)
 		}
 	}
 }
@@ -145,14 +145,14 @@ func TestSSEBackfillOutputLengthAccountsForReplacement(t *testing.T) {
 	back, p := mintRestorable(t, secret, "email")
 
 	in := sseRecord("delta", "before "+p+" after")
-	out := NewSSEBackfiller(back).Process([]byte(in))
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
 	if got, want := len(out), len(in)-len(p)+len(secret); got != want {
 		t.Fatalf("len(out) = %d, want %d (input %d - placeholder %d + secret %d)",
 			got, want, len(in), len(p), len(secret))
 	}
 	want := sseRecord("delta", "before "+string(secret)+" after")
 	if string(out) != want {
-		t.Fatalf("Process:\n got %q\nwant %q", out, want)
+		t.Fatalf("process:\n got %q\nwant %q", out, want)
 	}
 }
 
@@ -163,9 +163,9 @@ func TestSSEBackfillForeignPlaceholderUnchanged(t *testing.T) {
 	const foreign = "__PII_email_deadbeefcafe__"
 
 	in := sseRecord("delta", "unknown "+foreign+" stays")
-	out := NewSSEBackfiller(back).Process([]byte(in))
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
 	if !bytes.Equal(out, []byte(in)) {
-		t.Fatalf("Process changed a foreign placeholder:\n got %q\nwant %q", out, in)
+		t.Fatalf("process changed a foreign placeholder:\n got %q\nwant %q", out, in)
 	}
 	if !bytes.Contains(out, []byte(foreign)) {
 		t.Fatalf("foreign placeholder %q vanished from %q", foreign, out)
@@ -179,8 +179,8 @@ func TestSSEBackfillTailPrefixFlushedLiterally(t *testing.T) {
 	back, _ := mintRestorable(t, []byte("alice@example.com"), "email")
 
 	in := sseRecord("delta", "hello __PII_")
-	out := NewSSEBackfiller(back).Process([]byte(in))
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
 	if !bytes.Equal(out, []byte(in)) {
-		t.Fatalf("Process:\n got %q\nwant the literal tail flushed back: %q", out, in)
+		t.Fatalf("process:\n got %q\nwant the literal tail flushed back: %q", out, in)
 	}
 }

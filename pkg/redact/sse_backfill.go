@@ -1,7 +1,6 @@
 package redact
 
 import (
-	"bytes"
 	"strings"
 
 	"github.com/fregie/tokenhush/pkg/protocol"
@@ -19,7 +18,7 @@ const placeholderLiteralPrefix = "__PII_"
 type placeholderMatcher struct{}
 
 // MaxTokenLen reports the worst-case placeholder length.
-func (placeholderMatcher) MaxTokenLen() int { return MaxPlaceholderLen }
+func (placeholderMatcher) MaxTokenLen() int { return maxPlaceholderLen }
 
 // TokenLen returns the byte length of the complete placeholder at the start of
 // p, or 0 when p starts with an incomplete or invalid one. Every type length is
@@ -120,74 +119,192 @@ func isTypeChar(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'
 }
 
+// TokenRestorer resolves one complete placeholder token to its secret.
+// pkg/proxy's Backfiller seam and this package's Backfiller both satisfy it;
+// the SSE reassembler holds the session's reverse map and exclusion set
+// through this interface alone.
+type TokenRestorer interface {
+	Backfill([]byte) []byte
+}
+
+// SSEObserver sees each decoded event before its bytes become final. A
+// non-nil return aborts the stream: every held byte is dropped and the
+// returned bytes become the sole output of the Write or Flush that decoded
+// the event. pkg/proxy injects the response-scoped Block decision here.
+type SSEObserver func(ev protocol.Event) []byte
+
 // SSEBackfiller restores placeholders a stream split across SSE data deltas.
-// It reuses the session Backfiller's reverse map and exclusion set, so only a
+// It owns the stream's single bounded accumulator -- one
+// protocol.BackfillWriter over the frozen placeholder grammar -- and one
+// protocol.Decoder, and pkg/proxy's SSE handler is its production driver. It
+// reuses the session Backfiller's reverse map and exclusion set, so only a
 // token this session minted is ever expanded: an unknown, foreign or excluded
 // token comes back unchanged and is never fabricated into a secret.
-type SSEBackfiller struct{ back *Backfiller }
+//
+// The writer lags the decoder by exactly one data event: a segment's
+// replacement content is tentative while it is the newest data event fed and
+// final once a later data event has been fed, because the writer's held tail
+// can only ever belong to the last fed event. Released segments therefore
+// exclude the newest data segment, so a placeholder split across deltas is
+// restored exactly once, in the completing event, and never emitted in
+// pieces. Non-data segments (comments, event:/id:/retry: lines, blank lines)
+// are never modified, but they are released strictly in order behind any
+// pending data segment. Flush appends the writer's held tail to the pending
+// segment and releases everything, including bytes the decoder never
+// dispatched, so a ping- or comment-only stream is byte-identical.
+type SSEBackfiller struct {
+	restorer TokenRestorer
+	observer SSEObserver
+	decoder  *protocol.Decoder
+	writer   *protocol.BackfillWriter
 
-// NewSSEBackfiller returns a backfiller driven by back's session map. A nil
-// backfiller gets a fresh, empty one so no token can expand to a secret.
-func NewSSEBackfiller(back *Backfiller) *SSEBackfiller {
-	if back == nil {
-		back = NewBackfiller()
+	segments []sseSegment
+	tail     []byte
+	closed   bool
+}
+
+// sseSegment is one decoded event's exact bytes plus, for an event with exactly
+// one canonical data: line, the replacement content its data value carries.
+type sseSegment struct {
+	raw     []byte
+	span    protocol.Span
+	content []byte
+	hasSpan bool
+}
+
+// bytes renders the segment's client-bound bytes: the record verbatim, with its
+// single data value replaced by content when the segment carries a span. A nil
+// content empties the value; every framing byte is untouched.
+func (seg sseSegment) bytes() []byte {
+	if !seg.hasSpan {
+		return seg.raw
 	}
-	return &SSEBackfiller{back: back}
+	return append(append(append([]byte(nil), seg.raw[:seg.span.Start]...), seg.content...), seg.raw[seg.span.End:]...)
 }
 
-// sseSpan is one data-value byte range of the input plus the bytes the writer
-// released for it.
-type sseSpan struct {
-	start, end int
-	out        []byte
+// NewSSEBackfiller returns a streaming reassembler driven by restorer's
+// session map. A nil restorer gets a fresh, empty backfiller so no token can
+// expand to a secret. A nil observer is the identity: nothing ever aborts.
+func NewSSEBackfiller(restorer TokenRestorer, observer SSEObserver) *SSEBackfiller {
+	if restorer == nil {
+		restorer = NewBackfiller()
+	}
+	return &SSEBackfiller{
+		restorer: restorer,
+		observer: observer,
+		decoder:  protocol.NewDecoder(),
+		writer:   protocol.NewBackfillWriter(placeholderMatcher{}, restorer.Backfill),
+	}
 }
 
-// Process restores every placeholder a delta split and returns the rewritten
-// stream. The splice-by-offset pass copies the input verbatim and rewrites only
-// single "data:" value spans, so SSE framing, field lines, comments and byte
-// counts are preserved and no byte is ever dropped. Held bytes always sit at
-// the tail of the last-fed data, so the final Flush returns an unfinished
-// prefix to that same span and a stream with nothing to restore comes back
-// byte-identical.
-func (s *SSEBackfiller) Process(stream []byte) []byte {
-	dec := protocol.NewDecoder()
-	events, _ := dec.Feed(stream)
-	tail, _ := dec.Close()
-	events = append(events, tail...)
+// Write accepts the next upstream chunk and returns the bytes that are final
+// now: the released prefix of the segment queue. A chunk may split records at
+// any byte boundary. After Flush or an abort it returns nothing.
+func (s *SSEBackfiller) Write(chunk []byte) []byte {
+	if s.closed {
+		return nil
+	}
+	s.tail = append(s.tail, chunk...)
+	events, _ := s.decoder.Feed(chunk)
+	return s.consume(events)
+}
 
-	w := protocol.NewBackfillWriter(placeholderMatcher{}, func(tok []byte) []byte {
-		return s.back.Backfill(tok)
-	})
+// Flush finalizes the stream: the decoder's trailing record is processed, the
+// writer's held tail is appended to the pending data segment, and every
+// remaining segment plus the never-dispatched tail is released in order. It is
+// idempotent: a second call returns nothing.
+func (s *SSEBackfiller) Flush() []byte {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	events, _ := s.decoder.Close()
+	out := s.consume(events)
+	if i := s.pendingIndex(); i >= 0 {
+		s.segments[i].content = append(s.segments[i].content, s.writer.Flush()...)
+	}
+	out = append(out, s.release(len(s.segments))...)
+	out = append(out, s.tail...)
+	s.tail = nil
+	return out
+}
 
-	spans := make([]sseSpan, 0, len(events))
-	cursor := 0
+// Held reports how many bytes the single bounded accumulator is holding back,
+// never more than protocol.SSEBackfillHoldbackBytes.
+func (s *SSEBackfiller) Held() int { return s.writer.Held() }
+
+// Closed reports whether Flush or an abort terminated the stream.
+func (s *SSEBackfiller) Closed() bool { return s.closed }
+
+func (s *SSEBackfiller) process(stream []byte) []byte {
+	return append(s.Write(stream), s.Flush()...)
+}
+
+// consume processes decoded events in order: each event is offered to the
+// observer, an abort returns that observer's bytes as the only output, and
+// every segment that became final is released.
+func (s *SSEBackfiller) consume(events []protocol.Event) []byte {
+	var out []byte
 	for _, ev := range events {
-		idx := bytes.Index(stream[cursor:], ev.Raw)
-		if idx < 0 {
-			continue
+		s.drop(len(ev.Raw))
+		if s.observer != nil {
+			if aborted := s.observer(ev); aborted != nil {
+				s.segments, s.tail = nil, nil
+				s.closed = true
+				return aborted
+			}
 		}
-		abs := cursor + idx
-		cursor = abs + len(ev.Raw)
-		if len(ev.DataSpans) != 1 {
-			continue
-		}
-		sp := ev.DataSpans[0]
-		start, end := abs+sp.Start, abs+sp.End
-		spans = append(spans, sseSpan{start: start, end: end, out: w.Feed(stream[start:end])})
+		out = append(out, s.accept(ev)...)
 	}
-	if len(spans) == 0 {
-		return stream
-	}
+	return out
+}
 
-	out := make([]byte, 0, len(stream))
-	prev := 0
-	for i, sp := range spans {
-		out = append(out, stream[prev:sp.start]...)
-		out = append(out, sp.out...)
-		if i == len(spans)-1 {
-			out = append(out, w.Flush()...)
-		}
-		prev = sp.end
+// accept turns one decoded event into a segment and releases every segment that
+// has become final. A new data segment makes every earlier segment final, so
+// the released prefix is returned; a non-data segment is never modified and is
+// released immediately unless a pending data segment still gates it.
+func (s *SSEBackfiller) accept(ev protocol.Event) []byte {
+	seg := sseSegment{raw: ev.Raw}
+	if len(ev.DataSpans) == 1 {
+		seg.hasSpan, seg.span = true, ev.DataSpans[0]
+		seg.content = s.writer.Feed(seg.raw[seg.span.Start:seg.span.End])
 	}
-	return append(out, stream[prev:]...)
+	s.segments = append(s.segments, seg)
+	if seg.hasSpan {
+		return s.release(len(s.segments) - 1)
+	}
+	if s.pendingIndex() >= 0 {
+		return nil
+	}
+	return s.release(len(s.segments))
+}
+
+// release renders segments[:n], removes them from the queue and returns them.
+func (s *SSEBackfiller) release(n int) []byte {
+	if n <= 0 {
+		return nil
+	}
+	var out []byte
+	for _, seg := range s.segments[:n] {
+		out = append(out, seg.bytes()...)
+	}
+	s.segments = s.segments[n:]
+	return out
+}
+
+// pendingIndex returns the index of the queued data segment, or -1 when none is
+// pending: no later data event has finalized it. At most one exists, because a
+// new data segment releases everything before it.
+func (s *SSEBackfiller) pendingIndex() int {
+	for i := range s.segments {
+		if s.segments[i].hasSpan {
+			return i
+		}
+	}
+	return -1
+}
+
+// drop consumes n bytes of dispatched events from the never-dispatched tail.
+func (s *SSEBackfiller) drop(n int) {
+	s.tail = append(s.tail[:0], s.tail[min(n, len(s.tail)):]...)
 }

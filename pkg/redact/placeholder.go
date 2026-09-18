@@ -35,48 +35,48 @@ const (
 	saltLen = 32
 )
 
-// MaxPlaceholderLen is the worst-case length of any placeholder an Engine can
+// maxPlaceholderLen is the worst-case length of any placeholder an engine can
 // mint: a capped type segment plus a full-length digest, wrapped in the literal
 // affixes.
-const MaxPlaceholderLen = len(placeholderPrefix) + maxTypeLen + len(placeholderSep) + maxDigestLen + len(placeholderSuffix)
+const maxPlaceholderLen = len(placeholderPrefix) + maxTypeLen + len(placeholderSep) + maxDigestLen + len(placeholderSuffix)
 
 // digestLadder is the deterministic growth sequence for the <digest> segment.
 var digestLadder = [...]int{minDigestLen, 16, 24, 32, 48, maxDigestLen}
 
-// ErrDigestExhausted reports that no length in the digest ladder yielded a
+// errDigestExhausted reports that no length in the digest ladder yielded a
 // placeholder unique within the engine session.
-var ErrDigestExhausted = errors.New("redact: digest ladder exhausted")
+var errDigestExhausted = errors.New("redact: digest ladder exhausted")
 
-// DigestFunc computes the raw digest bytes for a sanitized (salt, kind, secret)
+// digestFunc computes the raw digest bytes for a sanitized (salt, kind, secret)
 // triple. The default is HMAC-SHA256 keyed by the engine salt.
-type DigestFunc func(salt, kind string, secret []byte) []byte
+type digestFunc func(salt, kind string, secret []byte) []byte
 
-// option configures an Engine at construction time.
-type option func(*Engine)
+// option configures an engine at construction time.
+type option func(*engine)
 
 // withDigest replaces the default digest function. Tests inject digests that
 // collide on purpose; production code never does.
-func withDigest(fn DigestFunc) option {
-	return func(e *Engine) {
+func withDigest(fn digestFunc) option {
+	return func(e *engine) {
 		if fn != nil {
 			e.digest = fn
 		}
 	}
 }
 
-// Engine mints session-scoped placeholders. It keeps ONLY the forward map
+// engine mints session-scoped placeholders. It keeps ONLY the forward map
 // (secret -> placeholder). It has no reverse map and no restore path.
-type Engine struct {
-	digest  DigestFunc
+type engine struct {
+	digest  digestFunc
 	salt    []byte
 	mu      sync.Mutex
 	forward map[string]string
 }
 
-// NewEngine returns an Engine holding a fresh 32-byte salt that lives in memory
+// newEngine returns an engine holding a fresh 32-byte salt that lives in memory
 // only and is never persisted.
-func NewEngine(opts ...option) *Engine {
-	e := &Engine{
+func newEngine(opts ...option) *engine {
+	e := &engine{
 		digest:  defaultDigest,
 		salt:    randomSalt(),
 		forward: make(map[string]string),
@@ -87,10 +87,10 @@ func NewEngine(opts ...option) *Engine {
 	return e
 }
 
-// Placeholder returns the placeholder for secret as kind. Within one Engine the
+// placeholder returns the placeholder for secret as kind. Within one engine the
 // same (kind, secret) always yields the same placeholder, and distinct secrets
 // never share one: on collision the digest grows along digestLadder.
-func (e *Engine) Placeholder(secret []byte, kind string) (string, error) {
+func (e *engine) placeholder(secret []byte, kind string) (string, error) {
 	clean := sanitizeKind(kind)
 	key := clean + "\x00" + string(secret)
 
@@ -112,11 +112,11 @@ func (e *Engine) Placeholder(secret []byte, kind string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", ErrDigestExhausted
+	return "", errDigestExhausted
 }
 
 // taken reports whether candidate is already assigned to another secret.
-func (e *Engine) taken(candidate string) bool {
+func (e *engine) taken(candidate string) bool {
 	for _, existing := range e.forward {
 		if existing == candidate {
 			return true

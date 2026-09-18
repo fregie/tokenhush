@@ -6,9 +6,6 @@ import (
 	"sync"
 )
 
-// BackfillFunc restores every mapped placeholder in a client-bound body.
-type BackfillFunc func(body []byte) []byte
-
 // Backfiller owns the session-scoped REVERSE map (placeholder -> secret).
 // It is the ONLY place a reverse map exists; a restart creates a new, empty
 // Backfiller so a stale placeholder surfaces rather than a wrong secret.
@@ -66,7 +63,7 @@ func (b *Backfiller) Backfill(body []byte) []byte {
 	snapshot := b.snapshot()
 	out := body
 	for _, p := range snapshot {
-		if b.Excludes(p.secret) {
+		if b.excludes(p.secret) {
 			continue
 		}
 		out = bytes.ReplaceAll(out, []byte(p.placeholder), p.secret)
@@ -89,6 +86,3 @@ func (b *Backfiller) snapshot() []pair {
 	})
 	return pairs
 }
-
-// Func returns b.Backfill as a BackfillFunc.
-func (b *Backfiller) Func() BackfillFunc { return b.Backfill }

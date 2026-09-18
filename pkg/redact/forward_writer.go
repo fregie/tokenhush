@@ -3,32 +3,34 @@ package redact
 import "bytes"
 
 // ForwardWriter is the sole outbound substitute. It holds ONLY the session
-// forward map (secret -> placeholder) inside its Engine: it has NO reverse map
+// forward map (secret -> placeholder) inside its engine: it has NO reverse map
 // and NO restore/backfill method, so an outbound body can never be expanded
 // back into a secret.
 type ForwardWriter struct {
-	engine *Engine
+	engine *engine
 }
 
-// NewForwardWriter returns the outbound writer bound to a session Engine. A
+// NewForwardWriter returns the outbound writer bound to a session engine. A
 // nil engine gets a fresh one so the writer is always usable.
-func NewForwardWriter(e *Engine) *ForwardWriter {
+func NewForwardWriter(e *engine) *ForwardWriter {
 	if e == nil {
-		e = NewEngine()
+		e = newEngine()
 	}
 	return &ForwardWriter{engine: e}
 }
 
-// Placeholder mints (or reuses) the session-scoped placeholder for secret.
+// Placeholder mints (or reuses) the session-scoped placeholder for secret. It is
+// the writer's only exported operation: pinned by
+// TestInvariant1NeverBackfillOutbound ("shape: forward-only writer").
 func (w *ForwardWriter) Placeholder(secret []byte, kind string) (string, error) {
-	return w.engine.Placeholder(secret, kind)
+	return w.engine.placeholder(secret, kind)
 }
 
-// RedactBody replaces every occurrence of each secret in body with the
+// redactBody replaces every occurrence of each secret in body with the
 // placeholder the writer minted for it. Re-application is idempotent: a
 // placeholder already in the body is left verbatim, and nothing in the writer
 // can turn a placeholder back into a secret.
-func RedactBody(w *ForwardWriter, body []byte, secrets [][]byte, kind string) ([]byte, error) {
+func redactBody(w *ForwardWriter, body []byte, secrets [][]byte, kind string) ([]byte, error) {
 	out := body
 	for _, secret := range secrets {
 		if len(secret) == 0 {

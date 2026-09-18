@@ -21,7 +21,7 @@ func sseRecord(event, data string) string {
 func sseMint(t *testing.T, secret []byte, kind string) (*redact.Backfiller, string) {
 	t.Helper()
 	back := redact.NewBackfiller()
-	p, err := back.Mint(redact.NewForwardWriter(redact.NewEngine()), secret, kind)
+	p, err := back.Mint(redact.NewForwardWriter(nil), secret, kind)
 	if err != nil {
 		t.Fatalf("Mint(%q, %q): %v", secret, kind, err)
 	}
@@ -233,7 +233,7 @@ func TestSSEStreamOpenWindowFlushesCleanly(t *testing.T) {
 		if !bytes.Equal(out, []byte(in)) {
 			t.Fatalf("stream %q came back as %q, want the literal window flushed back", in, out)
 		}
-		if !h.Closed() {
+		if !h.closed() {
 			t.Fatalf("stream %q is not closed after Flush", in)
 		}
 		if held := h.Held(); held != 0 {
@@ -267,7 +267,7 @@ func TestSSEResponseBlockEmitsErrorRecordAndCloses(t *testing.T) {
 		if seen := evaluator.seen(); len(seen) != 1 || string(seen[0]) != `{"hi":1}` {
 			t.Errorf("evaluator saw %q, want the first whole event exactly once", seen)
 		}
-		if !h.Closed() {
+		if !h.closed() {
 			t.Error("stream is not closed after a Block")
 		}
 		if got := counters.ContentPolicyBlocks(); got != 1 {
@@ -304,30 +304,35 @@ func TestSSEResponseBlockEmitsErrorRecordAndCloses(t *testing.T) {
 			t.Errorf("counters moved on a Warn: content=%d rule=%d walk=%d",
 				counters.ContentPolicyBlocks(), counters.RuleBlocks(), counters.WalkSkips())
 		}
-		if !h.Closed() {
+		if !h.closed() {
 			t.Error("stream is not closed after Flush")
 		}
 	})
 }
 
-// TestSSEStreamExactlyOneAccumulator: the handler holds exactly one
-// *protocol.BackfillWriter and no second accumulator surface with its own cap.
+// TestSSEStreamExactlyOneAccumulator: the stream path holds exactly one
+// *protocol.BackfillWriter -- in pkg/redact's canonical reassembler -- and the
+// proxy handler holds no accumulator surface of its own.
 func TestSSEStreamExactlyOneAccumulator(t *testing.T) {
 	writerType := reflect.TypeOf(&protocol.BackfillWriter{})
-	typ := reflect.TypeOf(SSEHandler{})
-	accumulators := 0
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
+	for i := 0; i < reflect.TypeOf(SSEHandler{}).NumField(); i++ {
+		field := reflect.TypeOf(SSEHandler{}).Field(i)
 		if field.Type == writerType {
-			accumulators++
-			continue
+			t.Errorf("SSEHandler field %s duplicates the reassembler's accumulator", field.Name)
 		}
 		if isBoundedAccumulator(field.Type) {
 			t.Errorf("field %s exposes a second bounded accumulator", field.Name)
 		}
 	}
+	accumulators := 0
+	typ := reflect.TypeOf(redact.SSEBackfiller{})
+	for i := 0; i < typ.NumField(); i++ {
+		if typ.Field(i).Type == writerType {
+			accumulators++
+		}
+	}
 	if accumulators != 1 {
-		t.Fatalf("SSEHandler holds %d *protocol.BackfillWriter fields, want exactly 1", accumulators)
+		t.Fatalf("redact.SSEBackfiller holds %d *protocol.BackfillWriter fields, want exactly 1", accumulators)
 	}
 	if got := NewSSEHandler(SSEResponseConfig{}).Held(); got != 0 {
 		t.Errorf("Held() = %d on a fresh handler, want 0", got)

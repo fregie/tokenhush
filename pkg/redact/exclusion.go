@@ -9,8 +9,8 @@ func (b *Backfiller) ExcludeFromBackfill(values ...[]byte) {
 	}
 }
 
-// Excludes reports whether value is in the exclusion set.
-func (b *Backfiller) Excludes(value []byte) bool {
+// excludes reports whether value is in the exclusion set.
+func (b *Backfiller) excludes(value []byte) bool {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	_, ok := b.excluded[string(value)]

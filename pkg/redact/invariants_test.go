@@ -114,27 +114,27 @@ func assertPlaceholderOnlySurface(t *testing.T, typ reflect.Type) {
 func TestInvariant1NeverBackfillOutbound(t *testing.T) {
 	t.Run("shape: forward-only writer", func(t *testing.T) {
 		assertForwardOnlyShape(t, reflect.TypeOf(ForwardWriter{}))
-		assertForwardOnlyShape(t, reflect.TypeOf(Engine{}))
+		assertForwardOnlyShape(t, reflect.TypeOf(engine{}))
 		assertNoRestoreMethod(t, reflect.TypeOf(&ForwardWriter{}))
-		assertNoRestoreMethod(t, reflect.TypeOf(&Engine{}))
+		assertNoRestoreMethod(t, reflect.TypeOf(&engine{}))
 		assertPlaceholderOnlySurface(t, reflect.TypeOf(&ForwardWriter{}))
 	})
 
 	t.Run("applied redactions produce placeholders", func(t *testing.T) {
-		w := NewForwardWriter(NewEngine())
+		w := NewForwardWriter(newEngine())
 		secret := []byte("alice@example.com")
 		body := []byte("to alice@example.com and cc alice@example.com please")
 
-		out, err := RedactBody(w, body, [][]byte{secret}, "email")
+		out, err := redactBody(w, body, [][]byte{secret}, "email")
 		if err != nil {
-			t.Fatalf("RedactBody: %v", err)
+			t.Fatalf("redactBody: %v", err)
 		}
 		if bytes.Contains(out, secret) {
 			t.Fatalf("secret survived redaction: %q", out)
 		}
 		p, err := w.Placeholder(secret, "email")
 		if err != nil {
-			t.Fatalf("Placeholder: %v", err)
+			t.Fatalf("placeholder: %v", err)
 		}
 		if got := bytes.Count(out, []byte(p)); got != 2 {
 			t.Fatalf("placeholder %q occurs %d times, want 2 in %q", p, got, out)
@@ -142,17 +142,17 @@ func TestInvariant1NeverBackfillOutbound(t *testing.T) {
 	})
 
 	t.Run("re-application is idempotent", func(t *testing.T) {
-		w := NewForwardWriter(NewEngine())
+		w := NewForwardWriter(newEngine())
 		secrets := [][]byte{[]byte("alice@example.com"), []byte("bob@example.com")}
 		body := []byte("alice@example.com wrote to bob@example.com about alice@example.com")
 
-		first, err := RedactBody(w, body, secrets, "email")
+		first, err := redactBody(w, body, secrets, "email")
 		if err != nil {
-			t.Fatalf("first RedactBody: %v", err)
+			t.Fatalf("first redactBody: %v", err)
 		}
-		second, err := RedactBody(w, first, secrets, "email")
+		second, err := redactBody(w, first, secrets, "email")
 		if err != nil {
-			t.Fatalf("second RedactBody: %v", err)
+			t.Fatalf("second redactBody: %v", err)
 		}
 		if !bytes.Equal(first, second) {
 			t.Fatalf("re-application changed the body:\n first: %q\nsecond: %q", first, second)
@@ -160,19 +160,19 @@ func TestInvariant1NeverBackfillOutbound(t *testing.T) {
 	})
 
 	t.Run("body with a known placeholder is forwarded intact", func(t *testing.T) {
-		w := NewForwardWriter(NewEngine())
+		w := NewForwardWriter(newEngine())
 		secret := []byte("alice@example.com")
 		known, err := w.Placeholder(secret, "email")
 		if err != nil {
-			t.Fatalf("Placeholder: %v", err)
+			t.Fatalf("placeholder: %v", err)
 		}
 		body := []byte("already redacted: " + known + " stays")
 
 		// An unrelated redaction set never touches a placeholder it does not
 		// mint, and never expands one it knows.
-		out, err := RedactBody(w, body, [][]byte{[]byte("carol@example.com")}, "email")
+		out, err := redactBody(w, body, [][]byte{[]byte("carol@example.com")}, "email")
 		if err != nil {
-			t.Fatalf("RedactBody unrelated: %v", err)
+			t.Fatalf("redactBody unrelated: %v", err)
 		}
 		if !bytes.Equal(out, body) {
 			t.Fatalf("unrelated redaction changed the body: %q", out)
@@ -180,9 +180,9 @@ func TestInvariant1NeverBackfillOutbound(t *testing.T) {
 
 		// Even with the preimage in the redaction set, the placeholder is
 		// forwarded verbatim: the outbound path has no backfill.
-		out, err = RedactBody(w, body, [][]byte{secret}, "email")
+		out, err = redactBody(w, body, [][]byte{secret}, "email")
 		if err != nil {
-			t.Fatalf("RedactBody with preimage: %v", err)
+			t.Fatalf("redactBody with preimage: %v", err)
 		}
 		if !bytes.Equal(out, body) {
 			t.Fatalf("known placeholder was not forwarded intact: %q", out)

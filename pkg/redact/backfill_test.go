@@ -8,7 +8,7 @@ import (
 )
 
 func TestBackfillRestoresMappedPlaceholder(t *testing.T) {
-	w := NewForwardWriter(NewEngine())
+	w := NewForwardWriter(newEngine())
 	b := NewBackfiller()
 	secret := []byte("alice@example.com")
 
@@ -31,7 +31,7 @@ func TestBackfillRestoresMappedPlaceholder(t *testing.T) {
 }
 
 func TestBackfillExcludedValueIsNeverRestored(t *testing.T) {
-	w := NewForwardWriter(NewEngine())
+	w := NewForwardWriter(newEngine())
 	b := NewBackfiller()
 	secret := []byte("control-token-42")
 
@@ -44,8 +44,8 @@ func TestBackfillExcludedValueIsNeverRestored(t *testing.T) {
 	}
 
 	b.ExcludeFromBackfill(secret)
-	if !b.Excludes(secret) {
-		t.Fatal("Excludes(secret) = false, want true")
+	if !b.excludes(secret) {
+		t.Fatal("excludes(secret) = false, want true")
 	}
 
 	// Outbound force-substitution: the secret leaves as the placeholder.
@@ -80,8 +80,8 @@ func TestExcludeFromBackfillIsAdditiveAndIdempotent(t *testing.T) {
 	}
 
 	b.ExcludeFromBackfill(second) // additive
-	if !b.Excludes(first) || !b.Excludes(second) {
-		t.Fatalf("Excludes = (%v, %v), want both true", b.Excludes(first), b.Excludes(second))
+	if !b.excludes(first) || !b.excludes(second) {
+		t.Fatalf("excludes = (%v, %v), want both true", b.excludes(first), b.excludes(second))
 	}
 	if got := b.excludedCount(); got != 2 {
 		t.Fatalf("excludedCount = %d, want 2", got)
@@ -99,7 +99,7 @@ func TestBackfillForeignAndUnknownPlaceholdersUnchanged(t *testing.T) {
 }
 
 func TestBackfillFreshSessionForgetsMapping(t *testing.T) {
-	w := NewForwardWriter(NewEngine())
+	w := NewForwardWriter(newEngine())
 	old := NewBackfiller()
 	secret := []byte("alice@example.com")
 
@@ -140,7 +140,7 @@ func TestForwardWriterCannotRestore(t *testing.T) {
 		}
 	}
 
-	for _, typ := range []reflect.Type{reflect.TypeOf(ForwardWriter{}), reflect.TypeOf(Engine{})} {
+	for _, typ := range []reflect.Type{reflect.TypeOf(ForwardWriter{}), reflect.TypeOf(engine{})} {
 		for i := 0; i < typ.NumField(); i++ {
 			lower := strings.ToLower(typ.Field(i).Name)
 			if strings.Contains(lower, "reverse") || strings.Contains(lower, "backfill") {
