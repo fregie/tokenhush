@@ -153,3 +153,54 @@ func TestForwardWriterCannotRestore(t *testing.T) {
 		t.Fatal("Backfiller must own the reverse map field")
 	}
 }
+
+// TestBackfillCountReportsRestoredOccurrences pins the counting form the CLI
+// response log renders: it restores exactly like Backfill and reports only the
+// mapped occurrences it really restored, so a foreign token counts zero.
+func TestBackfillCountReportsRestoredOccurrences(t *testing.T) {
+	w := NewForwardWriter(newEngine())
+	b := NewBackfiller()
+	secret := []byte("__PII_email_3751b87e112f__")
+
+	p, err := b.Mint(w, secret, "email")
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	body := []byte("one " + p + " two " + p + " foreign __PII_email_deadbeefcafe__")
+
+	out, restored := b.BackfillCount(body)
+	if restored != 2 {
+		t.Fatalf("BackfillCount restored = %d, want 2", restored)
+	}
+	if bytes.Contains(out, []byte(p)) {
+		t.Fatalf("placeholder survived BackfillCount: %q", out)
+	}
+	if !bytes.Contains(out, []byte("__PII_email_deadbeefcafe__")) {
+		t.Fatalf("a foreign placeholder vanished: %q", out)
+	}
+	if plain := b.Backfill(body); !bytes.Equal(plain, out) {
+		t.Fatalf("Backfill and BackfillCount disagree:\nBackfill      %q\nBackfillCount %q", plain, out)
+	}
+}
+
+// TestBackfillCountExcludedAndNoMatchAreZero pins that the counted path stays
+// silent when nothing may be restored: an excluded mapping and a body with no
+// mapped token both report zero.
+func TestBackfillCountExcludedAndNoMatchAreZero(t *testing.T) {
+	w := NewForwardWriter(newEngine())
+	b := NewBackfiller()
+	secret := []byte("control-token-42")
+
+	p, err := b.Mint(w, secret, "token")
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	b.ExcludeFromBackfill(secret)
+
+	if out, restored := b.BackfillCount([]byte("auth " + p + " now")); restored != 0 {
+		t.Fatalf("excluded mapping restored = %d, want 0 (%q)", restored, out)
+	}
+	if out, restored := b.BackfillCount([]byte("nothing redactable here")); restored != 0 {
+		t.Fatalf("no-match body restored = %d, want 0 (%q)", restored, out)
+	}
+}

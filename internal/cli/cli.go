@@ -175,7 +175,7 @@ func (w *responseWriter) WriteHeader(status int) {
 	w.Header().Del("Content-Length")
 	w.dst.WriteHeader(status)
 	w.sse = proxy.NewSSEHandler(proxy.SSEResponseConfig{
-		Context: w.req.Context(), Evaluator: w.gate, Backfiller: w.gate.backfiller, Counters: w.gate.counters, Warnings: w.gate,
+		Context: w.req.Context(), Evaluator: w.gate, Backfiller: w.gate.restorer, Counters: w.gate.counters, Warnings: w.gate,
 	})
 }
 

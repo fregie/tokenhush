@@ -56,7 +56,7 @@ go install github.com/fregie/tokenhush/cmd/tokenhush@main
 tokenhush run
 ```
 
-它前台运行，默认监听 `http://127.0.0.1:8787`，按 Ctrl-C 退出。让它在终端里跑着，另开一个终端做下一步。
+它前台运行，默认监听 `http://127.0.0.1:8787`，按 Ctrl-C 退出。启动时会打印一段横幅：回环地址、实际生效的上游路由（配置项加上内置回退），以及把工具指过来所需的两种 base URL 形式。让它在终端里跑着，另开一个终端做下一步。
 
 ### 3. 把工具指过来
 
@@ -143,7 +143,7 @@ flowchart LR
 
 ## ✅ 验证它有效
 
-最快的检查不需要额外工具：跑 `tokenhush run`，用它的时候盯着输出。要看清楚厂商究竟收到了什么，用下面的回环 echo 上游。
+最快的检查不需要额外工具：跑 `tokenhush run`，用它的时候盯着输出。启动会打印端点与路由；每拦截一个值打印一行掩码日志，响应路径每还原一次打印一行计数日志。要看清楚厂商究竟收到了什么，用下面的回环 echo 上游。
 
 先用 Python 起一个假的厂商（原样回显收到的 body）在 `127.0.0.1:9999`：
 
@@ -196,7 +196,7 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 你会看到三件事：
 
 1. echo 上游的终端打印出 body，里面的密钥已被替换成 `__PII_email_<digest>__` 占位符，密钥本身没有离开网关。
-2. 网关终端打印一行掩码 stderr 日志，格式为 `tokenhush: redacted request <type> (len=<N>) <masked>`，例如 `tokenhush: redacted request email (len=17) ****`。多数类型的 `<masked>` 是 `****`，不透明凭据类型（`api_key`、`high_entropy`）是有界的前缀/后缀（如 `sk-p…j0`），掩码形式永远不会等于密钥。这行日志只写 stderr，永不落盘。
+2. 网关终端打印两行 stderr 日志。拦截行格式为 `tokenhush: redacted request <type> (len=<N>) <masked>`，例如 `tokenhush: redacted request email (len=17) ****`；多数类型的 `<masked>` 是 `****`，不透明凭据类型（`api_key`、`high_entropy`）是有界的前缀/后缀（如 `sk-p…j0`），掩码形式永远不会等于密钥。还原行格式为 `tokenhush: restored response placeholders=<N>`，例如 `tokenhush: restored response placeholders=1`，只包含计数。两行都只写 stderr，永不落盘。
 3. `curl` 输出里又是原始值，因为响应路径还原了本次会话铸造的占位符。上游从未见到密钥，客户端从未见到占位符。
 
 像脚本一样读取运行中的网关：
@@ -270,7 +270,7 @@ tokenhush version      打印版本与构建信息
 
 | 命令 | 作用 | 常用 flag |
 |---|---|---|
-| `tokenhush run` | 前台启动网关，默认监听 `127.0.0.1:8787`，Ctrl-C 退出。 | `--config PATH`、`--port N`（1..65535）、`--log-level debug\|info\|warn\|error`、`--log-redactions`（默认开启，`--log-redactions=false` 静默） |
+| `tokenhush run` | 前台启动网关，默认监听 `127.0.0.1:8787`，Ctrl-C 退出。 | `--config PATH`、`--port N`（1..65535）、`--log-level debug\|info\|warn\|error`、`--log-redactions`（默认开启，`--log-redactions=false` 同时静默拦截行与还原行） |
 | `tokenhush status` | 读取运行中网关的元数据。人读形式是 `key: value` 行，`--json` 输出冻结的状态文档；没有网关运行时打印 `not running` 并以 1 退出。 | `--json` |
 | `tokenhush env <tool>` | 为十四种工具之一打印可直接粘贴的接入片段。 | `--config PATH`、`--port N` |
 | `tokenhush privacy` | 打印厂商绑定的出口披露，恰好两个类别。 | `--json` |

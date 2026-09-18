@@ -213,6 +213,8 @@ the duplicated machinery was unified); the surfaces below may not change.
 | Session files | `<DataDir>/run.json` (`pid`, `port`, `addrs`, `started_at`; never the token) and `<DataDir>/control.token`; atomic, mode `0600`, removed on clean shutdown |
 | Placeholder grammar | `__PII_<type>_<digest>__` |
 | Redaction log line | `tokenhush: redacted request <type> (len=<N>) <masked>`, on stderr, never persisted |
+| Restore log line | `tokenhush: restored response placeholders=<N>`, on stderr, never persisted |
+| Startup banner | listen address, effective upstream routing (configured plus built-in) and the tool base-URL hint, on stderr, never persisted |
 
 ## The seven-command CLI
 

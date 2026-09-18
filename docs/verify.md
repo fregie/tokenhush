@@ -62,7 +62,10 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 
 ## What you should see
 
-Three observations together prove the round trip.
+Before any request the gateway prints a startup banner: the loopback endpoint,
+the effective upstream routing (configured entries plus the built-in fallbacks)
+and the two base-URL forms to point a tool at. Nothing in it is secret. Then the
+three observations below together prove the round trip.
 
 **1. The upstream terminal printed the body with the secret replaced.** The
 value left the gateway as a placeholder, so this is what the fake vendor
@@ -75,11 +78,13 @@ upstream received: {"model":"echo","messages":[{"role":"user","content":"my emai
 The `<digest>` is a per-session hash, so the exact value differs between runs.
 The point is that the upstream never saw `me@example.com`.
 
-**2. The gateway terminal printed one masked line.** The value it changed is
-reported by type, length, and a masked form, never in full:
+**2. The gateway terminal printed two metadata-only lines.** The value it
+changed is reported by type, length, and a masked form, never in full; the
+return path reports only how many placeholders it restored:
 
 ```text
 tokenhush: redacted request email (len=17) ****
+tokenhush: restored response placeholders=1
 ```
 
 **3. The `curl` output contains the original value again.** The response path
@@ -122,6 +127,20 @@ bounded prefix and suffix instead, for example `sk-p…j0`. The masked form can
 never equal the secret: a literal `****` renders as `[redacted]`.
 
 The log is on by default. Silence it with `tokenhush run --log-redactions=false`.
+
+## The restore log
+
+Every client-bound response that restores at least one session placeholder emits
+one count line:
+
+```text
+tokenhush: restored response placeholders=<N>
+```
+
+A buffered response emits one line with the total; a streaming (SSE) response
+emits one line per restored placeholder. The line carries only a count, goes to
+stderr only, and is never persisted. `tokenhush run --log-redactions=false`
+silences it together with the redaction log.
 
 ## Why this proves it
 

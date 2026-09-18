@@ -243,3 +243,27 @@ func TestResolveUnknownPathsNeverDefault(t *testing.T) {
 		})
 	}
 }
+
+// TestBuiltinRoutesMirrorsTheAuditedTable proves the banner's read-only view
+// carries exactly the routes Resolve serves, in a stable path-sorted order, so
+// the startup report can never show a route the data plane would reject.
+func TestBuiltinRoutesMirrorsTheAuditedTable(t *testing.T) {
+	routes := BuiltinRoutes()
+	if len(routes) != len(builtinTableWant) {
+		t.Fatalf("BuiltinRoutes has %d entries, want %d", len(routes), len(builtinTableWant))
+	}
+	for i, route := range routes {
+		if i > 0 && routes[i-1].Path >= route.Path {
+			t.Fatalf("BuiltinRoutes is not strictly path-sorted at %d: %q then %q", i, routes[i-1].Path, route.Path)
+		}
+		want, ok := builtinTableWant[route.Path]
+		if !ok {
+			t.Errorf("BuiltinRoutes returned undocumented path %q", route.Path)
+			continue
+		}
+		if route.BaseURL != want.BaseURL || route.Local != want.Local {
+			t.Errorf("BuiltinRoutes[%q] = {%q, %v}, want {%q, %v}",
+				route.Path, route.BaseURL, route.Local, want.BaseURL, want.Local)
+		}
+	}
+}

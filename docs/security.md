@@ -135,7 +135,9 @@ Request and response bodies, detected secrets and the placeholder-to-secret
 mapping are never written to disk. The redaction log line
 `tokenhush: redacted request <type> (len=<N>) <masked>` goes to stderr only and
 is never persisted; its masked form either reveals nothing (`****`,
-`[redacted]`) or a bounded prefix and suffix of an opaque credential type.
+`[redacted]`) or a bounded prefix and suffix of an opaque credential type. The
+response-side counter line `tokenhush: restored response placeholders=<N>` is
+likewise stderr-only, metadata-only and never persisted.
 Redaction runs once per request over the whole client-supplied conversation, so
 a long session re-scans and re-redacts the same secrets on every turn: the
 `redactions` counter and this stderr log grow with the number of carried

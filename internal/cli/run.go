@@ -114,6 +114,7 @@ func runWith(args []string, stderr io.Writer, seams runSeams) int {
 		return runFailure(stderr, "write session", err)
 	}
 	defer func() { _ = proxy.RemoveSession(dataDir) }()
+	printStartupBanner(stderr, cfg, gateway.addrs, port)
 	if err := gateway.serve(listener, seams.notify); err != nil {
 		return runFailure(stderr, "serve", err)
 	}
@@ -133,6 +134,7 @@ type gateway struct {
 	policy        *filter.Policy
 	writer        *redact.ForwardWriter
 	backfiller    *redact.Backfiller
+	restorer      proxy.Backfiller
 	counters      *proxy.Counters
 	responses     *proxy.ResponseHandler
 	token         proxy.Token
@@ -168,7 +170,8 @@ func buildGateway(cfg config.Config, dataDir string, stderr io.Writer, logRedact
 		writer: redact.NewForwardWriter(nil), backfiller: sessionBackfiller(cfg, token), counters: proxy.NewCounters(),
 		started: time.Now(), forwarders: make(map[string]*proxy.Forwarder),
 	}
-	gateway.responses = proxy.NewResponseHandler(proxy.ResponseConfig{Evaluator: gateway, Backfiller: gateway.backfiller, Counters: gateway.counters, Warnings: gateway})
+	gateway.restorer = newResponseLog(gateway.backfiller, stderr, logRedactions)
+	gateway.responses = proxy.NewResponseHandler(proxy.ResponseConfig{Evaluator: gateway, Backfiller: gateway.restorer, Counters: gateway.counters, Warnings: gateway})
 	return gateway, nil
 }
 

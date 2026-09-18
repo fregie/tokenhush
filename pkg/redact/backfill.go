@@ -72,10 +72,26 @@ func (b *Backfiller) Mint(w *ForwardWriter, secret []byte, kind string) (string,
 // not a mapped placeholder are never touched: a foreign or unknown placeholder
 // is returned byte-identical, never fabricated into a secret.
 func (b *Backfiller) Backfill(body []byte) []byte {
+	out, _ := b.BackfillCount(body)
+	return out
+}
+
+// BackfillCount restores exactly like Backfill and additionally reports how
+// many mapped, non-excluded placeholder occurrences the body carried. It is the
+// counting form the CLI's response log renders; Backfill is its uncounted form,
+// so the two can never disagree about what was restored.
+func (b *Backfiller) BackfillCount(body []byte) ([]byte, int) {
 	if !bytes.Contains(body, []byte(placeholderPrefix)) {
-		return body
+		return body, 0
 	}
 	snapshot := b.snapshot()
+	count := 0
+	for _, p := range snapshot {
+		if b.excludes(p.secret) {
+			continue
+		}
+		count += bytes.Count(body, []byte(p.placeholder))
+	}
 	leaves, err := protocol.Walk(body)
 	if err != nil {
 		out := body
@@ -85,7 +101,7 @@ func (b *Backfiller) Backfill(body []byte) []byte {
 			}
 			out = bytes.ReplaceAll(out, []byte(p.placeholder), p.secret)
 		}
-		return out
+		return out, count
 	}
 	var edits []protocol.Edit
 	for _, leaf := range leaves {
@@ -103,7 +119,7 @@ func (b *Backfiller) Backfill(body []byte) []byte {
 		}
 		out = bytes.ReplaceAll(out, []byte(p.placeholder), protocol.EscapeJSONString(p.secret))
 	}
-	return out
+	return out, count
 }
 
 // appendLeaves appends one Edit per occurrence of the placeholder in

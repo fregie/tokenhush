@@ -3,6 +3,7 @@ package proxy
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/fregie/tokenhush/pkg/config"
@@ -62,6 +63,30 @@ var builtinRoutes = map[string]Upstream{
 	"/v1/messages/batches":      {BaseURL: AnthropicBaseURL},
 	"/v1/messages/count_tokens": {BaseURL: AnthropicBaseURL},
 	"/v1/models":                {Local: true},
+}
+
+// BuiltinRoute is one read-only projection of the built-in routing table. It
+// exists so the CLI can report the effective routing at startup without a
+// second copy of the table drifting from this one.
+type BuiltinRoute struct {
+	// Path is the exact request path the entry serves.
+	Path string
+	// BaseURL is the vendor base URL the path forwards to; empty when Local.
+	BaseURL string
+	// Local marks the one named exception route (GET /v1/models).
+	Local bool
+}
+
+// BuiltinRoutes returns the built-in routing table as a fresh, path-sorted
+// slice. Resolve remains the only behavioural owner of the table; this is a
+// read-only view and carries no routing logic of its own.
+func BuiltinRoutes() []BuiltinRoute {
+	routes := make([]BuiltinRoute, 0, len(builtinRoutes))
+	for path, upstream := range builtinRoutes {
+		routes = append(routes, BuiltinRoute{Path: path, BaseURL: upstream.BaseURL, Local: upstream.Local})
+	}
+	sort.Slice(routes, func(i, j int) bool { return routes[i].Path < routes[j].Path })
+	return routes
 }
 
 // Resolve maps an inbound request path to its upstream.

@@ -56,7 +56,7 @@ go install github.com/fregie/tokenhush/cmd/tokenhush@main
 tokenhush run
 ```
 
-It stays in the foreground, listens on `http://127.0.0.1:8787` by default, and exits on Ctrl-C. Leave it running and open a second terminal.
+It stays in the foreground, listens on `http://127.0.0.1:8787` by default, and exits on Ctrl-C. On start it prints a banner: the loopback endpoint, the effective upstream routing (configured entries plus the built-in fallbacks), and the two base-URL forms to point a tool at. Leave it running and open a second terminal.
 
 ### 3. Point your tool at it
 
@@ -143,13 +143,14 @@ flowchart LR
 
 ## ✅ Verify it works
 
-The fastest check needs only the gateway's own log. Run `tokenhush run`, watch its stderr while your tool works, and every value it redacts produces one masked line:
+The fastest check needs only the gateway's own log. Run `tokenhush run`, watch its stderr while your tool works. Startup prints the endpoint and the routing, every value it redacts produces one masked line, and every response-side restore produces one count line:
 
 ```text
 tokenhush: redacted request api_key (len=32) sk-p…j0
+tokenhush: restored response placeholders=1
 ```
 
-The line carries the detector type, the matched byte length, and a masked form, never the full value. `tokenhush status` reports the same counts as JSON:
+Both lines are metadata only. The redaction line carries the detector type, the matched byte length and a masked form, never the full value; the restore line carries only a count. `tokenhush status` reports the redaction counts as JSON:
 
 ```sh
 tokenhush status --json
@@ -199,7 +200,7 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 Three things to check:
 
 1. The echo upstream terminal prints the body with the address replaced by `__PII_email_<digest>__`. The secret left as a placeholder.
-2. The gateway terminal prints one masked line: `tokenhush: redacted request email (len=17) ****`.
+2. The gateway terminal prints two lines: `tokenhush: redacted request email (len=17) ****` and `tokenhush: restored response placeholders=1`.
 3. The `curl` output contains the original address again, restored by the gateway on the response path. The upstream never saw the secret, and the client never saw the placeholder.
 
 `tokenhush status --json` reports `"redactions": 1` for that request. The full recipe, including how to read the status document, is in [docs/verify.md](docs/verify.md).
@@ -262,7 +263,7 @@ tokenhush privacy      show the vendor-bound egress disclosure
 
 | Command | What it does | Flags |
 |---|---|---|
-| `tokenhush run` | Starts the gateway in the foreground. Default listen `127.0.0.1:8787`. Exits on Ctrl-C. | `--config PATH`, `--port N` (1..65535), `--log-level debug\|info\|warn\|error`, `--log-redactions` (default true; `--log-redactions=false` silences the log) |
+| `tokenhush run` | Starts the gateway in the foreground. Default listen `127.0.0.1:8787`. Exits on Ctrl-C. | `--config PATH`, `--port N` (1..65535), `--log-level debug\|info\|warn\|error`, `--log-redactions` (default true; `--log-redactions=false` silences the redaction and restore logs) |
 | `tokenhush rules` | `sync [--check]` verifies and activates the signed rule pack; `rollback` returns to the previous verified serial, or the built-in defaults. | `sync --check` |
 | `tokenhush update` | Checks for and applies a signed self-update. Homebrew and Scoop installs delegate to their package manager; a self-managed install self-replaces. | `--check` |
 | `tokenhush status` | Reads the running gateway's metadata. Human form is `key: value` lines; `--json` emits the frozen status document. When nothing is running it prints `not running` and exits 1. | `--json` |
