@@ -28,7 +28,7 @@ jobs:
         run: go test ./... -count=1
 
       - name: Lint
-        uses: golangci-lint/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v6
 
       - name: Layering guard
         run: bash scripts/check-layering.sh
