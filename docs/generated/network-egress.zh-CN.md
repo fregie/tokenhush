@@ -10,7 +10,7 @@ Tokenhush 恰好可以发出两个厂商绑定请求。两者都是命令限定�
 
 | 类别 | 开关（设为 `1` 即关闭） | 主机 | 保留 |
 |---|---|---|---|
-| `update-check` | `TOKENHUSH_NO_UPDATE_CHECK` | `updates.tokenhush.com` | Vendor access logs and request records are retained for 30 days. |
-| `rule-sync` | `TOKENHUSH_NO_RULE_SYNC` | `updates.tokenhush.com` | Vendor access logs and request records are retained for 30 days. |
+| `update-check` | `TOKENHUSH_NO_UPDATE_CHECK` | `updates.tokenhush.com` | 厂商访问日志与请求记录保留 30 天。 |
+| `rule-sync` | `TOKENHUSH_NO_RULE_SYNC` | `updates.tokenhush.com` | 厂商访问日志与请求记录保留 30 天。 |
 
 这些是 Tokenhush 自身唯一可以发出的厂商绑定请求；两者都是命令限定的且可开关，除此之外，离开这台机器的流量只有用户自己发往其厂商的请求。
