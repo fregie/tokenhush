@@ -42,7 +42,7 @@ Any client that lets you set a custom OpenAI-compatible or Anthropic base URL wo
 
 The Linux and Windows installers resolve the release, download the matching archive, verify its sha256 against the release `checksums.txt`, and install the binary to a per-user directory (`~/.local/bin` on Linux, `%LOCALAPPDATA%\Programs\tokenhush` on Windows). No admin rights, no package manager. Pin a release with `--version X.Y.Z` (Linux) or `-Version X.Y.Z` (Windows).
 
-The current code line is v0.5.0, but the newest **published** release is still the older v0.4 line. The installers refuse to install that by default and build the current v0.5 line from source instead, so Go 1.25+ is required until the v0.5.0 release wave ships. The macOS cask tracks the latest published release.
+The release wave has shipped, so the installers download and verify the published binary for your platform and need no Go toolchain. The macOS cask tracks the latest published release.
 
 Prefer to build it yourself?
 
@@ -331,13 +331,13 @@ The only traffic Tokenhush itself can send to the vendor is exactly two switchab
 
 The Linux and Windows installers verify the archive's sha256 against the release `checksums.txt` before installing anything, need no admin rights, and accept a pinned version (`--version X.Y.Z` / `-Version X.Y.Z`). To build from source instead, use Go 1.25+: `go build -o tokenhush ./cmd/tokenhush`, or `go install github.com/fregie/tokenhush/cmd/tokenhush@main`.
 
-Until the v0.5.0 release wave ships, the newest published release is the older v0.4 line, so the Linux and Windows installers build the current v0.5 line from source instead of installing it. The full set of install paths, service wrappers, and release status is in [docs/deployment.md](docs/deployment.md).
+The installers download and verify the published binary for your platform, so no Go toolchain is needed. The full set of install paths, service wrappers, and release status is in [docs/deployment.md](docs/deployment.md).
 
-| Platform | Target | Notes |
+| Platform | Targets | Notes |
 |---|---|---|
-| macOS | arm64 | Pure Go, `CGO_ENABLED=0`, no C toolchain needed. |
-| Linux | amd64 | Pure Go, `CGO_ENABLED=0`. |
-| Windows | amd64 | Pure Go, `CGO_ENABLED=0`. |
+| macOS | arm64, amd64 | Pure Go, `CGO_ENABLED=0`, no C toolchain needed. |
+| Linux | arm64, amd64 | Pure Go, `CGO_ENABLED=0`. |
+| Windows | arm64, amd64 | Pure Go, `CGO_ENABLED=0`. |
 
 ## 📚 Documentation
 

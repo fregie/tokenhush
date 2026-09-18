@@ -40,7 +40,7 @@ Tokenhush 是一个本地、仅回环的 HTTP 网关，位于你的 AI 编程工
 
 Linux 与 Windows 的脚本会解析发布版本、下载对应压缩包、用发布页的 `checksums.txt` 校验 sha256，再把二进制装到用户目录（Linux 为 `~/.local/bin`，Windows 为 `%LOCALAPPDATA%\Programs\tokenhush`），无需管理员权限，也不依赖包管理器。用 `--version X.Y.Z`（Linux）或 `-Version X.Y.Z`（Windows）可固定版本。
 
-当前代码线是 v0.5.0，但**已发布**的最新版本仍停留在旧的 v0.4 线。脚本默认拒绝安装它，改为从源码构建当前 v0.5 线，因此在 v0.5.0 发布波次到来前需要 Go 1.25+。macOS 的 cask 跟随最新已发布版本。
+发布波次已经落地：安装脚本会下载并校验你所在平台的已发布二进制，无需 Go 工具链。macOS 的 cask 跟随最新已发布版本。
 
 想自己构建：
 
@@ -339,9 +339,9 @@ detector_timeout:  30s
 
 Linux 与 Windows 的脚本在安装前会用发布页的 `checksums.txt` 校验压缩包 sha256，无需管理员权限，并可用 `--version X.Y.Z` / `-Version X.Y.Z` 固定版本。想从源码构建则需 Go 1.25+：`go build -o tokenhush ./cmd/tokenhush`，或 `go install github.com/fregie/tokenhush/cmd/tokenhush@main`。
 
-当前代码线是 v0.5.0，但已发布的最新版本仍是旧的 v0.4 线，因此 Linux 与 Windows 脚本会改为从源码构建当前 v0.5 线。完整安装路径、服务包装与发布状态见 [docs/deployment.md](docs/deployment.md)。
+安装脚本会下载并校验你所在平台的已发布二进制，无需 Go 工具链。完整安装路径、服务包装与发布状态见 [docs/deployment.md](docs/deployment.md)。
 
-平台方面，代码是纯 Go，`CGO_ENABLED=0`，构建目标为 macOS arm64、Linux amd64、Windows amd64。
+平台方面，代码是纯 Go，`CGO_ENABLED=0`，macOS、Linux、Windows 三种系统各构建 arm64 与 amd64。
 
 ## 📚 文档
 
