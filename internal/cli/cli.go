@@ -262,14 +262,16 @@ func (g *gateway) Warn(line string) {
 }
 
 // selectBuiltins maps the operator's detector switches onto the frozen
-// built-in rule table, preserving the table's order.
-func selectBuiltins(detectors config.Detectors) []filter.Rule {
+// built-in rule table, preserving the table's order. Every selected rule scans
+// with budget, so the detector budget is aligned with the configured scan
+// budget.
+func selectBuiltins(detectors config.Detectors, budget int) []filter.Rule {
 	enabled := map[string]bool{
 		filter.DetectorPrefix: detectors.Prefix, filter.DetectorEmail: detectors.Email, filter.DetectorLuhn: detectors.Luhn,
 		filter.DetectorJWT: detectors.JWT, filter.DetectorPrivateKey: detectors.PEM, filter.DetectorHighEntropy: detectors.Entropy,
 	}
 	rules := make([]filter.Rule, 0, len(enabled))
-	for _, rule := range filter.BuiltinDetectors() {
+	for _, rule := range filter.BuiltinDetectorsBudget(budget) {
 		if enabled[rule.ID()] {
 			rules = append(rules, rule)
 		}
@@ -277,15 +279,29 @@ func selectBuiltins(detectors config.Detectors) []filter.Rule {
 	return rules
 }
 
-// loadCachedPack activates the verified pack the rules cache holds. A missing
-// cache is normal (the built-ins stay active); a corrupt one is reported and
-// the built-ins stay, because a cache read failure must never block startup.
-// Every warning the activation carries (for example the OD-2 command-rule
-// warning) is written to stderr, so it is never silently dropped.
-func loadCachedPack(registry *filter.Registry, dataDir string, stderr io.Writer) error {
+// scanBudget converts the configured scan budget to the int the filter
+// package's per-primitive budget uses. A config value that is non-positive or
+// does not fit an int falls back to the documented default rather than
+// wrapping into a budget that scans nothing.
+func scanBudget(cfg config.Config) int {
+	if cfg.ScanBudgetBytes <= 0 || int64(int(cfg.ScanBudgetBytes)) != cfg.ScanBudgetBytes {
+		return filter.PrimitiveByteBudgetBytes
+	}
+	return int(cfg.ScanBudgetBytes)
+}
+
+// loadCachedPack activates the verified pack the rules cache holds, compiling
+// every primitive-typed pack rule with budget so the pack and the built-ins
+// scan with the same per-primitive budget. A missing cache is normal (the
+// built-ins stay active); a corrupt one is reported and the built-ins stay,
+// because a cache read failure must never block startup. Every warning the
+// activation carries (for example the OD-2 command-rule warning) is written to
+// stderr, so it is never silently dropped.
+func loadCachedPack(registry *filter.Registry, dataDir string, budget int, stderr io.Writer) error {
 	sync, err := supply.NewRulesSync(supply.RulesSyncConfig{
 		DataDir: dataDir, Verifier: supply.NewStaticVerifier(),
 		Fetcher: supply.NewBoundedHTTPFetcher(30*time.Second, supply.MaxRulesDocBytes),
+		Budget:  budget,
 	})
 	if err != nil {
 		return err

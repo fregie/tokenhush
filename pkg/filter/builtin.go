@@ -18,25 +18,36 @@ type BuiltinConfig struct {
 
 // builtinTable is the frozen detector table in wire order. BuiltinDetectors,
 // the default set and the floor baseline all derive from it, so a detector
-// cannot be added to one and forgotten in another.
+// cannot be added to one and forgotten in another. Each entry builds its rule
+// with the caller's per-primitive byte budget.
 var builtinTable = []struct {
 	id    string
-	build func() Rule
+	build func(int) Rule
 }{
-	{DetectorPrefix, NewPrefixRule},
-	{DetectorEmail, NewEmailRule},
-	{DetectorLuhn, NewLuhnRule},
-	{DetectorJWT, NewJWTRule},
-	{DetectorPrivateKey, NewPEMRule},
-	{DetectorHighEntropy, NewEntropyRule},
+	{DetectorPrefix, NewPrefixRuleBudget},
+	{DetectorEmail, NewEmailRuleBudget},
+	{DetectorLuhn, NewLuhnRuleBudget},
+	{DetectorJWT, NewJWTRuleBudget},
+	{DetectorPrivateKey, NewPEMRuleBudget},
+	{DetectorHighEntropy, NewEntropyRuleBudget},
 }
 
 // BuiltinDetectors returns all six built-in detector rules in frozen table
-// order. The returned slice is fresh, so a caller cannot mutate the table.
+// order with the documented default per-primitive byte budget. The returned
+// slice is fresh, so a caller cannot mutate the table.
 func BuiltinDetectors() []Rule {
+	return BuiltinDetectorsBudget(PrimitiveByteBudgetBytes)
+}
+
+// BuiltinDetectorsBudget returns all six built-in detector rules in frozen
+// table order with an explicit per-primitive byte budget. A non-positive budget
+// falls back to the documented default. The returned slice is fresh, so a
+// caller cannot mutate the table.
+func BuiltinDetectorsBudget(budget int) []Rule {
+	budget = normalizeBudget(budget)
 	rules := make([]Rule, 0, len(builtinTable))
 	for _, entry := range builtinTable {
-		rules = append(rules, entry.build())
+		rules = append(rules, entry.build(budget))
 	}
 	return rules
 }
@@ -55,7 +66,7 @@ func EnabledBuiltinDetectors(cfg BuiltinConfig) []Rule {
 		if entry.id == DetectorHighEntropy && !cfg.HighEntropy {
 			continue
 		}
-		rules = append(rules, entry.build())
+		rules = append(rules, entry.build(PrimitiveByteBudgetBytes))
 	}
 	return rules
 }

@@ -2,8 +2,11 @@ package filter
 
 // primitive_pem.go is the private-key detector. A private-key header is
 // unambiguous, so it is the highest-confidence primitive; when the matching
-// END marker follows, the span covers the whole block, and an unrelated END is
-// never swallowed.
+// END marker follows, the span covers the whole block. When no matching END is
+// found, the span is over-redacted to the end of the scanned input on purpose:
+// an unterminated or budget-truncated PEM would otherwise leak the whole key
+// body while redacting only the header, and over-redaction beats leaking a
+// key.
 
 import (
 	"bytes"
@@ -19,8 +22,10 @@ const pemConfidence = 0.99
 var privateKeyHeaderPattern = regexp.MustCompile(`-----BEGIN ([A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?)-----`)
 
 // findPEMSpans returns private-key blocks. A span extends through the matching
-// `-----END <kind>-----` marker when one follows the header; otherwise it is
-// exactly the header, so a mismatched END is not part of the span.
+// `-----END <kind>-----` marker when one follows the header; otherwise it
+// extends to the end of the scanned input, so the body of an unterminated or
+// budget-truncated block is redacted rather than leaked. A mismatched END is
+// therefore never treated as a terminator: only the block's own END closes it.
 func findPEMSpans(content []byte) []Span {
 	matches := privateKeyHeaderPattern.FindAllSubmatchIndex(content, -1)
 	spans := make([]Span, 0, len(matches))
@@ -33,6 +38,8 @@ func findPEMSpans(content []byte) []Span {
 		footer = append(footer, "-----"...)
 		if i := bytes.Index(content[end:], footer); i >= 0 {
 			end += i + len(footer)
+		} else {
+			end = len(content)
 		}
 		spans = append(spans, Span{Start: start, End: end})
 	}
@@ -40,10 +47,15 @@ func findPEMSpans(content []byte) []Span {
 }
 
 // pemRule is the built-in private-key rule.
-type pemRule struct{}
+type pemRule struct{ budget int }
 
-// NewPEMRule returns the built-in rule that flags PEM private-key blocks.
-func NewPEMRule() Rule { return pemRule{} }
+// NewPEMRule returns the built-in rule that flags PEM private-key blocks with
+// the documented default byte budget.
+func NewPEMRule() Rule { return NewPEMRuleBudget(PrimitiveByteBudgetBytes) }
+
+// NewPEMRuleBudget returns the private-key rule with an explicit per-call byte
+// budget.
+func NewPEMRuleBudget(budget int) Rule { return pemRule{budget: normalizeBudget(budget)} }
 
 // ID returns the frozen detector id.
 func (pemRule) ID() string { return DetectorPrivateKey }
@@ -66,5 +78,11 @@ func (pemRule) Priority() int { return DefaultPriority }
 // Confidence returns the fixed detector confidence.
 func (pemRule) Confidence() float64 { return pemConfidence }
 
+// inspectPEM runs the PEM algorithm over content truncated to budget; it is the
+// compiled-document entry, where no rule struct is materialised.
+func inspectPEM(content []byte, budget int) []Span {
+	return findPEMSpans(primitiveInput(content, budget))
+}
+
 // Inspect returns the spans of PEM private-key blocks inside leaf.
-func (pemRule) Inspect(leaf []byte) []Span { return findPEMSpans(primitiveInput(leaf)) }
+func (r pemRule) Inspect(leaf []byte) []Span { return inspectPEM(leaf, r.budget) }

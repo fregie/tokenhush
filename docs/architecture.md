@@ -116,6 +116,12 @@ The properties a rule author can rely on, and the ones the core refuses:
   `Warn`. `Redact` is request-path only, and a rule whose scope includes the
   response phase while its action is `redact` is rejected both at compile time
   (documents) and at registration (directly-registered values).
+- **Budget-bounded primitives.** A primitive-typed rule (`prefix`, `email`,
+  `luhn`, `jwt`, `pem`, `entropy`) inspects at most its per-primitive byte
+  budget of one leaf. `internal/cli` aligns that budget with
+  `scan_budget_bytes` for admitted requests, so detection cost stays O(budget)
+  and the budget is never a silent blind spot: a request leaf past the budget
+  is reported on stderr (metadata only) and moves no counter.
 
 See [plugins.md](plugins.md) for the third-party example and the full
 registration semantics, and [security.md](security.md) for the invariants the
@@ -142,8 +148,14 @@ At runtime the pieces line up like this:
    body that cannot be walked is refused with 400; a non-identity
    `Content-Encoding` is refused with 415 before the body is read or any
    upstream dial is opened. The request-phase decision then allows, blocks or
-   substitutes; substitution mints a per-session placeholder and counts exactly
-   the substitutions applied.
+   substitutes. Substitution is **span-exact**: each decoded detection span is
+   mapped back to the raw, escaped bytes that spell it, so a multi-line or
+   quote-bearing secret leaves as a placeholder and returns intact. The
+   redaction log line and the `redactions` counter count only substitutions
+   that really changed bytes. Primitive-typed detectors scan at most
+   `scan_budget_bytes` of one leaf — the per-primitive budget is aligned with
+   the configured scan budget for admitted requests — and a leaf past the
+   budget is reported on stderr (metadata only) instead of failing silently.
 5. **Client-bound responses are decoded before any status is committed.**
    Identity-encoded `text/event-stream` bodies stream through the SSE handler
    with a bounded backfill window; everything else is buffered, decoded and

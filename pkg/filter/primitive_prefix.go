@@ -1,16 +1,20 @@
 package filter
 
 // primitive_prefix.go is the provider-prefix detector plus the scaffolding
-// every primitive shares: the documented byte budget, the frozen detector ids
-// and the tiny ASCII helpers. Each primitive is a concrete Rule that reads
-// only the leaf it is handed; primitiveInput caps every call at
-// PrimitiveByteBudgetBytes so a hostile leaf cannot make detection unbounded.
+// every primitive shares: the documented default byte budget, the frozen
+// detector ids and the tiny ASCII helpers. Each primitive is a concrete Rule
+// that reads only the leaf it is handed; primitiveInput caps every call at the
+// rule's budget so a hostile leaf cannot make detection unbounded. The budget
+// is injectable (CompileWithBudget, BuiltinDetectorsBudget and the
+// New*RuleBudget constructors): `internal/cli` aligns it with the configured
+// scan budget, and PrimitiveByteBudgetBytes stays the documented default.
 
 import "regexp"
 
-// PrimitiveByteBudgetBytes is the documented per-call byte budget: a primitive
-// inspects at most this many bytes of one leaf, so detection cost is O(budget)
-// regardless of the input size and spans never extend past the budget.
+// PrimitiveByteBudgetBytes is the documented DEFAULT per-call byte budget: a
+// primitive built without an explicit budget inspects at most this many bytes
+// of one leaf, so detection cost is O(budget) regardless of the input size and
+// spans never extend past the budget.
 const PrimitiveByteBudgetBytes = 1 << 20
 
 // Frozen detector ids: the wire names of the six bundled algorithms. They are
@@ -25,11 +29,23 @@ const (
 	DetectorEmail       = "email"
 )
 
-// primitiveInput truncates leaf at the documented budget. Every primitive
-// starts here, so no primitive ever scans past the budget.
-func primitiveInput(leaf []byte) []byte {
-	if len(leaf) > PrimitiveByteBudgetBytes {
-		return leaf[:PrimitiveByteBudgetBytes]
+// normalizeBudget returns budget, or the documented default for a
+// non-positive budget, so a zero value can never disable detection silently.
+func normalizeBudget(budget int) int {
+	if budget <= 0 {
+		return PrimitiveByteBudgetBytes
+	}
+	return budget
+}
+
+// primitiveInput truncates leaf at budget, defaulting a non-positive budget to
+// PrimitiveByteBudgetBytes. Every primitive starts here, so no primitive ever
+// scans past its budget: a match ending exactly at the budget is still found,
+// and everything starting at or past it is never inspected.
+func primitiveInput(leaf []byte, budget int) []byte {
+	budget = normalizeBudget(budget)
+	if len(leaf) > budget {
+		return leaf[:budget]
 	}
 	return leaf
 }
@@ -82,10 +98,15 @@ func findPrefixSpans(content []byte) []Span {
 }
 
 // prefixRule is the built-in provider-prefix rule.
-type prefixRule struct{}
+type prefixRule struct{ budget int }
 
-// NewPrefixRule returns the built-in rule that flags known provider key shapes.
-func NewPrefixRule() Rule { return prefixRule{} }
+// NewPrefixRule returns the built-in rule that flags known provider key shapes
+// with the documented default byte budget.
+func NewPrefixRule() Rule { return NewPrefixRuleBudget(PrimitiveByteBudgetBytes) }
+
+// NewPrefixRuleBudget returns the provider-prefix rule with an explicit
+// per-call byte budget.
+func NewPrefixRuleBudget(budget int) Rule { return prefixRule{budget: normalizeBudget(budget)} }
 
 // ID returns the frozen detector id.
 func (prefixRule) ID() string { return DetectorPrefix }
@@ -108,5 +129,11 @@ func (prefixRule) Priority() int { return DefaultPriority }
 // Confidence returns the fixed detector confidence.
 func (prefixRule) Confidence() float64 { return prefixConfidence }
 
+// inspectPrefix runs the prefix algorithm over content truncated to budget; it
+// is the compiled-document entry, where no rule struct is materialised.
+func inspectPrefix(content []byte, budget int) []Span {
+	return findPrefixSpans(primitiveInput(content, budget))
+}
+
 // Inspect returns the spans of known provider keys inside leaf.
-func (prefixRule) Inspect(leaf []byte) []Span { return findPrefixSpans(primitiveInput(leaf)) }
+func (r prefixRule) Inspect(leaf []byte) []Span { return inspectPrefix(leaf, r.budget) }

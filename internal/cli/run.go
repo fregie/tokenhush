@@ -7,17 +7,13 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,15 +27,6 @@ import (
 )
 
 func init() { register("run", runCommand) }
-
-// runOptions is the parsed `run` flag set. Each flag overrides the config
-// value of the same setting; the redaction log is on by default.
-type runOptions struct {
-	configPath    string
-	port          int
-	logLevel      string
-	logRedactions bool
-}
 
 // runSeams carries the injectable operations of the run command. Production
 // uses defaultRunSeams; tests interpose each seam to pin the startup order and
@@ -133,58 +120,16 @@ func runWith(args []string, stderr io.Writer, seams runSeams) int {
 	return exitOK
 }
 
-// parseRunFlags parses the run flag set. A malformed invocation or an unknown
-// flag is a usage error (exit 2) with the flag package's own diagnosis.
-func parseRunFlags(args []string, stderr io.Writer) (runOptions, int) {
-	opts := runOptions{logRedactions: true}
-	flags := flag.NewFlagSet("run", flag.ContinueOnError)
-	flags.SetOutput(stderr)
-	flags.StringVar(&opts.configPath, "config", "", "path to tokenhush.yaml (default: the platform config dir)")
-	flags.IntVar(&opts.port, "port", 0, "override the listen port (1..65535)")
-	flags.StringVar(&opts.logLevel, "log-level", "", "override the log level (debug, info, warn, error)")
-	flags.BoolVar(&opts.logRedactions, "log-redactions", true, "print a masked line for every redacted value")
-	if err := flags.Parse(args); err != nil {
-		return opts, exitUsage
-	}
-	if flags.NArg() > 0 {
-		fmt.Fprintf(stderr, "tokenhush: run: unexpected argument %q\n", flags.Arg(0))
-		return opts, exitUsage
-	}
-	if opts.port < 0 || opts.port > 65535 {
-		fmt.Fprintf(stderr, "tokenhush: run: --port %d is outside 1..65535\n", opts.port)
-		return opts, exitUsage
-	}
-	if opts.logLevel != "" && !slices.Contains(logLevels, opts.logLevel) {
-		fmt.Fprintf(stderr, "tokenhush: run: --log-level %q is not one of %s\n", opts.logLevel, strings.Join(logLevels, ", "))
-		return opts, exitUsage
-	}
-	return opts, exitOK
-}
-
-// applyRunOverrides folds the validated flags into the loaded config.
-func applyRunOverrides(cfg config.Config, opts runOptions) config.Config {
-	if opts.port != 0 {
-		cfg.Listen.Port = opts.port
-	}
-	if opts.logLevel != "" {
-		cfg.Log.Level = opts.logLevel
-	}
-	return cfg
-}
-
-// runFailure reports one startup failure on stderr and returns exit 1.
-func runFailure(stderr io.Writer, what string, err error) int {
-	fmt.Fprintf(stderr, "tokenhush: run: %s: %v\n", what, err)
-	return exitFailure
-}
-
 // gateway is the assembled pipeline: the rule policy, the session placeholder
 // pair, the proxy counters, the control token and the data-plane handler
-// chain. It is the sole assembly point of the product.
+// chain. It is the sole assembly point of the product. budget is the effective
+// per-primitive detector budget the pipeline was built with; the request path
+// reports a leaf that exceeds it.
 type gateway struct {
 	cfg           config.Config
 	stderr        io.Writer
 	logRedactions bool
+	budget        int
 	policy        *filter.Policy
 	writer        *redact.ForwardWriter
 	backfiller    *redact.Backfiller
@@ -201,13 +146,16 @@ type gateway struct {
 // buildGateway builds the pipeline from the config: the built-in rule
 // selection, the cached signed pack when one verifies, the session placeholder
 // writer/backfiller, the proxy counters and the control token. It reads the
-// rules cache (never the network) and performs no I/O besides that read.
+// rules cache (never the network) and performs no I/O besides that read. The
+// configured scan budget is converted once and used for the built-ins, the
+// cached pack compile and the request-path budget report, so all three agree.
 func buildGateway(cfg config.Config, dataDir string, stderr io.Writer, logRedactions bool) (*gateway, error) {
+	budget := scanBudget(cfg)
 	registry := filter.NewRegistry()
-	if err := registry.RegisterBuiltin(selectBuiltins(cfg.Detectors)...); err != nil {
+	if err := registry.RegisterBuiltin(selectBuiltins(cfg.Detectors, budget)...); err != nil {
 		return nil, err
 	}
-	if err := loadCachedPack(registry, dataDir, stderr); err != nil {
+	if err := loadCachedPack(registry, dataDir, budget, stderr); err != nil {
 		return nil, err
 	}
 	token, err := proxy.NewToken()
@@ -215,7 +163,7 @@ func buildGateway(cfg config.Config, dataDir string, stderr io.Writer, logRedact
 		return nil, err
 	}
 	gateway := &gateway{
-		cfg: cfg, stderr: stderr, logRedactions: logRedactions, token: token,
+		cfg: cfg, stderr: stderr, logRedactions: logRedactions, budget: budget, token: token,
 		policy: filter.NewPolicy(registry, filter.PolicyConfig{Timeout: cfg.DetectorTimeout}),
 		writer: redact.NewForwardWriter(nil), backfiller: sessionBackfiller(cfg, token), counters: proxy.NewCounters(),
 		started: time.Now(), forwarders: make(map[string]*proxy.Forwarder),

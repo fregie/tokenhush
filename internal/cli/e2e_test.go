@@ -333,7 +333,7 @@ func e2eGateway(t *testing.T, upstream *e2eUpstream, rules ...filter.Rule) strin
 // difference from the production pipeline.
 func injectTestRules(gw *gateway, cfg config.Config, rules []filter.Rule) error {
 	registry := filter.NewRegistry()
-	if err := registry.RegisterBuiltin(selectBuiltins(cfg.Detectors)...); err != nil {
+	if err := registry.RegisterBuiltin(selectBuiltins(cfg.Detectors, scanBudget(cfg))...); err != nil {
 		return err
 	}
 	if err := registry.Register(rules...); err != nil {
@@ -365,6 +365,14 @@ func e2eWaitReady(t *testing.T, base string) {
 // client-bound body.
 func e2ePost(t *testing.T, url string, body []byte, headers map[string]string) (int, []byte) {
 	t.Helper()
+	return e2ePostTimeout(t, url, body, headers, 15*time.Second)
+}
+
+// e2ePostTimeout is e2ePost with an explicit client timeout, so a large-body
+// case can allow for the race detector's slowdown without widening the bound
+// every other case relies on.
+func e2ePostTimeout(t *testing.T, url string, body []byte, headers map[string]string, timeout time.Duration) (int, []byte) {
+	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
@@ -373,7 +381,7 @@ func e2ePost(t *testing.T, url string, body []byte, headers map[string]string) (
 	for name, value := range headers {
 		request.Header.Set(name, value)
 	}
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := &http.Client{Timeout: timeout}
 	response, err := client.Do(request)
 	if err != nil {
 		t.Fatalf("POST %s: %v", url, err)

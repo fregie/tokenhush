@@ -77,12 +77,22 @@ func shannonEntropy(run []byte) float64 {
 type entropyRule struct {
 	minLength  int
 	minEntropy float64
+	budget     int
 }
 
 // NewEntropyRule returns the built-in high-entropy rule with the documented
-// defaults.
+// defaults and the documented default byte budget.
 func NewEntropyRule() Rule {
-	return entropyRule{minLength: entropyDefaultMinLength, minEntropy: entropyDefaultMinBitsPerChar}
+	return NewEntropyRuleBudget(PrimitiveByteBudgetBytes)
+}
+
+// NewEntropyRuleBudget returns the high-entropy rule with the documented
+// thresholds and an explicit per-call byte budget.
+func NewEntropyRuleBudget(budget int) Rule {
+	return entropyRule{
+		minLength: entropyDefaultMinLength, minEntropy: entropyDefaultMinBitsPerChar,
+		budget: normalizeBudget(budget),
+	}
 }
 
 // ID returns the frozen detector id.
@@ -106,7 +116,14 @@ func (entropyRule) Priority() int { return DefaultPriority }
 // Confidence returns the fixed detector confidence.
 func (entropyRule) Confidence() float64 { return entropyConfidence }
 
+// inspectEntropy runs the entropy algorithm with the documented thresholds over
+// content truncated to budget; it is the compiled-document entry, where no rule
+// struct is materialised.
+func inspectEntropy(content []byte, budget int) []Span {
+	return findEntropySpans(primitiveInput(content, budget), entropyDefaultMinLength, entropyDefaultMinBitsPerChar)
+}
+
 // Inspect returns the spans of high-entropy base64 runs inside leaf.
 func (r entropyRule) Inspect(leaf []byte) []Span {
-	return findEntropySpans(primitiveInput(leaf), r.minLength, r.minEntropy)
+	return findEntropySpans(primitiveInput(leaf, r.budget), r.minLength, r.minEntropy)
 }

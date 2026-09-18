@@ -50,10 +50,15 @@ func splitEmail(candidate []byte) (local, domain []byte, ok bool) {
 }
 
 // emailRule is the built-in email-address rule.
-type emailRule struct{}
+type emailRule struct{ budget int }
 
-// NewEmailRule returns the built-in rule that flags email addresses.
-func NewEmailRule() Rule { return emailRule{} }
+// NewEmailRule returns the built-in rule that flags email addresses with the
+// documented default byte budget.
+func NewEmailRule() Rule { return NewEmailRuleBudget(PrimitiveByteBudgetBytes) }
+
+// NewEmailRuleBudget returns the email rule with an explicit per-call byte
+// budget.
+func NewEmailRuleBudget(budget int) Rule { return emailRule{budget: normalizeBudget(budget)} }
 
 // ID returns the frozen detector id.
 func (emailRule) ID() string { return DetectorEmail }
@@ -76,5 +81,11 @@ func (emailRule) Priority() int { return DefaultPriority }
 // Confidence returns the fixed detector confidence.
 func (emailRule) Confidence() float64 { return emailConfidence }
 
+// inspectEmail runs the email algorithm over content truncated to budget; it is
+// the compiled-document entry, where no rule struct is materialised.
+func inspectEmail(content []byte, budget int) []Span {
+	return findEmailSpans(primitiveInput(content, budget))
+}
+
 // Inspect returns the spans of email addresses inside leaf.
-func (emailRule) Inspect(leaf []byte) []Span { return findEmailSpans(primitiveInput(leaf)) }
+func (r emailRule) Inspect(leaf []byte) []Span { return inspectEmail(leaf, r.budget) }

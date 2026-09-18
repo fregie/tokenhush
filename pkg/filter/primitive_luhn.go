@@ -85,10 +85,15 @@ func luhnValid(digits []byte) bool {
 }
 
 // luhnRule is the built-in payment-card rule.
-type luhnRule struct{}
+type luhnRule struct{ budget int }
 
-// NewLuhnRule returns the built-in rule that flags Luhn-valid card numbers.
-func NewLuhnRule() Rule { return luhnRule{} }
+// NewLuhnRule returns the built-in rule that flags Luhn-valid card numbers with
+// the documented default byte budget.
+func NewLuhnRule() Rule { return NewLuhnRuleBudget(PrimitiveByteBudgetBytes) }
+
+// NewLuhnRuleBudget returns the payment-card rule with an explicit per-call
+// byte budget.
+func NewLuhnRuleBudget(budget int) Rule { return luhnRule{budget: normalizeBudget(budget)} }
 
 // ID returns the frozen detector id.
 func (luhnRule) ID() string { return DetectorLuhn }
@@ -111,5 +116,11 @@ func (luhnRule) Priority() int { return DefaultPriority }
 // Confidence returns the fixed detector confidence.
 func (luhnRule) Confidence() float64 { return luhnConfidence }
 
+// inspectLuhn runs the Luhn algorithm over content truncated to budget; it is
+// the compiled-document entry, where no rule struct is materialised.
+func inspectLuhn(content []byte, budget int) []Span {
+	return findLuhnSpans(primitiveInput(content, budget))
+}
+
 // Inspect returns the spans of Luhn-valid card numbers inside leaf.
-func (luhnRule) Inspect(leaf []byte) []Span { return findLuhnSpans(primitiveInput(leaf)) }
+func (r luhnRule) Inspect(leaf []byte) []Span { return inspectLuhn(leaf, r.budget) }

@@ -25,8 +25,11 @@ import (
 
 // countedStatus is the subset of the frozen status document this test reads.
 type countedStatus struct {
-	Requests   int64 `json:"requests"`
-	Redactions int64 `json:"redactions"`
+	Requests            int64 `json:"requests"`
+	Redactions          int64 `json:"redactions"`
+	ContentPolicyBlocks int64 `json:"content_policy_blocks"`
+	RuleBlocks          int64 `json:"rule_blocks"`
+	WalkSkips           int64 `json:"walk_skips"`
 }
 
 // TestRunCountsLiveRequestsAndRedactions starts the real run on an ephemeral

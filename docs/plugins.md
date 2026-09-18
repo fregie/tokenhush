@@ -55,6 +55,14 @@ a labelled `*RuleFailure` carrying one of the five reasons
 (`budget`, `timeout`, `error`, `panic`, `malformed`) — never a partial result
 and never a crash.
 
+Primitive-typed built-ins are additionally budget-bounded: `prefix`, `email`,
+`luhn`, `jwt`, `pem` and `entropy` inspect at most a per-primitive byte budget
+of one leaf. `internal/cli` aligns that budget with `scan_budget_bytes` for
+admitted requests; `filter.CompileWithBudget`, `filter.BuiltinDetectorsBudget`
+and the `New*RuleBudget` constructors set it explicitly, and
+`Compiled.Budget()` reports the effective value. A request leaf past the budget
+is reported on stderr (metadata only), never silently skipped.
+
 ## Compiling a rule in from your own package
 
 A plugin is an ordinary Go package. It imports `pkg/filter`, implements the

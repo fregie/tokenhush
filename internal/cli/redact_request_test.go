@@ -96,6 +96,14 @@ func (r redactRule) Inspect(leaf []byte) []filter.Span {
 // base URL, the captured stderr and the data directory (for the control token).
 func redactGateway(t *testing.T, upstream *e2eUpstream, rules ...filter.Rule) (string, *loggedBytes, string) {
 	t.Helper()
+	return redactGatewayTuned(t, upstream, nil, rules...)
+}
+
+// redactGatewayTuned is redactGateway with one config tuning hook: a test can
+// pin a small scan budget (or any other config field) through the same run
+// seams, so the budget path is exercised end to end rather than unit-mocked.
+func redactGatewayTuned(t *testing.T, upstream *e2eUpstream, tune func(*config.Config), rules ...filter.Rule) (string, *loggedBytes, string) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("TOKENHUSH_HOME", home)
 	dataDir := filepath.Join(home, "data")
@@ -108,6 +116,9 @@ func redactGateway(t *testing.T, upstream *e2eUpstream, rules ...filter.Rule) (s
 		cfg := config.Default()
 		cfg.Listen.Port = 0
 		cfg.Upstreams = []config.Upstream{{Match: e2ePath, Target: upstream.server.URL}}
+		if tune != nil {
+			tune(&cfg)
+		}
 		return cfg, nil
 	}
 	seams.build = func(cfg config.Config, dir string, stderr io.Writer, logRedactions bool) (*gateway, error) {

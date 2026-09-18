@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/fregie/tokenhush/pkg/protocol"
 )
 
 // The six primitive rules are the bundled detector algorithms, reachable
@@ -49,6 +51,20 @@ func primitiveCases() []primitiveCase {
 		{"jwt", NewJWTRule(), DetectorJWT, TypeJWT, CategoryJWT, jwtToken},
 		{"pem", NewPEMRule(), DetectorPrivateKey, TypePEM, CategoryPrivateKey, pemBlock("RSA PRIVATE KEY")},
 		{"entropy", NewEntropyRule(), DetectorHighEntropy, TypeEntropy, CategoryHighEntropy, highEntropyRun},
+	}
+}
+
+// primitiveCasesBudget is primitiveCases built with explicit budgets, so the
+// injectable-budget test drives the same six algorithms through their
+// budget-aware constructors.
+func primitiveCasesBudget(budget int) []primitiveCase {
+	return []primitiveCase{
+		{"prefix", NewPrefixRuleBudget(budget), DetectorPrefix, TypePrefix, CategoryAPIKey, "sk-" + strings.Repeat("A", 40)},
+		{"email", NewEmailRuleBudget(budget), DetectorEmail, TypeEmail, CategoryEmail, "user@example.com"},
+		{"luhn", NewLuhnRuleBudget(budget), DetectorLuhn, TypeLuhn, CategoryCreditCard, "4111111111111111"},
+		{"jwt", NewJWTRuleBudget(budget), DetectorJWT, TypeJWT, CategoryJWT, jwtToken},
+		{"pem", NewPEMRuleBudget(budget), DetectorPrivateKey, TypePEM, CategoryPrivateKey, pemBlock("RSA PRIVATE KEY")},
+		{"entropy", NewEntropyRuleBudget(budget), DetectorHighEntropy, TypeEntropy, CategoryHighEntropy, highEntropyRun},
 	}
 }
 
@@ -213,8 +229,10 @@ func TestPrimitiveJWT(t *testing.T) {
 	}
 }
 
-// TestPrimitivePEM: a private-key header extends to its own END marker and
-// never swallows an unrelated one; public-key headers never match.
+// TestPrimitivePEM: a private-key header extends to its own END marker; a
+// mismatched END never terminates it, so an unterminated block is
+// over-redacted to the end of the scanned input instead of leaking the key
+// body; public-key headers never match.
 func TestPrimitivePEM(t *testing.T) {
 	rule := NewPEMRule()
 	for _, kind := range []string{"PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "OPENSSH PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "PGP PRIVATE KEY BLOCK"} {
@@ -230,14 +248,38 @@ func TestPrimitivePEM(t *testing.T) {
 	unrelated := header + "\nMIIEfake\n-----END OPENSSH PRIVATE KEY-----"
 	got := rule.Inspect([]byte(unrelated))
 	if len(got) != 1 {
-		t.Fatalf("mismatched END: spans %v, want the header span only", got)
+		t.Fatalf("mismatched END: spans %v, want one over-redacted span", got)
 	}
-	if got[0] != (Span{Start: 0, End: len(header)}) {
-		t.Errorf("mismatched END: span %v must stop at the header (%d), not swallow the unrelated END", got[0], len(header))
+	if got[0] != (Span{Start: 0, End: len(unrelated)}) {
+		t.Errorf("mismatched END: span %v must extend to the end of the scanned input (%d), never stop at the header",
+			got[0], len(unrelated))
 	}
 	public := "-----BEGIN PUBLIC KEY-----\nMIIEfake\n-----END PUBLIC KEY-----"
 	if spans := rule.Inspect([]byte(public)); len(spans) != 0 {
 		t.Errorf("PUBLIC KEY must never match: spans %v", spans)
+	}
+}
+
+// TestPEMExtendsToEndWhenUnterminated pins the G1 hardening: without a matching
+// END — because the block is unterminated, or because the budget truncates the
+// input before the END — the span covers the whole scanned input, so the key
+// body is redacted rather than leaked behind a header-only span.
+func TestPEMExtendsToEndWhenUnterminated(t *testing.T) {
+	header := "-----BEGIN RSA PRIVATE KEY-----"
+	input := []byte(header + "\nMIIEfakeLineOne\nMIIEfakeLineTwo\n")
+
+	got := NewPEMRule().Inspect(input)
+	if len(got) != 1 || got[0] != (Span{Start: 0, End: len(input)}) {
+		t.Fatalf("unterminated PEM: spans %v, want the whole scanned input [0,%d)", got, len(input))
+	}
+
+	const budget = 48
+	if budget >= len(input) {
+		t.Fatalf("fixture error: the input (%d bytes) must exceed the budget %d", len(input), budget)
+	}
+	got = NewPEMRuleBudget(budget).Inspect(input)
+	if len(got) != 1 || got[0] != (Span{Start: 0, End: budget}) {
+		t.Fatalf("budget-truncated PEM: spans %v, want the whole scanned input [0,%d), not a header-only span", got, budget)
 	}
 }
 
@@ -270,10 +312,11 @@ func TestPrimitiveEntropy(t *testing.T) {
 	}
 }
 
-// TestPrimitiveBudget pins the documented per-call byte budget: a match ending
-// exactly at the budget is still found, and everything at or past the budget is
-// never inspected.
-func TestPrimitiveBudget(t *testing.T) {
+// TestPrimitiveBudgetDefaultIsOneMiB pins the documented DEFAULT per-call byte
+// budget: the default constructors still use PrimitiveByteBudgetBytes, a match
+// ending exactly at the budget is still found, and everything at or past the
+// budget is never inspected.
+func TestPrimitiveBudgetDefaultIsOneMiB(t *testing.T) {
 	const wantBudget = 1 << 20
 	if PrimitiveByteBudgetBytes != wantBudget {
 		t.Fatalf("PrimitiveByteBudgetBytes = %d, want the documented %d", PrimitiveByteBudgetBytes, wantBudget)
@@ -295,6 +338,81 @@ func TestPrimitiveBudget(t *testing.T) {
 				t.Fatalf("byte budget %d must truncate the scan, got span %v", wantBudget, span)
 			}
 		})
+	}
+}
+
+// TestPrimitiveBudgetIsInjectable proves the per-primitive byte budget is a
+// real parameter: the budget-aware constructors, the built-in table and the
+// compiled-document path all truncate a leaf longer than the budget at exactly
+// the budget boundary (a bait ending at N is found, a bait starting at N is
+// invisible), while a leaf under the budget is scanned whole.
+func TestPrimitiveBudgetIsInjectable(t *testing.T) {
+	const budget = 256
+	filler := bytes.Repeat([]byte{'\n'}, budget)
+	for _, tc := range primitiveCasesBudget(budget) {
+		t.Run(tc.name, func(t *testing.T) {
+			inside := append(append([]byte{}, filler[:budget-len(tc.bait)]...), tc.bait...)
+			spans := tc.rule.Inspect(inside)
+			if len(spans) != 1 || spans[0] != (Span{Start: budget - len(tc.bait), End: budget}) {
+				t.Fatalf("a bait ending exactly at the injected budget must match once at the boundary, got %v", spans)
+			}
+			under := append(append([]byte{}, filler[:8]...), tc.bait...)
+			if spans := tc.rule.Inspect(under); len(spans) != 1 || spans[0] != (Span{Start: 8, End: 8 + len(tc.bait)}) {
+				t.Fatalf("a leaf under the budget must be scanned whole, got %v", spans)
+			}
+			beyond := append(append([]byte{}, filler...), tc.bait...)
+			if spans := tc.rule.Inspect(beyond); len(spans) != 0 {
+				t.Fatalf("a bait starting at the budget must be invisible, got %v", spans)
+			}
+		})
+	}
+
+	emailBait := "user@example.com"
+	budgeted := false
+	for _, rule := range BuiltinDetectorsBudget(budget) {
+		if rule.ID() != DetectorEmail {
+			continue
+		}
+		budgeted = true
+		if spans := rule.Inspect(append(append([]byte{}, filler[:budget-len(emailBait)]...), emailBait...)); len(spans) != 1 {
+			t.Errorf("BuiltinDetectorsBudget(%d): email bait at the boundary must match once, got %v", budget, spans)
+		}
+		if spans := rule.Inspect(append(append([]byte{}, filler...), emailBait...)); len(spans) != 0 {
+			t.Errorf("BuiltinDetectorsBudget(%d): email bait past the boundary must be invisible, got %v", budget, spans)
+		}
+	}
+	if !budgeted {
+		t.Fatal("BuiltinDetectorsBudget did not return the email detector")
+	}
+
+	doc := &Document{Rules: []RuleDoc{{ID: "budget-email", Type: TypeEmail, Action: ActionRedact}}}
+	set, err := CompileWithBudget(doc, budget)
+	if err != nil {
+		t.Fatalf("CompileWithBudget: %v", err)
+	}
+	if got := set.Budget(); got != budget {
+		t.Fatalf("Compiled.Budget() = %d, want %d", got, budget)
+	}
+	leaf := append(append([]byte{}, filler[:budget-len(emailBait)]...), emailBait...)
+	findings, err := set.Evaluate([]protocol.Leaf{{Value: leaf, Length: len(leaf)}}, ScopeRequest)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("a bait ending exactly at the compiled budget must yield one finding, got %v", findings)
+	}
+	beyondLeaf := append(append([]byte{}, filler...), emailBait...)
+	findings, err = set.Evaluate([]protocol.Leaf{{Value: beyondLeaf, Length: len(beyondLeaf)}}, ScopeRequest)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if len(findings) != 0 {
+		t.Fatalf("a bait past the compiled budget must yield no finding, got %v", findings)
+	}
+	if defaultSet, err := Compile(doc); err != nil {
+		t.Fatalf("Compile: %v", err)
+	} else if defaultSet.Budget() != PrimitiveByteBudgetBytes {
+		t.Fatalf("Compile().Budget() = %d, want the default %d", defaultSet.Budget(), PrimitiveByteBudgetBytes)
 	}
 }
 

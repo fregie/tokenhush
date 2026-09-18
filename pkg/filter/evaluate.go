@@ -112,8 +112,9 @@ func (c *Compiled) Evaluate(leaves []protocol.Leaf, phase Scope) ([]Finding, err
 
 // spans returns one rule's raw matches in value. A regex rule scans with RE2, a
 // keyword rule scans byte-exact (case-folded unless case_sensitive), and a
-// primitive-typed rule delegates to its bundled algorithm, which keeps its own
-// documented per-call byte budget. No branch decodes or normalises anything.
+// primitive-typed rule delegates to its bundled algorithm with the set's
+// documented per-primitive byte budget. No branch decodes or normalises
+// anything.
 func (r *compiledRule) spans(value []byte) []Span {
 	switch {
 	case r.re != nil:
@@ -121,7 +122,7 @@ func (r *compiledRule) spans(value []byte) []Span {
 	case r.keywords != nil:
 		return keywordSpans(value, r.keywords, r.fold, MaxMatches)
 	default:
-		return primitiveInspect[r.typ](value)
+		return primitiveInspect[r.typ](value, r.budget)
 	}
 }
 

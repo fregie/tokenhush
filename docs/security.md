@@ -1,7 +1,7 @@
 # tokenhush security model
 
 This document is the operator-facing security contract of the v0.5.0 rewrite.
-It lists the eight invariants the core keeps and the four residual risks it does
+It lists the eight invariants the core keeps and the five residual risks it does
 not hide, states what is enforced where, and names the test that pins each
 invariant.
 
@@ -10,7 +10,7 @@ invariant.
 - [Response-phase effects](#response-phase-effects)
 - [The SSE limitation](#the-sse-limitation)
 - [What is on disk](#what-is-on-disk)
-- [The four residual risks](#the-four-residual-risks)
+- [The five residual risks](#the-five-residual-risks)
 
 ## The direction contract
 
@@ -71,7 +71,12 @@ What each one means in practice:
    out, exceeds its span budget, returns malformed findings or cannot be invoked
    at all yields a labelled refusal carrying the right reason — never a silent
    pass, never a crash — and each failure writes exactly one metadata-only audit
-   record.
+   record. Detection is also budget-bounded: a primitive-typed detector inspects
+   at most its per-primitive byte budget of one leaf, aligned with
+   `scan_budget_bytes` for admitted requests. Budget truncation is observable
+   rather than silent: a request leaf past the budget writes exactly one
+   metadata-only `tokenhush: detector budget exceeded leaf=<len> budget=<n>`
+   stderr line and moves no counter and no status key.
 6. **Exactly two switchable vendor-bound egress categories, command-scoped.**
    The product may reach the vendor only for the two disclosed purposes, and
    only until the operator sets the disclosed switch. This invariant is proven
@@ -132,24 +137,27 @@ mapping are never written to disk. The redaction log line
 is never persisted; its masked form either reveals nothing (`****`,
 `[redacted]`) or a bounded prefix and suffix of an opaque credential type.
 
-## The four residual risks
+## The five residual risks
 
 These are recorded honestly rather than left implicit. Listing them is not a
 claim that they are absent; each one is a known limit of this design.
 
 | # | Residual risk | What it means in practice | Status |
 |---|---|---|---|
-| R1 | Encoded secrets are not caught | A secret that is base64-, hex- or URL-encoded before it leaves is not detected: the rewrite has no normalization pass by design, and a non-identity request `Content-Encoding` is refused with 415 rather than decoded for detection. | Recorded and accepted |
+| R1 | Encoded secrets are not caught | A secret that is base64-, hex- or URL-encoded before it leaves is not detected: the rewrite has no normalization pass by design, and a non-identity request `Content-Encoding` is refused with 415 rather than decoded for detection. JSON string *escaping* is handled — every decoded detection span is mapped back to the raw, escaped bytes that spell it at substitution — so the residual is content encodings (base64, hex, URL-encoded, or gzip nested inside another container), never JSON escaping. | Recorded and accepted |
 | R2 | A secret in a JSON object key is not caught | A secret placed in a JSON object key rather than a value is forwarded unchanged: key-position blocking is dropped per D10, so the leaf walk supplies no key leaves and no dead key surface exists. | Recorded and accepted |
 | R3 | A signed remote pack may weaken detection through its own allowlist | A signed remote pack may suppress matches through its own global or per-rule allowlist: the non-weakening floor is allowlist-neutral per OD-3 and does not inspect allowlists, while the rule-signing key `rules-2026-09` remains the trust root. | Recorded and accepted |
 | R4 | The OD-2 command-rule rejection is dormant and the v2 manifest bump is backward-incompatible | The OD-2 `command`-rule rejection stays dormant until the OD-4 gate opens, and the gate opens only when the rules manifest `schema_version` reaches 2; that bump is backward-incompatible with clients pinning `== 1`, so the backend must keep serving a v1 manifest until the legacy line is out of support. | Recorded and accepted |
+| R5 | Response-path bodies are not capped by scan_budget_bytes | A response body is not limited by the request `scan_budget_bytes` gate, while a response-scoped primitive detector still scans at most the per-primitive `budget`: a response leaf past that budget is truncated with no stderr report and no counter, so response-scoped detection can miss content beyond the budget. The budget report is deliberately request-path only and moves no status key. | Recorded and accepted |
 
 Why each one stays as it is:
 
 - **R1 — no normalization pass.** Decoding a JSON string that itself contains
   JSON (recursively-encoded strings) is in scope; decoding *encodings* is not.
-  A normalization pass was deleted because it duplicated detection and produced
-  false confidence; the honest position is that an encoded secret can pass.
+  JSON string escaping is not this residual: the substitution path maps each
+  decoded span back to its raw escaped bytes. A normalization pass was deleted
+  because it duplicated detection and produced false confidence; the honest
+  position is that an encoded secret can pass.
 - **R2 — key-position blocking dropped, not demoted.** The walk supplies no key
   leaves at all, so there is no half-working key path to mislead an operator.
 - **R3 — the floor stays allowlist-neutral.** Making the floor inspect
@@ -162,6 +170,11 @@ Why each one stays as it is:
   of the gate is implemented and tested; the backend must keep serving a v1
   manifest until no supported client pins `== 1`. The OD-4 gate exists so that
   the client behaviour can be ready before the manifest version moves.
+- **R5 — no new response-side surface.** Closing R5 would mean either capping
+  response bodies at `scan_budget_bytes` (a product change with no request-side
+  equivalent) or adding a response-path budget report (a new observable surface,
+  which this rewrite refuses). Response-scoped detectors are bounded by the same
+  per-primitive budget, and the limit is recorded rather than hidden.
 
 ## Related documents
 

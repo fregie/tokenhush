@@ -48,6 +48,13 @@ err = reg.RegisterCompiled(compiledDocument)    // OriginRemotePack
 会以带标签的 `*RuleFailure` 故障关闭，原因是五种之一（`budget`、`timeout`、
 `error`、`panic`、`malformed`）——绝不产生部分结果，也绝不崩溃。
 
+原始类型的内置规则还受预算上限约束：`prefix`、`email`、`luhn`、`jwt`、`pem` 与
+`entropy` 每个叶最多检查自己的每原始检测器字节预算。`internal/cli` 对已准入的请求
+把该预算与 `scan_budget_bytes` 对齐；`filter.CompileWithBudget`、
+`filter.BuiltinDetectorsBudget` 与 `New*RuleBudget` 构造器可显式设置它，
+`Compiled.Budget()` 报告生效值。超过预算的请求叶会在 stderr 上报（仅元数据），
+绝不静默跳过。
+
 ## 从你自己的包中编译进规则
 
 插件就是普通的 Go 包。它导入 `pkg/filter`、实现契约，并在组装时注册自己的规则：

@@ -53,19 +53,21 @@ var compiledTypes = map[string]bool{
 }
 
 // primitiveInspect maps the six detector rule types onto the bundled
-// algorithms. Each entry is a stateless, concurrency-safe Inspect.
-var primitiveInspect = map[string]func([]byte) []Span{
-	TypePrefix:  NewPrefixRule().Inspect,
-	TypeEmail:   NewEmailRule().Inspect,
-	TypeLuhn:    NewLuhnRule().Inspect,
-	TypeJWT:     NewJWTRule().Inspect,
-	TypePEM:     NewPEMRule().Inspect,
-	TypeEntropy: NewEntropyRule().Inspect,
+// algorithms, each called with the compiled set's per-primitive byte budget.
+// Every entry is a stateless, concurrency-safe Inspect.
+var primitiveInspect = map[string]func([]byte, int) []Span{
+	TypePrefix:  inspectPrefix,
+	TypeEmail:   inspectEmail,
+	TypeLuhn:    inspectLuhn,
+	TypeJWT:     inspectJWT,
+	TypePEM:     inspectPEM,
+	TypeEntropy: inspectEntropy,
 }
 
 // compiledRule is the immutable, validated form of one rule. Exactly one of re,
 // keywords or the primitive dispatch (by typ) decides how it matches, selected
-// by the rule type. Every byte slice is owned by the set, never aliased from
+// by the rule type. budget is the per-primitive byte budget (unused by regex
+// and keyword rules). Every byte slice is owned by the set, never aliased from
 // the document.
 type compiledRule struct {
 	id         string
@@ -79,6 +81,7 @@ type compiledRule struct {
 	keywords   [][]byte
 	fold       bool
 	allow      [][]byte
+	budget     int
 }
 
 // Compiled is a compiled, immutable rule set. It is safe for concurrent use:
@@ -90,18 +93,29 @@ type Compiled struct {
 	allowlist  [][]byte
 	blocklist  [][]byte
 	commandIDs []string
+	budget     int
 }
 
-// Compile turns a decoded rule document into a compiled set, re-asserting every
-// load-time invariant the decoder enforces (duplicate ids, bad regexes, the
-// field set per rule type) so an in-memory document is checked too. Every
-// rejection is a *CompileError naming the rule id; a command rule is excluded
-// from evaluation but its id stays reachable through Commands.
+// Compile turns a decoded rule document into a compiled set with the documented
+// default per-primitive byte budget. It is CompileWithBudget with
+// PrimitiveByteBudgetBytes.
 func Compile(doc *Document) (*Compiled, error) {
+	return CompileWithBudget(doc, PrimitiveByteBudgetBytes)
+}
+
+// CompileWithBudget turns a decoded rule document into a compiled set that
+// re-asserts every load-time invariant the decoder enforces (duplicate ids, bad
+// regexes, the field set per rule type) so an in-memory document is checked too.
+// Primitive-typed rules scan with the given per-primitive byte budget; a
+// non-positive budget falls back to the documented default. Every rejection is
+// a *CompileError naming the rule id; a command rule is excluded from
+// evaluation but its id stays reachable through Commands.
+func CompileWithBudget(doc *Document, budget int) (*Compiled, error) {
 	if doc == nil {
 		return nil, fieldError(ErrInvalidValue, "document", "nil document")
 	}
-	set := &Compiled{}
+	budget = normalizeBudget(budget)
+	set := &Compiled{budget: budget}
 	var err error
 	if set.allowlist, err = copyLiterals("allowlist", doc.Allowlist); err != nil {
 		return nil, err
@@ -123,7 +137,7 @@ func Compile(doc *Document) (*Compiled, error) {
 			set.commandIDs = append(set.commandIDs, rule.ID)
 			continue
 		}
-		compiled, err := compileRule(rule)
+		compiled, err := compileRule(rule, budget)
 		if err != nil {
 			return nil, err
 		}
@@ -141,8 +155,9 @@ func Compile(doc *Document) (*Compiled, error) {
 // compileRule validates one non-command rule and builds its immutable form.
 // Absent scope, category and confidence fall back to the documented defaults,
 // so an in-memory document compiles like a decoded one; priority is kept as
-// written because zero is a legal explicit priority.
-func compileRule(rule *RuleDoc) (compiledRule, error) {
+// written because zero is a legal explicit priority. budget becomes the rule's
+// per-primitive budget; the caller has already normalized it.
+func compileRule(rule *RuleDoc, budget int) (compiledRule, error) {
 	if !compiledTypes[rule.Type] {
 		return compiledRule{}, compileError(rule.ID, ErrCompile, "unknown detector type %q", rule.Type)
 	}
@@ -194,6 +209,7 @@ func compileRule(rule *RuleDoc) (compiledRule, error) {
 		action:     rule.Action,
 		priority:   rule.Priority,
 		confidence: confidence,
+		budget:     budget,
 	}
 	var err error
 	if r.allow, err = copyLiterals(rule.ID+".allowlist", rule.Allowlist); err != nil {
@@ -262,6 +278,16 @@ func (c *Compiled) Len() int {
 		return 0
 	}
 	return len(c.rules)
+}
+
+// Budget returns the effective per-primitive byte budget the set compiled
+// with: the value normalized at compile time, so it is never zero for a live
+// set. A nil set reports 0.
+func (c *Compiled) Budget() int {
+	if c == nil {
+		return 0
+	}
+	return c.budget
 }
 
 // Commands returns a copy of the parse-only command signal: the ids of the

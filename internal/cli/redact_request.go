@@ -2,7 +2,9 @@ package cli
 
 // redact_request.go is the outbound substitution seam, split out of cli.go to
 // keep that file under the 250-pure-LOC ceiling. It walks the request body,
-// takes the request-phase decision and hands the redact spans to
+// reports a leaf that exceeds the effective detector budget (one metadata-only
+// stderr line per request, so the residual is never silent), takes the
+// request-phase decision and hands the redact spans to
 // redact.Backfiller.Substitute, which maps each DECODED span back to the raw
 // bytes that spell it (JSON string escaping means the two are not the same
 // bytes) and counts only the substitutions that really changed the body. Each
@@ -30,6 +32,7 @@ func (g *gateway) redactRequest(body []byte) ([]byte, int, error) {
 	if err != nil {
 		return body, 0, nil
 	}
+	g.reportBudgetExceeded(leaves)
 	decision, err := g.policy.Decide(leaves, filter.ScopeRequest)
 	if err != nil {
 		return nil, 0, err
@@ -64,4 +67,23 @@ func (g *gateway) redactRequest(body []byte) ([]byte, int, error) {
 		fmt.Fprintf(g.stderr, "tokenhush: redacted request %s (len=%d) %s\n", a.Category, a.Length, maskSecret(string(secret), a.Category))
 	}
 	return out, len(applied), nil
+}
+
+// reportBudgetExceeded emits at most one metadata-only stderr line per request
+// when the longest leaf exceeds the effective detector budget. The line names
+// only lengths, never rule ids or secret bytes, and no status key moves: the
+// budget residual is observable, not counted.
+func (g *gateway) reportBudgetExceeded(leaves []protocol.Leaf) {
+	if g.budget <= 0 || g.stderr == nil {
+		return
+	}
+	longest := 0
+	for i := range leaves {
+		if len(leaves[i].Value) > longest {
+			longest = len(leaves[i].Value)
+		}
+	}
+	if longest > g.budget {
+		fmt.Fprintf(g.stderr, "tokenhush: detector budget exceeded leaf=%d budget=%d\n", longest, g.budget)
+	}
 }

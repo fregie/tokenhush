@@ -78,10 +78,14 @@ func decodeBase64URL(segment []byte) ([]byte, bool) {
 }
 
 // jwtRule is the built-in JWT rule.
-type jwtRule struct{}
+type jwtRule struct{ budget int }
 
-// NewJWTRule returns the built-in rule that flags JSON Web Tokens.
-func NewJWTRule() Rule { return jwtRule{} }
+// NewJWTRule returns the built-in rule that flags JSON Web Tokens with the
+// documented default byte budget.
+func NewJWTRule() Rule { return NewJWTRuleBudget(PrimitiveByteBudgetBytes) }
+
+// NewJWTRuleBudget returns the JWT rule with an explicit per-call byte budget.
+func NewJWTRuleBudget(budget int) Rule { return jwtRule{budget: normalizeBudget(budget)} }
 
 // ID returns the frozen detector id.
 func (jwtRule) ID() string { return DetectorJWT }
@@ -104,5 +108,11 @@ func (jwtRule) Priority() int { return DefaultPriority }
 // Confidence returns the fixed detector confidence.
 func (jwtRule) Confidence() float64 { return jwtConfidence }
 
+// inspectJWT runs the JWT algorithm over content truncated to budget; it is the
+// compiled-document entry, where no rule struct is materialised.
+func inspectJWT(content []byte, budget int) []Span {
+	return findJWTspans(primitiveInput(content, budget))
+}
+
 // Inspect returns the spans of JSON Web Tokens inside leaf.
-func (jwtRule) Inspect(leaf []byte) []Span { return findJWTspans(primitiveInput(leaf)) }
+func (r jwtRule) Inspect(leaf []byte) []Span { return inspectJWT(leaf, r.budget) }
