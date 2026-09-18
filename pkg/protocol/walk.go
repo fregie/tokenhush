@@ -33,9 +33,11 @@ var (
 // Leaf is one JSON string value found by Walk.
 type Leaf struct {
 	Path    string // RFC 6901 JSON Pointer, e.g. /messages/0/content
-	Value   []byte // raw string bytes, returned byte-identical
+	Value   []byte // decoded string bytes (JSON escapes resolved), not the raw spelling
 	Length  int    // len(Value)
 	Encoded bool   // true when reached by decoding a JSON-encoded string
+
+	tok *rawToken // raw location; nil for hand-built or plugin leaves
 }
 
 // frame is one open object or array in the non-recursive walk.
@@ -66,14 +68,15 @@ func Walk(data []byte) ([]Leaf, error) {
 	if !utf8.Valid(data) {
 		return nil, ErrNonUTF8
 	}
-	return walkDocument(data, "", false, 0)
+	return walkDocument(data, "", false, 0, nil)
 }
 
 // walkDocument walks one whole JSON document at data, honouring a base
-// pointer, an encoded flag and the encoded-string recursion depth.
-func walkDocument(data []byte, base string, encoded bool, depth int) ([]Leaf, error) {
+// pointer, an encoded flag, the encoded-string recursion depth and the wrapper
+// token enclosing is set to (nil at the root).
+func walkDocument(data []byte, base string, encoded bool, depth int, enclosing *rawToken) ([]Leaf, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
-	leaves, err := walkValue(dec, base, encoded, depth)
+	leaves, err := walkValue(dec, data, base, encoded, depth, enclosing)
 	if err != nil {
 		return nil, err
 	}
@@ -85,17 +88,22 @@ func walkDocument(data []byte, base string, encoded bool, depth int) ([]Leaf, er
 
 // walkValue consumes exactly one JSON value from dec. Open containers live in
 // an explicit stack, so nesting is bounded by MaxNestingDepth rather than by
-// the goroutine stack and Walk cannot panic on deep input.
-func walkValue(dec *json.Decoder, base string, encoded bool, depth int) ([]Leaf, error) {
+// the goroutine stack and Walk cannot panic on deep input. data is the
+// document the decoder reads; every string token is located in it so its raw
+// spelling can be recovered later. enclosing is the wrapper token whose
+// decoded value is this document.
+func walkValue(dec *json.Decoder, data []byte, base string, encoded bool, depth int, enclosing *rawToken) ([]Leaf, error) {
 	var (
 		stack []frame
 		out   []Leaf
 	)
 	for {
+		start := dec.InputOffset()
 		tok, err := dec.Token()
 		if err != nil {
 			return nil, tokenError(err)
 		}
+		end := dec.InputOffset()
 		if delim, ok := tok.(json.Delim); ok {
 			switch delim {
 			case '{', '[':
@@ -119,7 +127,7 @@ func walkValue(dec *json.Decoder, base string, encoded bool, depth int) ([]Leaf,
 		}
 		if len(stack) == 0 {
 			if raw, ok := tok.(string); ok {
-				out = appendLeaf(out, raw, base, encoded, depth)
+				out = appendLeaf(out, raw, base, encoded, depth, tokenNode(data, int(start), int(end), enclosing))
 			}
 			return out, nil
 		}
@@ -135,7 +143,7 @@ func walkValue(dec *json.Decoder, base string, encoded bool, depth int) ([]Leaf,
 		seg := childSegment(stack)
 		advance(stack)
 		if raw, ok := tok.(string); ok {
-			out = appendLeaf(out, raw, base+joinSegs(stack)+seg, encoded, depth)
+			out = appendLeaf(out, raw, base+joinSegs(stack)+seg, encoded, depth, tokenNode(data, int(start), int(end), enclosing))
 		}
 	}
 }
@@ -143,17 +151,26 @@ func walkValue(dec *json.Decoder, base string, encoded bool, depth int) ([]Leaf,
 // appendLeaf emits the string raw at path. While recursion budget remains it
 // first tries to read raw as a JSON document: a document with at least one
 // string leaf replaces its wrapper, whose inner leaves carry Encoded true.
-// Anything else is emitted itself, without decoding.
-func appendLeaf(out []Leaf, raw, path string, encoded bool, depth int) []Leaf {
+// Anything else is emitted itself, without decoding. tok locates raw's token;
+// inner leaves get tok as their enclosing wrapper.
+func appendLeaf(out []Leaf, raw, path string, encoded bool, depth int, tok *rawToken) []Leaf {
 	if depth < MaxEncodedDepth {
-		if inner, err := walkDocument([]byte(raw), path, true, depth+1); err == nil && len(inner) > 0 {
+		if inner, err := walkDocument([]byte(raw), path, true, depth+1, tok); err == nil && len(inner) > 0 {
 			return append(out, inner...)
 		}
 	}
 	if depth >= MaxEncodedDepth {
 		encoded = false
 	}
-	return append(out, Leaf{Path: path, Value: []byte(raw), Length: len(raw), Encoded: encoded})
+	return append(out, Leaf{Path: path, Value: []byte(raw), Length: len(raw), Encoded: encoded, tok: tok})
+}
+
+// tokenNode locates the raw interior of the string token occupying
+// data[start:end]: start is the decoder offset before the token, so the first
+// quote in that slice opens the token and the byte before end closes it.
+func tokenNode(data []byte, start, end int, enclosing *rawToken) *rawToken {
+	open := start + bytes.IndexByte(data[start:end], '"')
+	return &rawToken{raw: data[open+1 : end-1], start: open, parent: enclosing}
 }
 
 // childSegment renders the pointer segment of the next value of the innermost

@@ -202,14 +202,14 @@ func TestWalkEncodedDepthLimit(t *testing.T) {
 	// exercised at the exact helper call the walk makes for a string reached
 	// with the given number of encoded boundaries already decoded.
 	t.Run("budget remains decodes the wrapper", func(t *testing.T) {
-		got := appendLeaf(nil, payload, "/p", false, MaxEncodedDepth-1)
+		got := appendLeaf(nil, payload, "/p", false, MaxEncodedDepth-1, nil)
 		if len(got) != 1 || got[0].Path != "/p/k" || string(got[0].Value) != "v" {
 			t.Errorf("appendLeaf at depth %d = %+v, want one leaf /p/k = %q", MaxEncodedDepth-1, got, "v")
 		}
 	})
 
 	t.Run("one past the limit stops literally", func(t *testing.T) {
-		got := appendLeaf(nil, payload, "/p", false, MaxEncodedDepth)
+		got := appendLeaf(nil, payload, "/p", false, MaxEncodedDepth, nil)
 		if len(got) != 1 {
 			t.Fatalf("appendLeaf at depth %d returned %d leaves, want 1: %+v", MaxEncodedDepth, len(got), got)
 		}

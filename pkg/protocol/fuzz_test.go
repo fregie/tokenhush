@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -16,6 +17,40 @@ func FuzzWalk(f *testing.F) {
 		leaves, err := Walk(in)
 		if err != nil && leaves != nil {
 			t.Fatalf("Walk returned %d leaves together with error %v; errors must carry no leaves", len(leaves), err)
+		}
+	})
+}
+
+// FuzzApplyOnlyTouchesTheSpan pins the splice invariant: for any Walk-accepted
+// input, replacing a leaf's whole decoded value may change bytes only inside
+// the raw span RawSpan returned, and the result must stay valid JSON.
+func FuzzApplyOnlyTouchesTheSpan(f *testing.F) {
+	f.Add([]byte(`{"messages":[{"role":"user","content":"hello"}]}`))
+	f.Add([]byte(`{"a":"x\ny","b":[1,true,null]}`))
+	f.Add([]byte(`"top-level string"`))
+	f.Add([]byte(`{"wrap":"{\"s\":\"x\"}"}`))
+	f.Fuzz(func(t *testing.T, in []byte) {
+		leaves, err := Walk(in)
+		if err != nil || len(leaves) == 0 {
+			return
+		}
+		leaf := leaves[0]
+		rs, re, ok := leaf.RawSpan(0, len(leaf.Value))
+		if !ok {
+			t.Fatalf("Walk leaf %+v is not locatable", leaf)
+		}
+		out, idx := Apply(in, []Edit{{Leaf: leaf, Start: 0, End: len(leaf.Value), Replacement: []byte("X")}})
+		if !json.Valid(out) {
+			t.Fatalf("output for %q is not valid JSON: %q", in, out)
+		}
+		if len(idx) == 0 {
+			if !bytes.Equal(out, in) {
+				t.Fatalf("no indices returned but body changed: %q -> %q", in, out)
+			}
+			return
+		}
+		if !bytes.Equal(out[:rs], in[:rs]) || !bytes.Equal(out[rs+1:], in[re:]) {
+			t.Fatalf("output changed outside raw span %d..%d: %q -> %q", rs, re, in, out)
 		}
 	})
 }
