@@ -56,6 +56,11 @@ var extraAllowedDocs = []string{
 	"docs/verify.md",
 	"docs/deployment.md",
 	"docs/generated/network-egress.md",
+	"docs/PRO-MIGRATION.zh-CN.md",
+	"docs/tool-setup.zh-CN.md",
+	"docs/verify.zh-CN.md",
+	"docs/deployment.zh-CN.md",
+	"docs/generated/network-egress.zh-CN.md",
 }
 
 // realCLICommands is the CLI's frozen command set (D7). It is the expectation
