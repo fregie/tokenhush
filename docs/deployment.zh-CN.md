@@ -25,9 +25,8 @@ sha256，再把二进制装进用户目录，无需管理员权限，也不依�
 两者都接受固定版本（`--version X.Y.Z` / `-Version X.Y.Z`），以及下载并校验但不安装的
 `--dry-run` / `-DryRun` 模式。
 
-已发布的最新版本仍是旧的 v0.4 线（见[发布状态](#发布状态)），脚本默认拒绝安装它：
-改为从源码构建当前 v0.5 线，这需要 Go 1.25+。一旦 v0.5+ 发布，同一条命令会直接安装
-校验过的二进制。
+安装脚本会下载你所在平台的已发布二进制，并用发布页的 `checksums.txt` 校验。默认运行
+会拒绝低于最低线的已发布版本，改为从源码构建当前线；见[发布状态](#发布状态)。
 
 ### 从源码构建
 
@@ -61,12 +60,12 @@ Tokenhush 是纯 Go 实现，以 `CGO_ENABLED=0` 构建，所以二进制没有 
 
 | 操作系统 | 架构 |
 |---|---|
-| macOS | arm64 |
-| Linux | amd64 |
-| Windows | amd64 |
+| macOS | arm64、amd64 |
+| Linux | arm64、amd64 |
+| Windows | arm64、amd64 |
 
-`.goreleaser.yaml` 固定了这套构建矩阵以及 `checksums.txt` 制品。它目前还不发布
-版本；发布被划到更晚的发布波次。
+`.goreleaser.yaml` 固定了这套构建矩阵以及 `checksums.txt` 制品，
+`.github/workflows/release.yml` 在 `v*` tag 上构建并发布它们。
 
 ## 配置目录与数据目录
 
@@ -166,13 +165,12 @@ schtasks /Create /TN Tokenhush /TR "C:\path\to\tokenhush.exe run" /SC ONLOGON
 
 ## 发布状态
 
-目前还没有发布任何 v0.5.0 二进制，所以已发布的最新版本仍是旧的 v0.4 线。
-`.goreleaser.yaml` 为更晚的发布波次固定了构建矩阵与校验和制品。
+v0.5.0 已发布。`.goreleaser.yaml` 固定构建矩阵与校验和制品，
+`.github/workflows/release.yml` 在 `v*` tag 上构建并发布它们，并在同一次运行中推送
+Homebrew cask 与 Scoop manifest。
 
-一行安装脚本已经存在，并且经过校验和验证。在 v0.5+ 发布之前，`install.sh` 与
-`install.ps1` 会从源码构建当前 v0.5 线（需要 Go 1.25+），而不是安装它们本会找到的
-旧版本；Homebrew 的 cask 仍指向 v0.4 版本。从源码构建或安装 `@main` 现在就能拿到
-v0.5 线。
+`install.sh` 与 `install.ps1` 会下载并校验对应平台的已发布二进制，无需 Go 工具链。
+默认运行会拒绝低于 0.5.0 线的已发布版本；显式传 `--version` 才会安装旧版本。
 
 ## Tokenhush 在部署时绝不做的事
 

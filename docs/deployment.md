@@ -27,11 +27,10 @@ per-user directory, with no admin rights and no package manager:
 Both accept a pinned version (`--version X.Y.Z` / `-Version X.Y.Z`) and a
 `--dry-run` / `-DryRun` mode that downloads and verifies without installing.
 
-The newest published release is still the older v0.4 line (see
-[Release status](#release-status)), and the installers refuse to install it by
-default: they build the current v0.5 line from source instead, which needs Go
-1.25+. Once a v0.5+ release is published, the same command installs the verified
-binary directly.
+The installers download the published binary for your platform and verify it
+against the release `checksums.txt`. A default run refuses a published release
+older than the minimum line rather than installing it, and falls back to
+building the current line from source; see [Release status](#release-status).
 
 ### Build from source
 
@@ -68,13 +67,13 @@ dependencies and cross-compiles cleanly. The pinned target set is:
 
 | OS | Architecture |
 |---|---|
-| macOS | arm64 |
-| Linux | amd64 |
-| Windows | amd64 |
+| macOS | arm64, amd64 |
+| Linux | arm64, amd64 |
+| Windows | arm64, amd64 |
 
 `.goreleaser.yaml` pins exactly this build matrix and the `checksums.txt`
-artefact. It does not publish a release yet; publication is scoped to a later
-release wave.
+artefact, and `.github/workflows/release.yml` builds and publishes them on a
+`v*` tag.
 
 ## Config and data directories
 
@@ -181,15 +180,14 @@ Adjust `/TR` to the full path of `tokenhush.exe` on your machine.
 
 ## Release status
 
-No v0.5.0 binaries are published yet, so the newest published release is still
-the older v0.4 line. `.goreleaser.yaml` pins the build matrix and the checksum
-artefact for a later release wave.
+v0.5.0 is published. `.goreleaser.yaml` pins the build matrix and the checksum
+artefact, and `.github/workflows/release.yml` builds and publishes them on a `v*`
+tag, pushing the Homebrew cask and the Scoop manifest from the same run.
 
-The one-line installers already exist and are checksum-verified. Until a v0.5+
-release is published, `install.sh` and `install.ps1` build the current v0.5 line
-from source (Go 1.25+ needed) rather than installing the older release they would
-otherwise find, and the Homebrew cask still points at the v0.4 release. Building
-from source or installing `@main` gives you the v0.5 line today.
+`install.sh` and `install.ps1` download and verify the published binary for the
+detected platform, so no Go toolchain is needed. A default run refuses a
+published release older than the 0.5.0 line instead of installing it; pass an
+explicit `--version` to install an older release.
 
 ## What Tokenhush never does at deploy time
 
