@@ -30,7 +30,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.1.6
+          version: v2.13.2
 
       - name: Layering guard
         run: bash scripts/check-layering.sh
