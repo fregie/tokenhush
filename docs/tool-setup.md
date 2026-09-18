@@ -259,8 +259,9 @@ The detector keys are exactly `prefix`, `email`, `luhn`, `jwt`, `pem`, and
 The `email` detector matches precisely: an address is a match only when its
 domain ends at a label boundary with a known public suffix (`.com`, `.co.uk`),
 so subdomains count and a look-alike such as `evilcorp.com` is rejected when the
-configured suffix is the narrower `.corp.com`. The built-in suffix table is
-compiled in, frozen, and always on.
+configured suffix is the narrower `.corp.com` in `replace` mode (an additive
+`.corp.com` still carries the built-in `.com`, so `evilcorp.com` would match).
+The built-in suffix table is compiled in, frozen, and always on.
 
 ## Config and data directories
 
