@@ -217,7 +217,7 @@ func buildGateway(cfg config.Config, dataDir string, stderr io.Writer, logRedact
 	gateway := &gateway{
 		cfg: cfg, stderr: stderr, logRedactions: logRedactions, token: token,
 		policy: filter.NewPolicy(registry, filter.PolicyConfig{Timeout: cfg.DetectorTimeout}),
-		writer: redact.NewForwardWriter(nil), backfiller: redact.NewBackfiller(), counters: proxy.NewCounters(),
+		writer: redact.NewForwardWriter(nil), backfiller: sessionBackfiller(cfg, token), counters: proxy.NewCounters(),
 		started: time.Now(), forwarders: make(map[string]*proxy.Forwarder),
 	}
 	gateway.responses = proxy.NewResponseHandler(proxy.ResponseConfig{Evaluator: gateway, Backfiller: gateway.backfiller, Counters: gateway.counters, Warnings: gateway})

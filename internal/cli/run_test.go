@@ -459,3 +459,48 @@ func equalStrings(got, want []string) bool {
 	}
 	return true
 }
+
+// TestExcludedControlTokenAndAllowlistAreNeverRestored is the live W2.3 proof:
+// the built gateway excludes the control token and every config-file allowlist
+// literal, and the real buffered response path leaves a placeholder mapped to
+// either value verbatim -- the excluded secret is never restored.
+func TestExcludedControlTokenAndAllowlistAreNeverRestored(t *testing.T) {
+	const allowlisted = "operator-allowlisted-literal"
+	cfg := config.Default()
+	cfg.Allowlist = []string{allowlisted}
+	gateway, err := buildGateway(cfg, t.TempDir(), io.Discard, false)
+	if err != nil {
+		t.Fatalf("buildGateway: %v", err)
+	}
+	control := gateway.token.String()
+	controlPlaceholder, err := gateway.backfiller.Mint(gateway.writer, []byte(control), "api_key")
+	if err != nil {
+		t.Fatalf("mint control placeholder: %v", err)
+	}
+	allowPlaceholder, err := gateway.backfiller.Mint(gateway.writer, []byte(allowlisted), "keyword")
+	if err != nil {
+		t.Fatalf("mint allowlist placeholder: %v", err)
+	}
+	body := []byte(`{"a":"` + controlPlaceholder + `","b":"` + allowPlaceholder + `"}`)
+
+	status, _, out, err := gateway.responses.Handle(&http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("Handle status = %d, want 200", status)
+	}
+	if bytes.Contains(out, []byte(control)) {
+		t.Fatalf("the control token was restored into the client-bound body: %s", out)
+	}
+	if bytes.Contains(out, []byte(allowlisted)) {
+		t.Fatalf("the allowlist literal was restored into the client-bound body: %s", out)
+	}
+	if !bytes.Contains(out, []byte(controlPlaceholder)) || !bytes.Contains(out, []byte(allowPlaceholder)) {
+		t.Fatalf("an excluded placeholder did not stay verbatim: %s", out)
+	}
+}
