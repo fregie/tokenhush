@@ -1,5 +1,7 @@
 # Tool setup and request routing
 
+**English** | [中文](tool-setup.zh-CN.md)
+
 Any tool that lets you override its OpenAI-compatible or Anthropic base URL can
 sit behind Tokenhush. Point that URL at the loopback gateway and the tool keeps
 working the same way; the gateway redacts the request body on the way out and
