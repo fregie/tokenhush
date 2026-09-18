@@ -8,9 +8,11 @@ package supply
 // request can only happen if the code under test invokes the seam.
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -741,6 +743,89 @@ func TestRulesStartupCacheOnly(t *testing.T) {
 		}
 		if state := syncer.Active(); state.Source != SourceBuiltin || state.Serial != 0 {
 			t.Errorf("corrupt-cache state = {%s %d}, want the built-ins", state.Source, state.Serial)
+		}
+	})
+}
+
+// TestRulesPayloadCarriesOptions pins the one optional extension of the frozen
+// pack element: a rule may carry the typed per-detector options object, and it
+// survives sign, strict decode and verify unchanged. The filter-side content
+// projection is out of scope here: DecodeRulesPack already strict-decodes the
+// options object, so a malformed nested key must still be rejected at this
+// layer before any signature is consulted.
+func TestRulesPayloadCarriesOptions(t *testing.T) {
+	// The pre-change projection of the options-less fixture below, captured
+	// from the frozen struct before the optional field existed. Byte-identical
+	// output for an absent field is the golden-vector guarantee: omitempty
+	// emits no key, so every existing signing_vectors.json entry still
+	// recomputes.
+	const wantOptionsLessSigningInput = "746f6b656e687573682d72756c65732d7061636b2d76310a63616364353231393764613963623431613263613431613230616465643432373865393563653061353263353466353237326131653530623535343333646363"
+
+	optionsLessPack := func() RulesPackPayload {
+		return RulesPackPayload{
+			Channel: "stable", SchemaVersion: 1, MinBinaryVersion: "0.3.0", Serial: 9,
+			KeyID: rulesTestKeyID, NotBefore: EpochSeconds(fixtureNotBefore), Expires: EpochSeconds(fixtureExpires),
+			Rules: []RulesRule{{ID: "email.corp", Type: "email", Action: "redact"}},
+		}
+	}
+
+	t.Run("options survive sign, decode and verify", func(t *testing.T) {
+		public, priv := substrateKeyPair(t)
+		pack := optionsLessPack()
+		pack.Rules[0].Options = &filter.RuleOptions{
+			Email: &filter.EmailOptions{Suffixes: []string{"corp.com"}},
+		}
+		doc, err := json.Marshal(pack)
+		if err != nil {
+			t.Fatalf("marshal pack fixture: %v", err)
+		}
+		decoded, err := DecodeRulesPack(rulesSignPackDoc(t, priv, string(doc)))
+		if err != nil {
+			t.Fatalf("DecodeRulesPack(signed fixture): %v", err)
+		}
+		if err := VerifyRulesPack(decoded, &rulesKeyVerifier{keyID: rulesTestKeyID, public: public}); err != nil {
+			t.Fatalf("VerifyRulesPack = %v, want nil", err)
+		}
+		if len(decoded.Rules) != 1 || decoded.Rules[0].Options == nil || decoded.Rules[0].Options.Email == nil {
+			t.Fatalf("decoded rules = %+v, want one rule carrying the email options object", decoded.Rules)
+		}
+		if got := decoded.Rules[0].Options.Email.Suffixes; !slices.Equal(got, []string{"corp.com"}) {
+			t.Errorf("decoded suffixes = %v, want [corp.com]", got)
+		}
+	})
+
+	t.Run("an options-less rule keeps the frozen signing bytes", func(t *testing.T) {
+		pack := optionsLessPack()
+		body, err := json.Marshal(pack)
+		if err != nil {
+			t.Fatalf("marshal pack fixture: %v", err)
+		}
+		if bytes.Contains(body, []byte(`"options"`)) {
+			t.Fatalf("options-less rule marshaled an options key: %s", body)
+		}
+		if got := hex.EncodeToString(RulesPackSigningInput(pack)); got != wantOptionsLessSigningInput {
+			t.Errorf("options-less signing input drifted:\n got: %s\nwant: %s", got, wantOptionsLessSigningInput)
+		}
+	})
+
+	t.Run("an unknown key nested under options is still rejected", func(t *testing.T) {
+		doc := rulesPackDoc(10, "", "",
+			`{"id":"email.corp","type":"email","action":"redact","options":{"email":{"suffixes":["corp.com"],"bogus":true}}}`)
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(doc), &fields); err != nil {
+			t.Fatalf("unmarshal fixture: %v", err)
+		}
+		fields["signature"] = json.RawMessage(`"AA"`)
+		signed, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatalf("marshal signed fixture: %v", err)
+		}
+		_, err = DecodeRulesPack(signed)
+		if !errors.Is(err, ErrMalformedDoc) {
+			t.Fatalf("DecodeRulesPack(unknown nested option) = %v, want ErrMalformedDoc", err)
+		}
+		if !strings.Contains(err.Error(), "bogus") {
+			t.Errorf("decode error %q does not name the unknown field", err)
 		}
 	})
 }

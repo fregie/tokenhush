@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fregie/tokenhush/pkg/filter"
 )
 
 // ---------------------------------------------------------------------------
@@ -241,22 +243,26 @@ func (e EpochSeconds) Time() time.Time { return time.Unix(int64(e), 0).UTC() }
 
 // RulesRule is the frozen rule element. It reproduces the legacy rule struct
 // exactly, including the parse-only `command`/`subcommand`/`verbs`/`targets`
-// fields with their legacy value types: only Confidence is a pointer, so a
-// document that omits confidence keeps it omitted instead of emitting a
-// default. The superset rule type in pkg/filter is never used here.
+// fields with their legacy value types, plus one optional extension: Options
+// carries the typed per-detector options object. Confidence and Options are
+// pointers, so a document that omits either keeps it omitted instead of
+// emitting a default, and an options-less rule signs the same bytes it always
+// did. The filter superset rule type is never projection input; only its typed
+// options value is.
 type RulesRule struct {
-	ID            string   `json:"id"`
-	Type          string   `json:"type"`
-	Pattern       string   `json:"pattern,omitempty"`
-	Keywords      []string `json:"keywords,omitempty"`
-	Action        string   `json:"action"`
-	Confidence    *float64 `json:"confidence,omitempty"`
-	CaseSensitive bool     `json:"case_sensitive,omitempty"`
-	Allowlist     []string `json:"allowlist,omitempty"`
-	Command       string   `json:"command,omitempty"`
-	Subcommand    string   `json:"subcommand,omitempty"`
-	Verbs         []string `json:"verbs,omitempty"`
-	Targets       []string `json:"targets,omitempty"`
+	ID            string              `json:"id"`
+	Type          string              `json:"type"`
+	Pattern       string              `json:"pattern,omitempty"`
+	Keywords      []string            `json:"keywords,omitempty"`
+	Action        string              `json:"action"`
+	Confidence    *float64            `json:"confidence,omitempty"`
+	CaseSensitive bool                `json:"case_sensitive,omitempty"`
+	Allowlist     []string            `json:"allowlist,omitempty"`
+	Command       string              `json:"command,omitempty"`
+	Subcommand    string              `json:"subcommand,omitempty"`
+	Verbs         []string            `json:"verbs,omitempty"`
+	Targets       []string            `json:"targets,omitempty"`
+	Options       *filter.RuleOptions `json:"options,omitempty"`
 }
 
 // RulesPackPayload is the frozen rules-pack payload. The envelope fields come
