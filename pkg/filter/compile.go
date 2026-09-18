@@ -55,8 +55,8 @@ var compiledTypes = map[string]bool{
 // compiledRule is the immutable, validated form of one rule. Exactly one of re,
 // keywords or inspect decides how it matches, selected by the rule type: a
 // regex rule carries re, a keyword rule carries keywords, and a primitive rule
-// carries the bound matcher compileRule built through primitiveBuilders. budget
-// is the per-primitive byte budget (unused by regex and keyword rules). Every
+// carries the bound matcher compileRule built through primitiveBuilders, which
+// captures the set's per-primitive byte budget in the inspect closure. Every
 // byte slice is owned by the set, never aliased from the document.
 type compiledRule struct {
 	id         string
@@ -70,7 +70,6 @@ type compiledRule struct {
 	keywords   [][]byte
 	fold       bool
 	allow      [][]byte
-	budget     int
 	inspect    func([]byte) []Span
 }
 
@@ -208,7 +207,6 @@ func compileRule(rule *RuleDoc, path string, budget int) (compiledRule, error) {
 		action:     rule.Action,
 		priority:   rule.Priority,
 		confidence: confidence,
-		budget:     budget,
 	}
 	var err error
 	if r.allow, err = copyLiterals(rule.ID+".allowlist", rule.Allowlist); err != nil {
