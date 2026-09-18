@@ -50,7 +50,13 @@ var d8Docs = []string{
 }
 
 // extraAllowedDocs are non-D8 files permitted under docs/.
-var extraAllowedDocs = []string{"docs/PRO-MIGRATION.md"}
+var extraAllowedDocs = []string{
+	"docs/PRO-MIGRATION.md",
+	"docs/tool-setup.md",
+	"docs/verify.md",
+	"docs/deployment.md",
+	"docs/generated/network-egress.md",
+}
 
 // realCLICommands is the CLI's frozen command set (D7). It is the expectation
 // registeredCLICommands must reproduce from internal/cli's source, so an
