@@ -5,8 +5,15 @@ useDefault = true
 
 # Synthetic fixtures and local plan state are not secrets.
 [allowlist]
-description = "testdata fixtures and .omo plan state are never real credentials"
+description = "synthetic credential fixtures, local plan state, the placeholder grammar and synthetic test constants are never real credentials"
 paths = [
   '''testdata/''',
   '''\.omo/''',
+  '''internal/cli/agent_scenarios_cases_test\.go''',
+  '''internal/cli/redact_request_test\.go''',
+  '''pkg/filter/primitive_test\.go''',
+]
+regexes = [
+  '''__PII_[A-Za-z0-9_]+__''',
+  '''SECRET-LEAF-[A-Za-z0-9]+''',
 ]
