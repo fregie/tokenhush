@@ -21,6 +21,7 @@ builds:
       - -s -w
       - -X github.com/fregie/tokenhush/internal/cli.commit={{ .Commit }}
       - -X github.com/fregie/tokenhush/internal/cli.date={{ .CommitDate }}
+      - -X github.com/fregie/tokenhush/pkg/supply.Version={{ .Version }}
     goos:
       - darwin
       - linux
@@ -28,14 +29,6 @@ builds:
     goarch:
       - arm64
       - amd64
-    # Effective target set: darwin/arm64, linux/amd64, windows/amd64.
-    ignore:
-      - goos: darwin
-        goarch: amd64
-      - goos: linux
-        goarch: arm64
-      - goos: windows
-        goarch: arm64
 
 archives:
   - id: tokenhush

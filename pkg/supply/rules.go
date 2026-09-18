@@ -51,10 +51,11 @@ import (
 	"github.com/fregie/tokenhush/pkg/filter"
 )
 
-// Version is the compiled-in binary version (OD-1): the version line starts at
-// v0.5.0 and the signed fixtures require at least 0.3.0, so the shipped binary
-// satisfies the minimum-version gate without a shim.
-const Version = "0.5.0"
+// Version is the compiled-in binary version (OD-1): the source default is
+// v0.5.0 and the signed fixtures require at least 0.3.0, so the minimum-version
+// gate is satisfied without a shim. The release build overrides it from the
+// tag, so a released binary reports the version it was cut from.
+var Version = "0.5.0"
 
 // Frozen sync inputs. The channel is the only accepted one, the two URLs are
 // composed from the frozen constants, and no base URL or key is configurable.

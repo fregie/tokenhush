@@ -66,8 +66,14 @@ jobs:
         include:
           - goos: darwin
             goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
           - goos: linux
             goarch: amd64
+          - goos: windows
+            goarch: arm64
           - goos: windows
             goarch: amd64
     steps:
@@ -77,9 +83,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # Effective target set - exactly these three CGO-free ports:
+      # Pinned cross-build set, the six CGO-free ports that ship:
       #   CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./...
+      #   CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build ./...
+      #   CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./...
       #   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
+      #   CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build ./...
       #   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./...
       - name: Cross-build ${{ matrix.goos }}/${{ matrix.goarch }}
         run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build ./...
