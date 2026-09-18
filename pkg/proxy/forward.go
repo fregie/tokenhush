@@ -19,10 +19,10 @@ import (
 // become a live route.
 var ErrInvalidUpstream = errors.New("proxy: invalid upstream base URL")
 
-// DialFunc establishes one upstream connection. It is the forwarder's only
+// dialFunc establishes one upstream connection. It is the forwarder's only
 // network entry point, so a test can record every dial -- and prove that a
 // refused request dialled none.
-type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 
 // BodyTransform rewrites the fully-read outbound request body before it is
 // dispatched. It is the redaction seam: the forwarder reads the entire body,
@@ -32,17 +32,19 @@ type DialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 // (fail closed) and the untransformed bytes are never forwarded.
 type BodyTransform func([]byte) ([]byte, error)
 
-// ForwardOption configures a Forwarder at construction.
-type ForwardOption func(*forwardConfig)
+// forwardOption configures a Forwarder at construction.
+type forwardOption func(*forwardConfig)
 
 // forwardConfig collects the optional construction settings.
 type forwardConfig struct {
-	dial DialFunc
+	dial dialFunc
 }
 
 // WithDialFunc injects the dial function. A nil dial is ignored so the default
-// is never accidentally removed.
-func WithDialFunc(dial DialFunc) ForwardOption {
+// is never accidentally removed. The egress guard test
+// (internal/guards/egress_guard_test.go) is the production consumer that pins
+// this seam: it records every dial and proves a refused request dialled none.
+func WithDialFunc(dial dialFunc) forwardOption {
 	return func(cfg *forwardConfig) {
 		if dial != nil {
 			cfg.dial = dial
@@ -66,7 +68,7 @@ var _ http.Handler = (*Forwarder)(nil)
 // be absolute http(s), have a host, and carry no userinfo, query or fragment.
 // A nil transform is the identity transform. Without opts the forwarder dials
 // through the bounded default dialer.
-func NewForwarder(baseURL string, transform BodyTransform, opts ...ForwardOption) (*Forwarder, error) {
+func NewForwarder(baseURL string, transform BodyTransform, opts ...forwardOption) (*Forwarder, error) {
 	base, err := parseUpstream(baseURL)
 	if err != nil {
 		return nil, err
@@ -271,7 +273,7 @@ const defaultResponseHeaderTimeout = 5 * time.Minute
 // untouched instead of being transparently decompressed by the transport;
 // redirects are not followed, because a transparent proxy relays the
 // upstream's 3xx and Location to the client.
-func newForwardClient(dial DialFunc) *http.Client {
+func newForwardClient(dial dialFunc) *http.Client {
 	transport := &http.Transport{}
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
 		transport = base.Clone()

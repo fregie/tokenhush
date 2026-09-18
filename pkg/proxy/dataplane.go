@@ -63,7 +63,9 @@ type RequestDecision struct {
 // The set is closed; a reason outside it is reported as FailureError.
 type FailureReason string
 
-// The five failure reasons, mirroring pkg/filter's classification.
+// The five failure reasons, mirroring pkg/filter's classification. They are
+// the closed, CLI-visible failure vocabulary pinned by
+// pkg/proxy/dataplane_test.go.
 const (
 	FailureBudget    FailureReason = "budget"
 	FailureTimeout   FailureReason = "timeout"

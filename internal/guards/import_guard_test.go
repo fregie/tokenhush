@@ -97,28 +97,6 @@ func productionGoFiles(t *testing.T, rel string) (files []string, ok bool) {
 	return files, true
 }
 
-// parseGo parses path and returns its file set and AST, failing the test on a
-// parse error.
-func parseGo(t *testing.T, path string) (*token.FileSet, *ast.File) {
-	t.Helper()
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
-	}
-	return fset, file
-}
-
-// importPaths returns the unquoted import paths of f, sorted.
-func importPaths(f *ast.File) []string {
-	var paths []string
-	for _, imp := range f.Imports {
-		paths = append(paths, unquoteImportPath(imp.Path.Value))
-	}
-	sort.Strings(paths)
-	return paths
-}
-
 // skipGuard records that a guard could not run yet, without failing the test.
 func skipGuard(t *testing.T, id, reason string) {
 	t.Helper()

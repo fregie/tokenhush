@@ -80,10 +80,10 @@ func (u *fakeUpstream) serveOne() {
 type dialRecorder struct {
 	mu    sync.Mutex
 	addrs []string
-	inner DialFunc
+	inner dialFunc
 }
 
-func (r *dialRecorder) dial() DialFunc {
+func (r *dialRecorder) dial() dialFunc {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		r.mu.Lock()
 		r.addrs = append(r.addrs, addr)
@@ -101,8 +101,8 @@ func (r *dialRecorder) count() int {
 	return len(r.addrs)
 }
 
-// dialTo returns a DialFunc that ignores the requested address and dials addr.
-func dialTo(addr string) DialFunc {
+// dialTo returns a dialFunc that ignores the requested address and dials addr.
+func dialTo(addr string) dialFunc {
 	return func(ctx context.Context, network, _ string) (net.Conn, error) {
 		var dialer net.Dialer
 		return dialer.DialContext(ctx, network, addr)

@@ -9,7 +9,9 @@ import (
 )
 
 // Built-in vendor base URLs. A forwarder joins the request path onto the base
-// URL, so these carry no trailing slash and no path part.
+// URL, so these carry no trailing slash and no path part. Exported because the
+// routing table is part of the frozen CLI-visible surface, asserted by
+// pkg/proxy/resolve_test.go and internal/cli tests.
 const (
 	AnthropicBaseURL = "https://api.anthropic.com"
 	OpenAIBaseURL    = "https://api.openai.com"

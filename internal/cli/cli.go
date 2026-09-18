@@ -144,7 +144,7 @@ func (g *gateway) redactRequest(body []byte) ([]byte, int, error) {
 	if decision.Refusal != nil || decision.Action == filter.ActionBlock {
 		// Never client-visible: the data plane answers 403 before the body
 		// reaches the forwarder, so this only fires outside the plane.
-		return nil, 0, fmt.Errorf("cli: request blocked by content policy")
+		return nil, 0, errBlocked
 	}
 	if decision.Action != filter.ActionRedact {
 		return body, 0, nil

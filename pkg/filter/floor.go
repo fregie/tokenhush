@@ -22,6 +22,8 @@ import (
 )
 
 // Floor sentinels. ErrFloor classifies every floor rejection; the three
+// wrapped kinds are the frozen floor contract surfaced to plugin authors and
+// pinned by pkg/filter/floor_test.go and pkg/supply/rules_test.go.
 // specific sentinels each wrap it, so errors.Is branches on either granularity.
 var (
 	ErrFloor                 = errors.New("filter: floor violation")

@@ -1,6 +1,7 @@
 # Error-swallowing and nil-safety checks required by the plan.
-# Deliberately limited to the verified-clean set; unused/gocritic/nilerr trip
-# on existing guard-test fixtures outside the scope of this change.
+# `unused` keeps the dead-export surface honest for production code; it is
+# excluded from _test.go files because guard and invariant tests deliberately
+# keep fixture helpers whose only readers are other test files.
 run:
   timeout: 5m
   tests: true
@@ -14,7 +15,12 @@ linters:
     - ineffassign
     - nilnil
     - errorlint
+    - unused        # dead production code, including unreferenced exports
 
 issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - unused
   max-issues-per-linter: 0
   max-same-issues: 0

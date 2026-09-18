@@ -52,15 +52,23 @@ func (t Token) Matches(candidate string) bool {
 	return subtle.ConstantTimeCompare([]byte(candidate), []byte(t.value)) == 1
 }
 
+// errMissingCredential and errRejectedCredential split the two refusal shapes
+// AuthorizeControl reports, so ControlGuard can answer 401 and 403 respectively.
+var (
+	errMissingCredential  = fmt.Errorf("%w: no bearer credential", ErrControlUnauthorized)
+	errRejectedCredential = fmt.Errorf("%w: bearer credential rejected", ErrControlUnauthorized)
+)
+
 // AuthorizeControl accepts exactly one Authorization header shape: the Bearer
-// scheme followed by a credential that Matches the token.
+// scheme followed by a credential that Matches the token. ControlGuard is its
+// production caller.
 func (t Token) AuthorizeControl(authorization string) error {
 	credential, ok := bearerCredential(authorization)
 	if !ok {
-		return fmt.Errorf("%w: no bearer credential", ErrControlUnauthorized)
+		return errMissingCredential
 	}
 	if !t.Matches(credential) {
-		return fmt.Errorf("%w: bearer credential rejected", ErrControlUnauthorized)
+		return errRejectedCredential
 	}
 	return nil
 }
@@ -70,17 +78,15 @@ func (t Token) AuthorizeControl(authorization string) error {
 // with 403; the wrapped handler only runs for the exact token.
 func ControlGuard(t Token, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		credential, ok := bearerCredential(r.Header.Get("Authorization"))
-		if !ok {
+		switch err := t.AuthorizeControl(r.Header.Get("Authorization")); {
+		case err == nil:
+			next.ServeHTTP(w, r)
+		case errors.Is(err, errMissingCredential):
 			w.Header().Set("WWW-Authenticate", `Bearer realm="tokenhush-control"`)
 			http.Error(w, "control token required", http.StatusUnauthorized)
-			return
-		}
-		if !t.Matches(credential) {
+		default:
 			http.Error(w, "control token rejected", http.StatusForbidden)
-			return
 		}
-		next.ServeHTTP(w, r)
 	})
 }
 

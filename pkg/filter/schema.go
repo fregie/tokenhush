@@ -22,6 +22,8 @@ const MaxMatches = 4096
 // Document bounds. They are deliberately generous for real rule sets and fail
 // loudly with ErrBoundExceeded, so a malformed or hostile document cannot make
 // decode or evaluation unbounded. Defaults apply only when the key is absent.
+// Each bound is part of the frozen extension API pinned by
+// internal/guards/shape_guard_test.go and pkg/filter/external_plugin_test.go.
 const (
 	MaxRules, MaxKeywordsPerRule                     = 256, 64
 	MaxListEntries, MaxRuleAllowlist                 = 256, 64
@@ -31,7 +33,9 @@ const (
 )
 
 // Frozen wire identifiers: rule types, categories, scopes and actions. A value
-// outside these sets is rejected at decode time.
+// outside these sets is rejected at decode time. Every identifier is part of
+// the frozen extension API pinned by pkg/filter/external_plugin_test.go and
+// docs/plugins.md, and is a valid rule-document value.
 const (
 	TypeRegex, TypeKeyword, TypePrefix, TypeEmail, TypeLuhn, TypeJWT, TypePEM, TypeEntropy, TypeCommand = "regex", "keyword", "prefix", "email", "luhn", "jwt", "pem", "entropy", "command"
 
@@ -68,7 +72,9 @@ type Rule interface {
 }
 
 // Typed schema error kinds. errors.Is matches the sentinel; FieldError names
-// the offending document path.
+// the offending document path. They are exported because the registry, compile
+// and floor APIs surface them to plugin authors (pinned by
+// pkg/filter/external_plugin_test.go and pkg/filter/schema_test.go).
 var ErrUnknownField = errors.New("filter: unknown field")
 
 var ErrBoundExceeded = errors.New("filter: bound exceeded")
