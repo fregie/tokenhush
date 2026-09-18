@@ -1,14 +1,14 @@
 # tokenhush 安全模型
 
 本文是 v0.5.0 重写对运维者可见的安全契约。它列出内核保留的八条不变量与它不隐藏的
-五项残余风险，说明各项在何处强制，并给出钉住每条不变量的测试名。
+六项残余风险，说明各项在何处强制，并给出钉住每条不变量的测试名。
 
 - [方向契约](#方向契约)
 - [八条不变量](#八条不变量)
 - [响应阶段的效应](#响应阶段的效应)
 - [SSE 的限制](#sse-的限制)
 - [磁盘上有什么](#磁盘上有什么)
-- [五项残余风险](#五项残余风险)
+- [六项残余风险](#六项残余风险)
 
 ## 方向契约
 
@@ -110,24 +110,26 @@ SSE 流上响应作用域的 `Block` 无法撤回已经发出的增量：决策�
 其掩码形式要么不泄露任何内容（`****`、`[redacted]`），要么只泄露不透明凭据类型的有界
 前缀与后缀。
 
-## 五项残余风险
+## 六项残余风险
 
 这些风险被诚实记录，而不是被隐去。列出它们并不等于声称它们不存在；每一项都是本设计的
 已知边界。
 
 | # | 残余风险 | 实际含义 | 状态 |
 |---|---|---|---|
-| R1 | Encoded secrets are not caught（编码后的 secret 不会被捕获） | base64、hex 或 URL 编码后才离开的 secret 不会被检测：本次重写有意不设 normalization 传递，且非 identity 的请求 `Content-Encoding` 会以 415 拒绝，而不是为检测而解码。JSON 字符串*转义*已被处理——每个解码后的检测 span 在替换时会映射回拼写它的原始转义字节——因此残余仅是内容编码（base64、hex、URL 编码，或嵌套在另一容器里的 gzip），绝不是 JSON 转义。 | 已记录并接受 |
+| R1 | Encoded secrets are not caught（编码后的 secret 不会被捕获） | base64、hex 或 URL 编码后才离开的 secret 不会被检测：本次重写有意不设 normalization 传递，且非 identity 的请求 `Content-Encoding` 会以 415 拒绝，而不是为检测而解码。JSON 字符串*转义*在**两个方向**都已处理——每个解码后的检测 span 在替换时会映射回拼写它的原始转义字节，且回客户端路径的还原是转义/深度感知的：按外层 JSON 深度重新拼写还原的 secret，使客户端 body 保持合法 JSON——因此残余仅是内容编码（base64、hex、URL 编码，或嵌套在另一容器里的 gzip），绝不是任一方向上的 JSON 字符串转义。 | 已记录并接受 |
 | R2 | A secret in a JSON object key is not caught（JSON 对象键中的 secret 不会被捕获） | 放在 JSON 对象键而不是值里的 secret 会原样转发：按 D10，键位置阻断被删除，叶遍历不提供键叶，也不存在死的键表面。 | 已记录并接受 |
 | R3 | A signed remote pack may weaken detection through its own allowlist（签名远程包可能通过自身 allowlist 弱化检测） | 签名远程包可能通过其全局或每条规则的 allowlist 压制匹配：按 OD-3，非弱化 floor 对 allowlist 保持中立、不检查 allowlist；规则签名密钥 `rules-2026-09` 仍是信任根。 | 已记录并接受 |
 | R4 | The OD-2 command-rule rejection is dormant and the v2 manifest bump is backward-incompatible（OD-2 command 规则拒绝处于休眠，v2 manifest 升级不向后兼容） | OD-2 的 `command` 规则拒绝保持休眠，直到 OD-4 闸门打开；闸门只在规则 manifest `schema_version` 达到 2 时打开；该升级与钉住 `== 1` 的客户端不兼容，因此后端必须继续提供 v1 manifest，直到旧版本线退出支持。 | 已记录并接受 |
 | R5 | Response-path bodies are not capped by scan_budget_bytes（响应路径 body 不受 scan_budget_bytes 上限约束） | 响应 body 不受请求侧 `scan_budget_bytes` 闸门限制，而响应作用域的原始检测器仍最多扫描每原始检测器 `budget`：超过该预算的响应叶会被截断，且没有 stderr 报告、没有计数器，因此响应作用域检测可能漏掉预算之外的内容。预算报告有意只存在于请求路径，且不移动任何状态键。 | 已记录并接受 |
+| R6 | A placeholder split across two SSE JSON-envelope `data:` events is restored without depth awareness（跨两个 SSE JSON 信封 `data:` 事件拆分的占位符还原时不感知深度） | 当 JSON 信封 SSE 流把占位符拆到两个 `data:` 值里时，两半之间的 `data:` 信封字节意味着没有任何一个值是在外层深度上包含完整 token 的 JSON 文档，因此补全后的替换使用原始拼写，而不是按外层 JSON 深度重新拼写；带引号、反斜杠或控制字节的 secret 可能以原始形态落在信封片段中。原始片段拆分（raw-fragment split）已处理：没有信封字节介入时，有界重组器会把跨连续 data 增量补全的 token 按原始拼写还原。 | 已记录并接受 |
 
 每项为何保持现状：
 
 - **R1——不设 normalization 传递。** 解码"自身包含 JSON 的 JSON 字符串"（递归编码
   字符串）在范围内；解码*编码*不在。JSON 字符串转义不属于本残余：替换路径会把每个
-  解码 span 映射回其原始转义字节。normalization 传递因与检测重复并且带来虚假信心
+  解码 span 映射回其原始转义字节，回客户端路径的还原同样按外层 JSON 深度重新拼写，
+  两个方向都不会破坏 JSON。normalization 传递因与检测重复并且带来虚假信心
   而被删除；诚实的立场是：编码后的 secret 可能通过。
 - **R2——键位置阻断是删除，不是降级。** 叶遍历完全不提供键叶，因此不存在半可用的
   键路径来误导运维者。
@@ -141,6 +143,10 @@ SSE 流上响应作用域的 `Block` 无法撤回已经发出的增量：决策�
   （一次没有请求侧对应物的产品变更），要么新增响应路径预算报告（一种本次重写拒绝的
   新可观察表面）。响应作用域检测器受同一每原始检测器预算约束，该边界被记录而不是
   被隐藏。
+- **R6——信封拆分是上游的选择。** 事件值在文档中途被拆分的 JSON 信封流，任何客户端
+  本就无法逐事件解析，因此没有可保留的逐事件 JSON 文档；有界重组器仍会跨拆分补全
+  token，并使用原始拼写。原始片段流按契约就不是 JSON，同样保持原始拼写且字节不变。
+  缓冲 body 与未被拆分的 JSON 信封继续使用深度感知、保持合法 JSON 的还原。
 
 ## 相关文档
 

@@ -161,7 +161,11 @@ At runtime the pieces line up like this:
    with a bounded backfill window; everything else is buffered, decoded and
    evaluated. Undecodable content refuses with 502 and discards the upstream
    bytes rather than passing them through uninspected. Backfill runs last, and
-   only a placeholder this session minted is restored; a foreign placeholder is
+   only a placeholder this session minted is restored. Restore is
+   **escape/depth-aware**: a restored secret is re-spelled at the enclosing JSON
+   depth (exactly the spelling the client sent), so a multi-line or
+   quote-bearing secret cannot corrupt the client's JSON. A raw stream fragment
+   or a non-JSON body keeps the raw spelling, and a foreign placeholder is
    returned byte-identical.
 6. **The control surface is exactly `GET /status`.** It is metadata only, it
    requires the session bearer token, and the data plane and the control surface

@@ -171,7 +171,9 @@ tokenhush: redacted request email (len=17) ****
 
 **The original returns to the client** — the `curl` output contains
 `my email is alice@example.com` again, because the response path restored the
-placeholder this session minted. The upstream never saw the secret, and the
+placeholder this session minted. The value returns with the correct content in
+a valid JSON body: the restore re-spells the secret at the enclosing JSON depth
+rather than splicing raw bytes. The upstream never saw the secret, and the
 client never saw the placeholder.
 
 Inspect the running gateway the same way a script would:

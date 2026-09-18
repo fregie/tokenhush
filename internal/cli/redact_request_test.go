@@ -104,6 +104,14 @@ func redactGateway(t *testing.T, upstream *e2eUpstream, rules ...filter.Rule) (s
 // seams, so the budget path is exercised end to end rather than unit-mocked.
 func redactGatewayTuned(t *testing.T, upstream *e2eUpstream, tune func(*config.Config), rules ...filter.Rule) (string, *loggedBytes, string) {
 	t.Helper()
+	return redactGatewaySeam(t, upstream, tune, func(*gateway) []filter.Rule { return rules })
+}
+
+// redactGatewaySeam starts the gateway with a build-time rules hook that sees
+// the assembled gateway, so a test can inject a rule over a value only the
+// built gateway knows (the session control token).
+func redactGatewaySeam(t *testing.T, upstream *e2eUpstream, tune func(*config.Config), rules func(*gateway) []filter.Rule) (string, *loggedBytes, string) {
+	t.Helper()
 	home := t.TempDir()
 	t.Setenv("TOKENHUSH_HOME", home)
 	dataDir := filepath.Join(home, "data")
@@ -126,7 +134,7 @@ func redactGatewayTuned(t *testing.T, upstream *e2eUpstream, tune func(*config.C
 		if err != nil {
 			return nil, err
 		}
-		if err := injectTestRules(gw, cfg, rules); err != nil {
+		if err := injectTestRules(gw, cfg, rules(gw)); err != nil {
 			return nil, err
 		}
 		return gw, nil
@@ -163,6 +171,30 @@ func redactJSONBody(t *testing.T, content string) []byte {
 		t.Fatalf("json.Marshal: %v", err)
 	}
 	return body
+}
+
+// redactClientContent decodes the client-bound echo of a chat-completions
+// request and returns its content value. The escape/depth-aware restore must
+// leave a valid JSON document whose decoded content is the original text, so
+// every client assertion goes through this helper instead of raw byte
+// containment, which a control byte or quote escape would hide.
+func redactClientContent(t *testing.T, body []byte) string {
+	t.Helper()
+	if !json.Valid(body) {
+		t.Fatalf("the client body is not valid JSON: %s", body)
+	}
+	var doc struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("unmarshal the client body: %v", err)
+	}
+	if len(doc.Messages) != 1 {
+		t.Fatalf("the client body carries %d messages, want 1: %s", len(doc.Messages), body)
+	}
+	return doc.Messages[0].Content
 }
 
 // TestRedactRequestSplicesRawSpans is the A2 falsification probe: each case
@@ -209,8 +241,15 @@ func TestRedactRequestSplicesRawSpans(t *testing.T) {
 		if !strings.Contains(logs.String(), redactLogPrefix+" private_key (len=") {
 			t.Errorf("the frozen log line does not name the category and length: %s", logs.String())
 		}
-		if !bytes.Contains(got, []byte(pem)) {
-			t.Errorf("the private key did not return to the client: %s", got)
+		content := redactClientContent(t, got)
+		if want := "please use this key:\n" + pem + "\nthanks"; content != want {
+			t.Errorf("the restored client content = %q, want the original text %q", content, want)
+		}
+		if !strings.Contains(content, pem) {
+			t.Errorf("the PEM did not return with its real newlines: %q", content)
+		}
+		if bytes.Contains(got, []byte("__PII_")) {
+			t.Errorf("a placeholder reached the client: %s", got)
 		}
 	})
 
@@ -231,8 +270,12 @@ func TestRedactRequestSplicesRawSpans(t *testing.T) {
 		if !bytes.Contains(sent, []byte("__PII_custom_")) {
 			t.Errorf("no custom placeholder reached the upstream: %s", sent)
 		}
-		if !bytes.Contains(got, []byte(quoted)) {
-			t.Errorf("the quoted secret did not return to the client: %s", got)
+		content := redactClientContent(t, got)
+		if want := "the literal " + quoted + " end"; content != want {
+			t.Errorf("the restored client content = %q, want the original text %q", content, want)
+		}
+		if bytes.Contains(got, []byte("__PII_")) {
+			t.Errorf("a placeholder reached the client: %s", got)
 		}
 	})
 
@@ -256,8 +299,81 @@ func TestRedactRequestSplicesRawSpans(t *testing.T) {
 		if !json.Valid(sent) {
 			t.Errorf("the splice broke the wrapper JSON: %s", sent)
 		}
+		if !json.Valid(got) {
+			t.Fatalf("the client body is not valid JSON: %s", got)
+		}
+		decoded := redactClientContent(t, got)
+		if !json.Valid([]byte(decoded)) {
+			t.Fatalf("the decoded inner JSON is not valid JSON: %q", decoded)
+		}
+		var note struct {
+			Note string `json:"note"`
+		}
+		if err := json.Unmarshal([]byte(decoded), &note); err != nil {
+			t.Fatalf("unmarshal the inner JSON: %v", err)
+		}
+		if want := "the literal " + quoted + " end"; note.Note != want {
+			t.Errorf("the inner note = %q, want the original text %q", note.Note, want)
+		}
+		if bytes.Contains(got, []byte("__PII_")) {
+			t.Errorf("a placeholder reached the client: %s", got)
+		}
+	})
+
+	t.Run("a markdown body keeps its real newlines in the client JSON", func(t *testing.T) {
+		markdown := "# Local development\n\nSet the key before running the agent:\n\n```sh\n" +
+			"export OPENAI_API_KEY=sk-AbCdEfGhIjKlMnOpQrStUvWx\n```\n\n" +
+			"Or use the shared account dev@example.com.\n"
+		body := redactJSONBody(t, markdown)
+		status, got := e2ePost(t, base+e2ePath, body, nil)
+		if status != http.StatusOK {
+			t.Fatalf("POST = %d, want 200 (body %s)", status, got)
+		}
+		sent := upstream.recorded()
+		if bytes.Contains(sent, []byte("sk-AbCdEfGhIjKlMnOpQrStUvWx")) {
+			t.Errorf("the API key reached the upstream: %s", sent)
+		}
+		if !bytes.Contains(sent, []byte("__PII_api_key_")) {
+			t.Errorf("no api_key placeholder reached the upstream: %s", sent)
+		}
+		content := redactClientContent(t, got)
+		if content != markdown {
+			t.Errorf("the restored markdown = %q, want the original %q", content, markdown)
+		}
+		if want := strings.Count(markdown, "\n"); strings.Count(content, "\n") != want {
+			t.Errorf("the restored markdown has %d real newlines, want %d", strings.Count(content, "\n"), want)
+		}
+		if bytes.Contains(got, []byte("__PII_")) {
+			t.Errorf("a placeholder reached the client: %s", got)
+		}
+	})
+
+	t.Run("a non-JSON text/plain body restores the raw secret byte-identically", func(t *testing.T) {
+		if status, got := e2ePost(t, base+e2ePath, redactJSONBody(t, "the literal "+quoted+" end"), nil); status != http.StatusOK {
+			t.Fatalf("mint POST = %d, want 200 (body %s)", status, got)
+		}
+		placeholder := e2ePlaceholder.Find(upstream.recorded())
+		if placeholder == nil {
+			t.Fatalf("the mint request carried no placeholder: %s", upstream.recorded())
+		}
+		raw := []byte("the literal " + string(placeholder) + " end")
+		status, got := e2ePost(t, base+e2ePath, raw, map[string]string{"Content-Type": "text/plain"})
+		if status != http.StatusOK {
+			t.Fatalf("text/plain POST = %d, want 200 (body %s)", status, got)
+		}
+		sent := upstream.recorded()
+		if !bytes.Contains(sent, placeholder) {
+			t.Errorf("the known placeholder was not forwarded intact: %s", sent)
+		}
+		if bytes.Contains(sent, []byte(quoted)) {
+			t.Errorf("the outbound path backfilled the placeholder into its secret: %s", sent)
+		}
+		want := bytes.ReplaceAll(raw, placeholder, []byte(quoted))
+		if !bytes.Equal(got, want) {
+			t.Errorf("the raw text/plain restore = %q, want the raw splice %q", got, want)
+		}
 		if !bytes.Contains(got, []byte(quoted)) {
-			t.Errorf("the wrapped secret did not return to the client: %s", got)
+			t.Errorf("the raw secret did not return to the client: %s", got)
 		}
 	})
 
@@ -270,7 +386,9 @@ func TestRedactRequestSplicesRawSpans(t *testing.T) {
 		if placeholder == nil {
 			t.Fatalf("the first request minted no placeholder: %s", upstream.recorded())
 		}
-		status, got := e2ePost(t, base+e2ePath, e2eBody("note "+string(placeholder)+" here"), nil)
+		request := e2eBody("note " + string(placeholder) + " here")
+		want := bytes.ReplaceAll(request, placeholder, []byte(secret))
+		status, got := e2ePost(t, base+e2ePath, request, nil)
 		if status != http.StatusOK {
 			t.Fatalf("second POST = %d, want 200 (body %s)", status, got)
 		}
@@ -281,8 +399,57 @@ func TestRedactRequestSplicesRawSpans(t *testing.T) {
 		if bytes.Contains(sent, []byte(secret)) {
 			t.Errorf("the outbound path backfilled the placeholder into its secret: %s", sent)
 		}
-		if !bytes.Contains(got, []byte(secret)) {
-			t.Errorf("the placeholder was not restored on the client-bound path: %s", got)
+		if !bytes.Equal(got, want) {
+			t.Errorf("the placeholder was not restored to its original spelling: got %q, want %q", got, want)
+		}
+		if !json.Valid(got) {
+			t.Errorf("the restored client body is not valid JSON: %s", got)
+		}
+		againStatus, again := e2ePost(t, base+e2ePath, request, nil)
+		if againStatus != http.StatusOK {
+			t.Fatalf("third POST = %d, want 200 (body %s)", againStatus, again)
+		}
+		if !bytes.Equal(again, got) {
+			t.Errorf("a repeated turn is not stable: %q vs %q", again, got)
 		}
 	})
+}
+
+// TestRedactRequestExcludedControlTokenIsNotRestored pins the W2.3 exclusion
+// end to end: a request carrying the session control token (a value the session
+// backfiller excludes) is redacted upstream, but the placeholder is never
+// expanded back on the client-bound path, so neither direction carries the
+// session credential.
+func TestRedactRequestExcludedControlTokenIsNotRestored(t *testing.T) {
+	upstream := newE2EUpstream(t)
+	base, _, dataDir := redactGatewaySeam(t, upstream, nil, func(gw *gateway) []filter.Rule {
+		return []filter.Rule{redactRule{id: "test-control-token-redact", trigger: gw.token.String()}}
+	})
+	token := readControlToken(t, dataDir)
+
+	body := redactJSONBody(t, "session token "+token+" end")
+	status, got := e2ePost(t, base+e2ePath, body, nil)
+	if status != http.StatusOK {
+		t.Fatalf("POST = %d, want 200 (body %s)", status, got)
+	}
+	sent := upstream.recorded()
+	if bytes.Contains(sent, []byte(token)) {
+		t.Errorf("the excluded control token reached the upstream: %s", sent)
+	}
+	placeholder := e2ePlaceholder.Find(sent)
+	if placeholder == nil {
+		t.Fatalf("the request minted no placeholder for the token: %s", sent)
+	}
+	if !bytes.Equal(got, sent) {
+		t.Errorf("the excluded placeholder body changed: got %s, want the upstream echo %s", got, sent)
+	}
+	if !bytes.Contains(got, placeholder) {
+		t.Errorf("the excluded placeholder was consumed: the client body must keep it: %s", got)
+	}
+	if bytes.Contains(got, []byte(token)) {
+		t.Errorf("the excluded control token reached the client: %s", got)
+	}
+	if !json.Valid(got) {
+		t.Errorf("the client body is not valid JSON: %s", got)
+	}
 }

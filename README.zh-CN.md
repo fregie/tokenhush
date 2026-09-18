@@ -156,7 +156,9 @@ tokenhush: redacted request email (len=17) ****
 ```
 
 **原始值回到客户端**——`curl` 输出再次包含 `my email is alice@example.com`，
-因为响应路径还原本会话铸造的占位符。上游从未见到 secret，客户端从未见到占位符。
+因为响应路径还原本会话铸造的占位符。值以内容正确、合法 JSON 的 body 返回：还原按
+外层 JSON 深度重新拼写 secret，而不是拼接原始字节。上游从未见到 secret，客户端
+从未见到占位符。
 
 像脚本一样读取运行中的网关：
 

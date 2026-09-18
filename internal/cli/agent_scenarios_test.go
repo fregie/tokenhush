@@ -37,14 +37,18 @@ import (
 
 	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/filter"
+	"github.com/fregie/tokenhush/pkg/protocol"
 	"github.com/fregie/tokenhush/pkg/supply"
 )
 
 // The upstream mode header: its sse value answers the one SSE scenario, so one
-// recording upstream serves every body-level and streaming scenario.
+// recording upstream serves every body-level and streaming scenario. sse-raw
+// answers with a raw-fragment stream (comment ping, bare-text delta, [DONE]),
+// the shape whose fragments must stay unescaped.
 const (
 	agentModeHeader = "X-Agent-Scenario"
 	agentModeSSE    = "sse"
+	agentModeSSERaw = "sse-raw"
 )
 
 // agentClientTimeout bounds one scenario POST. It is generous on purpose: the
@@ -97,6 +101,10 @@ func (u *scenarioUpstream) serve(w http.ResponseWriter, r *http.Request) {
 		u.serveSSE(w, body)
 		return
 	}
+	if r.Header.Get(agentModeHeader) == agentModeSSERaw {
+		u.serveSSERaw(w, body)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 	_, _ = w.Write(body)
@@ -131,6 +139,31 @@ func (u *scenarioUpstream) serveSSE(w http.ResponseWriter, body []byte) {
 // a client sees is independently parseable.
 func agentSSEData(fragment string) string {
 	return `{"choices":[{"delta":{"content":"` + fragment + `"}}]}`
+}
+
+// serveSSERaw emits the raw-fragment SSE shape: a comment ping, one bare-text
+// data delta carrying the placeholder, and the conventional terminal frame.
+// The data values are not JSON documents, so the client-bound restore must
+// keep the raw secret spelling rather than escaping it.
+func (u *scenarioUpstream) serveSSERaw(w http.ResponseWriter, body []byte) {
+	placeholder := e2ePlaceholder.Find(body)
+	if placeholder == nil {
+		http.Error(w, "the request carried no placeholder", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, _ := w.(http.Flusher)
+	for _, frame := range []string{
+		": ping\n\n",
+		"data: the literal " + string(placeholder) + " end\n\n",
+		"data: [DONE]\n\n",
+	} {
+		_, _ = io.WriteString(w, frame)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
 }
 
 // count returns how many requests the upstream has served.
@@ -590,6 +623,8 @@ func TestAgentScenarioMatrix(t *testing.T) {
 						t.Errorf("C29 request %d: POST = %d, want 200 (body %s)", i, result.status, agentWindow(result.client))
 					case !bytes.Contains(result.client, []byte(concurrentSecret)):
 						t.Errorf("C29 request %d: the secret did not return to the client: %s", i, agentWindow(result.client))
+					case !json.Valid(result.client):
+						t.Errorf("C29 request %d: the client-bound body is not valid JSON: %s", i, agentWindow(result.client))
 					case bytes.Contains(result.client, []byte("__PII_")):
 						t.Errorf("C29 request %d: a placeholder reached the client: %s", i, agentWindow(result.client))
 					}
@@ -647,8 +682,81 @@ func TestAgentScenarioMatrix(t *testing.T) {
 				if !bytes.Contains(client, []byte("data: [DONE]")) {
 					t.Errorf("C30: the terminal SSE frame is missing: %s", agentWindow(client))
 				}
+				payloads := agentSSEDataPayloads(t, client)
+				if len(payloads) != 3 {
+					t.Errorf("C30: SSE data frames = %d, want 3: %s", len(payloads), agentWindow(client))
+				}
+				wantContents := []string{"the key is ", sseSecret}
+				for i, payload := range payloads {
+					if string(payload) == "[DONE]" {
+						if i != len(payloads)-1 {
+							t.Errorf("C30: [DONE] is not the terminal frame: %s", agentWindow(client))
+						}
+						continue
+					}
+					if !json.Valid(payload) {
+						t.Errorf("C30: data frame %d is not a whole JSON event: %q", i, payload)
+						continue
+					}
+					if i < len(wantContents) {
+						if got := agentSSEContent(t, payload); got != wantContents[i] {
+							t.Errorf("C30: data frame %d content = %q, want %q", i, got, wantContents[i])
+						}
+					}
+				}
 				agentAssertCounters(t, "C30 SSE stream structure and restore", before, readLiveCounters(t, env.base, env.token), 1)
 				return "redacted upstream, SSE event restored"
+			},
+		},
+		{
+			name: "C31 raw-fragment SSE keeps the raw spelling",
+			run: func(t *testing.T, env *agentEnv) string {
+				request := redactJSONBody(t, agentQuotedSecretContent(quoted))
+				before := readLiveCounters(t, env.base, env.token)
+				status, client, _, err := env.postRaw(request, "", map[string]string{agentModeHeader: agentModeSSERaw})
+				if err != nil {
+					t.Fatalf("C31 POST: %v", err)
+				}
+				if status != http.StatusOK {
+					t.Fatalf("C31 POST = %d, want 200 (body %s)", status, agentWindow(client))
+				}
+				sent := env.upstream.lastRequest().body
+				if bytes.Contains(sent, []byte(quoted)) {
+					t.Errorf("C31: the quoted secret reached the upstream: %s", agentWindow(sent))
+				}
+				placeholder := e2ePlaceholder.Find(sent)
+				if placeholder == nil {
+					t.Fatalf("C31: the request carried no placeholder: %s", agentWindow(sent))
+				}
+				want := bytes.ReplaceAll(
+					[]byte(": ping\n\ndata: the literal "+string(placeholder)+" end\n\ndata: [DONE]\n\n"),
+					placeholder, []byte(quoted))
+				if !bytes.Equal(client, want) {
+					t.Errorf("C31: raw SSE stream bytes changed: %s", agentWindowDiff(want, client))
+				}
+				if !bytes.Contains(client, []byte(quoted)) {
+					t.Errorf("C31: the secret did not return with its raw spelling: %s", agentWindow(client))
+				}
+				if bytes.Contains(client, []byte(`\"`)) || bytes.Contains(client, []byte(`\\`)) {
+					t.Errorf("C31: a raw stream fragment was escaped: %s", agentWindow(client))
+				}
+				if frames := bytes.Count(client, []byte("data: ")); frames != 2 {
+					t.Errorf("C31: SSE framing changed: %d data frames, want 2: %s", frames, agentWindow(client))
+				}
+				if !bytes.Contains(client, []byte("data: [DONE]")) {
+					t.Errorf("C31: the terminal SSE frame is missing: %s", agentWindow(client))
+				}
+				after := readLiveCounters(t, env.base, env.token)
+				if got := after.Redactions - before.Redactions; got != 1 {
+					t.Errorf("C31: redactions moved by %d, want 1", got)
+				}
+				if got := after.RuleBlocks - before.RuleBlocks; got != 0 {
+					t.Errorf("C31: rule_blocks moved by %d, want 0", got)
+				}
+				if got := after.ContentPolicyBlocks - before.ContentPolicyBlocks; got != 0 {
+					t.Errorf("C31: content_policy_blocks moved by %d, want 0", got)
+				}
+				return "raw SSE fragments keep the raw secret spelling"
 			},
 		},
 	}
@@ -709,74 +817,88 @@ func runAgentCase(t *testing.T, env *agentEnv, tc agentCase) string {
 	return verdict
 }
 
-// agentAssertClientRoundTrip pins the client-bound half of the matrix contract.
-// A secret whose raw spelling is escape-free must round-trip byte-exactly. A
-// secret that JSON escaping hides from the raw request spelling cannot be
-// re-spelled by the byte-level restore (the frozen contract restores the
-// ORIGINAL value, as docs/architecture.md and TestRedactRequestSplicesRawSpans
-// pin), so the echo body must come back byte-for-byte with each session
-// placeholder restored to the secret it was minted for.
+// agentAssertClientRoundTrip pins the client-bound half of the matrix contract:
+// the echo upstream returns the redacted request, so the client-bound body must
+// be the original request byte-for-byte. The escape/depth-aware restore
+// re-spells each placeholder with the secret's raw spelling at the enclosing
+// JSON depth, so an escape-hidden secret (a PEM's newlines, a quote, a
+// backslash, a JSON-in-JSON wrapper) comes back exactly as the client sent it.
+// A JSON-shaped exchange must stay valid JSON, and every secret must be present
+// after decoding, never only behind raw byte containment that escaping hides.
 func agentAssertClientRoundTrip(t *testing.T, name string, request []byte, capture agentCapture, secrets []secretExpec) {
 	t.Helper()
-	if len(secrets) == 0 || !agentNeedsRestoreEcho(request, secrets) {
-		if !bytes.Equal(capture.client, request) {
-			t.Errorf("scenario %q: the client round-trip is not byte-exact: %s", name, agentWindowDiff(request, capture.client))
+	if !bytes.Equal(capture.client, request) {
+		t.Errorf("scenario %q: the client bytes are not the request with its placeholders restored: %s",
+			name, agentWindowDiff(request, capture.client))
+	}
+	if !json.Valid(capture.client) {
+		t.Errorf("scenario %q: the client-bound body is not valid JSON: %s", name, agentWindow(capture.client))
+	}
+	for _, secret := range secrets {
+		if !agentDecodedContains(capture.client, secret.value) {
+			t.Errorf("scenario %q: the %s secret is not present after decoding the client body: %s",
+				name, secret.category, agentWindow(capture.client))
 		}
-		return
 	}
-	want, err := agentRestoreEcho(capture.sent, secrets)
-	if err != nil {
-		t.Fatalf("scenario %q: %v", name, err)
-	}
-	if !bytes.Equal(capture.client, want) {
-		t.Errorf("scenario %q: the client bytes are not the echo with the original secrets restored: %s",
-			name, agentWindowDiff(want, capture.client))
+	if len(secrets) > 0 && bytes.Contains(capture.client, []byte("__PII_")) {
+		t.Errorf("scenario %q: a placeholder reached the client: %s", name, agentWindow(capture.client))
 	}
 }
 
-// agentNeedsRestoreEcho reports whether any secret's decoded value is not a raw
-// substring of the request, which is exactly when JSON string escaping makes
-// the byte-exact request round-trip impossible.
-func agentNeedsRestoreEcho(request []byte, secrets []secretExpec) bool {
-	for _, secret := range secrets {
-		if !bytes.Contains(request, []byte(secret.value)) {
+// agentDecodedContains reports whether any JSON string leaf of body carries
+// secret after decoding. A body the walker cannot read falls back to raw byte
+// containment, the only shape in which raw bytes ARE the client value.
+func agentDecodedContains(body []byte, secret string) bool {
+	leaves, err := protocol.Walk(body)
+	if err != nil {
+		return bytes.Contains(body, []byte(secret))
+	}
+	for _, leaf := range leaves {
+		if bytes.Contains(leaf.Value, []byte(secret)) {
 			return true
 		}
 	}
 	return false
 }
 
-// agentPlaceholderPattern captures the frozen placeholder's type segment, so an
-// echo body can be mapped back to the secrets it was minted for.
-var agentPlaceholderPattern = regexp.MustCompile(`__PII_([a-z0-9_]{1,16})_[0-9a-f]{12,64}__`)
-
-// agentRestoreEcho restores every session placeholder in the upstream-received
-// body to the original secret of its category, the exact bytes a client must
-// receive from an echo upstream. A category carrying more than one candidate
-// value is ambiguous and fails loudly rather than guessing.
-func agentRestoreEcho(sent []byte, secrets []secretExpec) ([]byte, error) {
-	byCategory := make(map[string][]string, len(secrets))
-	for _, secret := range secrets {
-		byCategory[secret.category] = append(byCategory[secret.category], secret.value)
-	}
-	var failure error
-	out := agentPlaceholderPattern.ReplaceAllFunc(sent, func(match []byte) []byte {
-		parts := agentPlaceholderPattern.FindSubmatch(match)
-		values := byCategory[string(parts[1])]
-		if len(values) != 1 {
-			if failure == nil {
-				failure = fmt.Errorf("placeholder category %q carries %d candidate secrets, so the echo cannot be mapped unambiguously", parts[1], len(values))
-			}
-			return match
+// agentSSEDataPayloads returns every "data:" value of an SSE stream in order.
+func agentSSEDataPayloads(t *testing.T, stream []byte) [][]byte {
+	t.Helper()
+	var payloads [][]byte
+	for _, line := range bytes.Split(stream, []byte("\n")) {
+		line = bytes.TrimSuffix(line, []byte("\r"))
+		if bytes.HasPrefix(line, []byte("data: ")) {
+			payloads = append(payloads, line[len("data: "):])
 		}
-		return []byte(values[0])
-	})
-	return out, failure
+	}
+	return payloads
+}
+
+// agentSSEContent decodes one JSON-envelope event's choices[0].delta.content,
+// failing loudly when the envelope no longer has that shape.
+func agentSSEContent(t *testing.T, payload []byte) string {
+	t.Helper()
+	var doc struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(payload, &doc); err != nil {
+		t.Fatalf("unmarshal the SSE envelope %q: %v", payload, err)
+	}
+	if len(doc.Choices) != 1 {
+		t.Fatalf("the SSE envelope carries %d choices, want 1: %q", len(doc.Choices), payload)
+	}
+	return doc.Choices[0].Delta.Content
 }
 
 // agentAssertTransport pins the byte-level transport facts every scenario
 // shares: valid JSON with an honest declared length on both directions, and a
-// test-built request that is itself valid JSON.
+// test-built request that is itself valid JSON. The client-bound body must be
+// valid JSON whenever the request is: the depth-aware restore never breaks the
+// document a JSON-shaped exchange is carrying.
 func agentAssertTransport(t *testing.T, name string, capture agentCapture, request []byte) {
 	t.Helper()
 	if !json.Valid(capture.sent) {
@@ -793,6 +915,10 @@ func agentAssertTransport(t *testing.T, name string, capture agentCapture, reque
 	}
 	if !json.Valid(request) {
 		t.Errorf("scenario %q: the test-built request is not valid JSON (test bug): %s", name, agentWindow(request))
+		return
+	}
+	if !json.Valid(capture.client) {
+		t.Errorf("scenario %q: the client-bound body is not valid JSON: %s", name, agentWindow(capture.client))
 	}
 }
 
@@ -816,8 +942,9 @@ func agentAssertCounters(t *testing.T, name string, before, after countedStatus,
 }
 
 // agentAssertRedacted pins one secret's protection: absent upstream under the
-// expected category placeholder, restored client-side, no placeholder
-// client-visible.
+// expected category placeholder, restored client-side on its decoded VALUE (a
+// raw byte search would miss a PEM's newlines or a quote-bearing secret after
+// the escape/depth-aware restore), no placeholder client-visible.
 func agentAssertRedacted(t *testing.T, name string, sent, client []byte, secret secretExpec) {
 	t.Helper()
 	if bytes.Contains(sent, []byte(secret.value)) {
@@ -827,8 +954,8 @@ func agentAssertRedacted(t *testing.T, name string, sent, client []byte, secret 
 	if !bytes.Contains(sent, placeholder) {
 		t.Errorf("scenario %q: no %s placeholder reached the upstream: %s", name, secret.category, agentWindow(sent))
 	}
-	if !bytes.Contains(client, []byte(secret.value)) {
-		t.Errorf("scenario %q: the %s secret did not return to the client: %s", name, secret.category, agentWindow(client))
+	if !agentDecodedContains(client, secret.value) {
+		t.Errorf("scenario %q: the %s secret is not present after decoding the client body: %s", name, secret.category, agentWindow(client))
 	}
 	if bytes.Contains(client, placeholder) {
 		t.Errorf("scenario %q: a %s placeholder reached the client: %s", name, secret.category, agentWindow(client))

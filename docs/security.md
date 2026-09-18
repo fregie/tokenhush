@@ -1,7 +1,7 @@
 # tokenhush security model
 
 This document is the operator-facing security contract of the v0.5.0 rewrite.
-It lists the eight invariants the core keeps and the five residual risks it does
+It lists the eight invariants the core keeps and the six residual risks it does
 not hide, states what is enforced where, and names the test that pins each
 invariant.
 
@@ -10,7 +10,7 @@ invariant.
 - [Response-phase effects](#response-phase-effects)
 - [The SSE limitation](#the-sse-limitation)
 - [What is on disk](#what-is-on-disk)
-- [The five residual risks](#the-five-residual-risks)
+- [The six residual risks](#the-six-residual-risks)
 
 ## The direction contract
 
@@ -137,18 +137,19 @@ mapping are never written to disk. The redaction log line
 is never persisted; its masked form either reveals nothing (`****`,
 `[redacted]`) or a bounded prefix and suffix of an opaque credential type.
 
-## The five residual risks
+## The six residual risks
 
 These are recorded honestly rather than left implicit. Listing them is not a
 claim that they are absent; each one is a known limit of this design.
 
 | # | Residual risk | What it means in practice | Status |
 |---|---|---|---|
-| R1 | Encoded secrets are not caught | A secret that is base64-, hex- or URL-encoded before it leaves is not detected: the rewrite has no normalization pass by design, and a non-identity request `Content-Encoding` is refused with 415 rather than decoded for detection. JSON string *escaping* is handled — every decoded detection span is mapped back to the raw, escaped bytes that spell it at substitution — so the residual is content encodings (base64, hex, URL-encoded, or gzip nested inside another container), never JSON escaping. | Recorded and accepted |
+| R1 | Encoded secrets are not caught | A secret that is base64-, hex- or URL-encoded before it leaves is not detected: the rewrite has no normalization pass by design, and a non-identity request `Content-Encoding` is refused with 415 rather than decoded for detection. JSON string *escaping* is handled in **both directions** — every decoded detection span is mapped back to the raw, escaped bytes that spell it at substitution, and the client-bound restore is escape/depth-aware, re-spelling a restored secret at the enclosing JSON depth so the client body stays valid JSON — so the residual is content encodings (base64, hex, URL-encoded, or gzip nested inside another container), never JSON string escaping on either direction. | Recorded and accepted |
 | R2 | A secret in a JSON object key is not caught | A secret placed in a JSON object key rather than a value is forwarded unchanged: key-position blocking is dropped per D10, so the leaf walk supplies no key leaves and no dead key surface exists. | Recorded and accepted |
 | R3 | A signed remote pack may weaken detection through its own allowlist | A signed remote pack may suppress matches through its own global or per-rule allowlist: the non-weakening floor is allowlist-neutral per OD-3 and does not inspect allowlists, while the rule-signing key `rules-2026-09` remains the trust root. | Recorded and accepted |
 | R4 | The OD-2 command-rule rejection is dormant and the v2 manifest bump is backward-incompatible | The OD-2 `command`-rule rejection stays dormant until the OD-4 gate opens, and the gate opens only when the rules manifest `schema_version` reaches 2; that bump is backward-incompatible with clients pinning `== 1`, so the backend must keep serving a v1 manifest until the legacy line is out of support. | Recorded and accepted |
 | R5 | Response-path bodies are not capped by scan_budget_bytes | A response body is not limited by the request `scan_budget_bytes` gate, while a response-scoped primitive detector still scans at most the per-primitive `budget`: a response leaf past that budget is truncated with no stderr report and no counter, so response-scoped detection can miss content beyond the budget. The budget report is deliberately request-path only and moves no status key. | Recorded and accepted |
+| R6 | A placeholder split across two SSE JSON-envelope `data:` events is restored without depth awareness | When a JSON-envelope SSE stream splits a placeholder across two `data:` values, the `data:` envelope bytes between the halves mean neither value is a JSON document at the enclosing depth that contains the whole token, so the completing replacement is spliced with the raw spelling rather than re-spelled at the enclosing JSON depth; a secret carrying a quote, backslash or control byte can then sit raw inside an envelope fragment. Raw-fragment splits are handled: with no envelope intervening, the bounded reassembler restores the token completed across consecutive data deltas, byte-identically. | Recorded and accepted |
 
 Why each one stays as it is:
 
@@ -175,6 +176,13 @@ Why each one stays as it is:
   equivalent) or adding a response-path budget report (a new observable surface,
   which this rewrite refuses). Response-scoped detectors are bounded by the same
   per-primitive budget, and the limit is recorded rather than hidden.
+- **R6 — the envelope split is the upstream's choice.** A JSON-envelope stream
+  whose event values are split mid-document already cannot be parsed
+  event-by-event by any client, so there is no per-event JSON document left to
+  preserve; the bounded reassembler still completes the token across the split
+  with the raw spelling. Raw-fragment streams are not JSON by contract, keep the
+  raw spelling too, and stay byte-identical. Buffered bodies and unsplit JSON
+  envelopes keep the depth-aware, valid-JSON restore.
 
 ## Related documents
 

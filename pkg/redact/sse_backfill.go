@@ -24,6 +24,9 @@ func (placeholderMatcher) MaxTokenLen() int { return maxPlaceholderLen }
 // p, or 0 when p starts with an incomplete or invalid one. Every type length is
 // tried and the shortest complete token wins.
 func (placeholderMatcher) TokenLen(p []byte) int {
+	if len(p) < len(placeholderLiteralPrefix) || string(p[:len(placeholderLiteralPrefix)]) != placeholderLiteralPrefix {
+		return 0
+	}
 	best := 0
 	for t := 1; t <= maxTypeLen; t++ {
 		sep := len(placeholderLiteralPrefix) + t
@@ -158,6 +161,8 @@ type SSEBackfiller struct {
 	decoder  *protocol.Decoder
 	writer   *protocol.BackfillWriter
 
+	feed feedSpelling
+
 	segments []sseSegment
 	tail     []byte
 	closed   bool
@@ -189,12 +194,13 @@ func NewSSEBackfiller(restorer TokenRestorer, observer SSEObserver) *SSEBackfill
 	if restorer == nil {
 		restorer = NewBackfiller()
 	}
-	return &SSEBackfiller{
+	s := &SSEBackfiller{
 		restorer: restorer,
 		observer: observer,
 		decoder:  protocol.NewDecoder(),
-		writer:   protocol.NewBackfillWriter(placeholderMatcher{}, restorer.Backfill),
 	}
+	s.writer = protocol.NewBackfillWriter(placeholderMatcher{}, s.replace)
+	return s
 }
 
 // Write accepts the next upstream chunk and returns the bytes that are final
@@ -267,7 +273,9 @@ func (s *SSEBackfiller) accept(ev protocol.Event) []byte {
 	seg := sseSegment{raw: ev.Raw}
 	if len(ev.DataSpans) == 1 {
 		seg.hasSpan, seg.span = true, ev.DataSpans[0]
-		seg.content = s.writer.Feed(seg.raw[seg.span.Start:seg.span.End])
+		value := seg.raw[seg.span.Start:seg.span.End]
+		s.spellFeed(value)
+		seg.content = s.writer.Feed(value)
 	}
 	s.segments = append(s.segments, seg)
 	if seg.hasSpan {
