@@ -14,7 +14,7 @@ import (
 )
 
 func TestHighWaterMemAdvancesMonotonically(t *testing.T) {
-	store := NewMemHighWater()
+	store := newMemHighWater()
 	if got := store.Current(); got != 0 {
 		t.Fatalf("fresh store Current() = %d, want 0", got)
 	}
@@ -29,7 +29,7 @@ func TestHighWaterMemAdvancesMonotonically(t *testing.T) {
 }
 
 func TestHighWaterMemRejectsLowerSerial(t *testing.T) {
-	store := NewMemHighWater()
+	store := newMemHighWater()
 	if err := store.Advance(5); err != nil {
 		t.Fatalf("Advance(5) = %v, want nil", err)
 	}
@@ -51,7 +51,7 @@ func TestHighWaterMemRejectsLowerSerial(t *testing.T) {
 }
 
 func TestHighWaterEqualSerialIsIdempotent(t *testing.T) {
-	store := NewMemHighWater()
+	store := newMemHighWater()
 	if err := store.Advance(5); err != nil {
 		t.Fatalf("Advance(5) = %v, want nil", err)
 	}
@@ -66,7 +66,7 @@ func TestHighWaterEqualSerialIsIdempotent(t *testing.T) {
 func TestHighWaterHighestSerialToleratedOnReplay(t *testing.T) {
 	// A legitimate replay of the current highest serial is idempotent, not an
 	// error: only a strictly older serial is a replay attack.
-	store := NewMemHighWater()
+	store := newMemHighWater()
 	if err := store.Advance(5); err != nil {
 		t.Fatalf("Advance(5) = %v, want nil", err)
 	}

@@ -100,6 +100,8 @@ type RuleSource string
 
 // The three states of the active rule set. Builtin means "use pkg/filter's
 // compiled-in detectors"; a state with Source builtin never carries a pack.
+// The values are part of RulesState's observable contract, pinned by
+// internal/cli tests.
 const (
 	SourceRemote  RuleSource = "remote"
 	SourceCache   RuleSource = "cache"

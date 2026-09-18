@@ -27,10 +27,10 @@ var (
 	ErrKeyListRollback = errors.New("supply: key list serial below the active serial")
 )
 
-// DecodeUpdateKeyList decodes one raw key-list document. The cap is the update
+// decodeUpdateKeyList decodes one raw key-list document. The cap is the update
 // cap; unknown fields and trailing data are rejected, exactly like the rules
 // manifest, so a typo can never slip into the signed payload.
-func DecodeUpdateKeyList(data []byte) (UpdateKeyListPayload, error) {
+func decodeUpdateKeyList(data []byte) (UpdateKeyListPayload, error) {
 	var list UpdateKeyListPayload
 	if err := decodeFrozenDoc(DomainUpdateKeylist, data, &list); err != nil {
 		return UpdateKeyListPayload{}, err
@@ -38,12 +38,12 @@ func DecodeUpdateKeyList(data []byte) (UpdateKeyListPayload, error) {
 	return list, nil
 }
 
-// VerifyKeyList verifies the root signature over the frozen
+// verifyKeyList verifies the root signature over the frozen
 // tokenhush-update-keylist-v1 projection. Only KeyRootUpdate may sign; another
 // key id, a missing signature and a bad signature all fail with
 // ErrUnauthorizedKey. There is no freshness check here: a replayed list is
 // handled by the installer's serial rule, which is stronger.
-func VerifyKeyList(list UpdateKeyListPayload, verifier Verifier) error {
+func verifyKeyList(list UpdateKeyListPayload, verifier Verifier) error {
 	if list.KeyID != KeyRootUpdate {
 		return fmt.Errorf("%w: the list does not claim the update root id", ErrUnauthorizedKey)
 	}
@@ -60,22 +60,22 @@ func VerifyKeyList(list UpdateKeyListPayload, verifier Verifier) error {
 	return nil
 }
 
-// KeyListStore holds the installed online update keys. The active set is only
+// keyListStore holds the installed online update keys. The active set is only
 // ever replaced by a verified list; a lower serial is rejected and an equal
 // serial is an idempotent replay.
-type KeyListStore struct {
+type keyListStore struct {
 	mu     sync.Mutex
 	serial uint64
 	keys   map[string]string
 }
 
-// NewKeyListStore returns a store with no installed keys.
-func NewKeyListStore() *KeyListStore { return &KeyListStore{} }
+// newKeyListStore returns a store with no installed keys.
+func newKeyListStore() *keyListStore { return &keyListStore{} }
 
-// Install verifies list, then replaces the active key set. Verification
+// install verifies list, then replaces the active key set. Verification
 // happens before the lock and before any state changes.
-func (s *KeyListStore) Install(list UpdateKeyListPayload, verifier Verifier) error {
-	if err := VerifyKeyList(list, verifier); err != nil {
+func (s *keyListStore) install(list UpdateKeyListPayload, verifier Verifier) error {
+	if err := verifyKeyList(list, verifier); err != nil {
 		return err
 	}
 	keys, err := keyListKeys(list)
@@ -96,7 +96,7 @@ func (s *KeyListStore) Install(list UpdateKeyListPayload, verifier Verifier) err
 }
 
 // PublicKey returns the public key installed for id, if any.
-func (s *KeyListStore) PublicKey(id string) (string, bool) {
+func (s *keyListStore) publicKey(id string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	public, ok := s.keys[id]
@@ -104,7 +104,7 @@ func (s *KeyListStore) PublicKey(id string) (string, bool) {
 }
 
 // IDs returns the installed key ids, ascending.
-func (s *KeyListStore) IDs() []string {
+func (s *keyListStore) ids() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ids := make([]string, 0, len(s.keys))
@@ -116,7 +116,7 @@ func (s *KeyListStore) IDs() []string {
 }
 
 // ActiveSerial returns the serial of the active key list.
-func (s *KeyListStore) ActiveSerial() uint64 {
+func (s *keyListStore) activeSerial() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.serial
@@ -124,11 +124,11 @@ func (s *KeyListStore) ActiveSerial() uint64 {
 
 // Verifier returns a Verifier over the installed online keys only: a document
 // naming a rotated-away or never-installed key fails closed.
-func (s *KeyListStore) Verifier() Verifier { return keySetVerifier{store: s} }
+func (s *keyListStore) verifier() Verifier { return keySetVerifier{store: s} }
 
 // keySetVerifier resolves document signatures against the installed keys.
 type keySetVerifier struct {
-	store *KeyListStore
+	store *keyListStore
 }
 
 // Verify implements Verifier.
@@ -136,7 +136,7 @@ func (v keySetVerifier) Verify(domain, keyID string, signingInput, sig []byte) e
 	if domain == "" {
 		return fmt.Errorf("%w: empty domain tag", ErrBadSignature)
 	}
-	public, ok := v.store.PublicKey(keyID)
+	public, ok := v.store.publicKey(keyID)
 	if !ok {
 		return fmt.Errorf("%w: no installed update key for that id", ErrWrongKey)
 	}

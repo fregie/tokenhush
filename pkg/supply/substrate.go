@@ -19,17 +19,20 @@ import (
 )
 
 // Frozen wire constants. D6 fixes the origin, the paths, the channel query,
-// the domain tags, the root key ids and the caps: none is configurable.
+// the domain tags, the root key ids and the caps: none is configurable. Every
+// constant is part of the frozen supply-chain wire surface pinned by
+// pkg/supply/substrate_test.go, internal/guards/egress_guard_test.go and
+// docs/PRO-MIGRATION.md.
 const (
 	BaseURL      = "https://updates.tokenhush.com"
 	ChannelQuery = "?channel=stable"
 
 	UpdateManifestPath    = "/v1/update/manifest"
 	UpdateRevocationsPath = "/v1/update/revocations"
-	UpdateKeylistPath     = "/v1/update/keylist"
+	updateKeylistPath     = "/v1/update/keylist"
 	RulesManifestPath     = "/v1/rules/manifest"
 	RulesBundlePath       = "/v1/rules/bundle"
-	RulesRevocationsPath  = "/v1/rules/revocations"
+	rulesRevocationsPath  = "/v1/rules/revocations"
 )
 
 // Domain-separation tags bind each signature to one document kind.
@@ -61,7 +64,9 @@ const (
 	MaxArtifactBytes int64 = 256 * 1024 * 1024
 )
 
-// Typed sentinels so callers can branch with errors.Is.
+// Typed sentinels so callers can branch with errors.Is. They are the frozen
+// verification vocabulary of the supply chain, pinned by
+// pkg/supply/substrate_test.go and internal/cli tests.
 var (
 	ErrBadSignature = errors.New("supply: bad signature")
 	ErrWrongKey     = errors.New("supply: wrong key")
@@ -230,8 +235,8 @@ func DecodeSignature(signature string) ([]byte, error) {
 	return raw, nil
 }
 
-// VerifyEd25519B64 is VerifyEd25519 over a base64 raw-URL signature string.
-func VerifyEd25519B64(publicKey string, signingInput []byte, signature string) error {
+// verifyEd25519B64 is VerifyEd25519 over a base64 raw-URL signature string.
+func verifyEd25519B64(publicKey string, signingInput []byte, signature string) error {
 	raw, err := DecodeSignature(signature)
 	if err != nil {
 		return err

@@ -115,21 +115,21 @@ func TestKeyListRootSignedInstall(t *testing.T) {
 	rootPub, rootPriv := keyPair(t)
 	updPub, _ := keyPair(t)
 	verifier := staticVerifierFor(map[string]ed25519.PublicKey{KeyRootUpdate: rootPub})
-	store := NewKeyListStore()
+	store := newKeyListStore()
 
 	listing := signKeyList(t, keyListPayload(2, updateKeyEntry("upd-2026-10", updPub)), rootPriv)
-	if err := store.Install(listing, verifier); err != nil {
+	if err := store.install(listing, verifier); err != nil {
 		t.Fatalf("Install(root-signed) = %v, want nil", err)
 	}
 	wantPub := base64.RawURLEncoding.EncodeToString(updPub)
-	gotPub, ok := store.PublicKey("upd-2026-10")
+	gotPub, ok := store.publicKey("upd-2026-10")
 	if !ok || gotPub != wantPub {
 		t.Fatalf("PublicKey(upd-2026-10) = (%q, %v), want the installed public key", gotPub, ok)
 	}
-	if ids := store.IDs(); !slices.Equal(ids, []string{"upd-2026-10"}) {
+	if ids := store.ids(); !slices.Equal(ids, []string{"upd-2026-10"}) {
 		t.Fatalf("IDs() = %v, want [upd-2026-10]", ids)
 	}
-	if got := store.ActiveSerial(); got != 2 {
+	if got := store.activeSerial(); got != 2 {
 		t.Fatalf("ActiveSerial() = %d, want 2", got)
 	}
 }
@@ -138,20 +138,20 @@ func TestKeyListSignedByRandomKeyRejected(t *testing.T) {
 	rootPub, _ := keyPair(t)
 	_, randomPriv := keyPair(t)
 	verifier := staticVerifierFor(map[string]ed25519.PublicKey{KeyRootUpdate: rootPub})
-	store := NewKeyListStore()
+	store := newKeyListStore()
 
 	// The random signer even claims the root id: the id is not the trust
 	// anchor, the embedded root public key is.
 	listing := signKeyList(t, keyListPayload(1, updateKeyEntry("upd-rogue", proofKey(t))), randomPriv)
-	err := store.Install(listing, verifier)
+	err := store.install(listing, verifier)
 	if !errors.Is(err, ErrUnauthorizedKey) {
 		t.Fatalf("Install(random-key-signed) = %v, want an error wrapping ErrUnauthorizedKey", err)
 	}
 	t.Logf("QA failure: a key list signed by a random key -> %v", err)
-	if err := VerifyKeyList(listing, verifier); !errors.Is(err, ErrUnauthorizedKey) {
-		t.Fatalf("VerifyKeyList(random-key-signed) = %v, want ErrUnauthorizedKey", err)
+	if err := verifyKeyList(listing, verifier); !errors.Is(err, ErrUnauthorizedKey) {
+		t.Fatalf("verifyKeyList(random-key-signed) = %v, want ErrUnauthorizedKey", err)
 	}
-	if ids := store.IDs(); len(ids) != 0 {
+	if ids := store.ids(); len(ids) != 0 {
 		t.Fatalf("IDs() = %v after a rejected list, want none installed", ids)
 	}
 }
@@ -162,7 +162,7 @@ func TestKeyListWrongKeyIDRejected(t *testing.T) {
 	listing := signKeyList(t, keyListPayload(1, updateKeyEntry("upd-2026-10", proofKey(t))), rootPriv)
 	listing.KeyID = "upd-2026-10" // a list claiming an online key is not root authority
 
-	if err := NewKeyListStore().Install(listing, verifier); !errors.Is(err, ErrUnauthorizedKey) {
+	if err := newKeyListStore().install(listing, verifier); !errors.Is(err, ErrUnauthorizedKey) {
 		t.Fatalf("Install(online-key-id) = %v, want ErrUnauthorizedKey", err)
 	}
 }
@@ -173,7 +173,7 @@ func TestKeyListTamperedAfterSigningRejected(t *testing.T) {
 	listing := signKeyList(t, keyListPayload(1, updateKeyEntry("upd-2026-10", proofKey(t))), rootPriv)
 	listing.Serial = 99
 
-	err := NewKeyListStore().Install(listing, verifier)
+	err := newKeyListStore().install(listing, verifier)
 	if !errors.Is(err, ErrUnauthorizedKey) || !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("Install(tampered) = %v, want ErrUnauthorizedKey and ErrBadSignature", err)
 	}
@@ -182,26 +182,26 @@ func TestKeyListTamperedAfterSigningRejected(t *testing.T) {
 func TestKeyListRollbackRetainsActiveKeys(t *testing.T) {
 	rootPub, rootPriv := keyPair(t)
 	verifier := staticVerifierFor(map[string]ed25519.PublicKey{KeyRootUpdate: rootPub})
-	store := NewKeyListStore()
+	store := newKeyListStore()
 
 	oldPub, _ := keyPair(t)
-	if err := store.Install(signKeyList(t, keyListPayload(5, updateKeyEntry("upd-a", oldPub)), rootPriv), verifier); err != nil {
+	if err := store.install(signKeyList(t, keyListPayload(5, updateKeyEntry("upd-a", oldPub)), rootPriv), verifier); err != nil {
 		t.Fatalf("Install(serial 5) = %v", err)
 	}
 	newPub, _ := keyPair(t)
-	err := store.Install(signKeyList(t, keyListPayload(3, updateKeyEntry("upd-b", newPub)), rootPriv), verifier)
+	err := store.install(signKeyList(t, keyListPayload(3, updateKeyEntry("upd-b", newPub)), rootPriv), verifier)
 	if !errors.Is(err, ErrKeyListRollback) {
 		t.Fatalf("Install(serial 3) = %v, want an error wrapping ErrKeyListRollback", err)
 	}
-	if ids := store.IDs(); !slices.Equal(ids, []string{"upd-a"}) {
+	if ids := store.ids(); !slices.Equal(ids, []string{"upd-a"}) {
 		t.Fatalf("IDs() = %v after a rejected rollback, want the active [upd-a]", ids)
 	}
-	if got := store.ActiveSerial(); got != 5 {
+	if got := store.activeSerial(); got != 5 {
 		t.Fatalf("ActiveSerial() = %d after a rejected rollback, want 5", got)
 	}
 
 	// A legitimate replay of the active serial is idempotent.
-	if err := store.Install(signKeyList(t, keyListPayload(5, updateKeyEntry("upd-a", oldPub)), rootPriv), verifier); err != nil {
+	if err := store.install(signKeyList(t, keyListPayload(5, updateKeyEntry("upd-a", oldPub)), rootPriv), verifier); err != nil {
 		t.Fatalf("replay of the active serial = %v, want nil", err)
 	}
 }
@@ -209,29 +209,29 @@ func TestKeyListRollbackRetainsActiveKeys(t *testing.T) {
 func TestKeyListRotationReplacesKeysAscending(t *testing.T) {
 	rootPub, rootPriv := keyPair(t)
 	verifier := staticVerifierFor(map[string]ed25519.PublicKey{KeyRootUpdate: rootPub})
-	store := NewKeyListStore()
+	store := newKeyListStore()
 
 	pubA, _ := keyPair(t)
 	pubB, _ := keyPair(t)
 	// Rotation overlap: the first list carries only A, the second carries both
 	// in reverse order, the third drops A.
-	if err := store.Install(signKeyList(t, keyListPayload(1, updateKeyEntry("upd-a", pubA)), rootPriv), verifier); err != nil {
+	if err := store.install(signKeyList(t, keyListPayload(1, updateKeyEntry("upd-a", pubA)), rootPriv), verifier); err != nil {
 		t.Fatalf("Install(serial 1) = %v", err)
 	}
 	both := keyListPayload(2, updateKeyEntry("upd-b", pubB), updateKeyEntry("upd-a", pubA))
-	if err := store.Install(signKeyList(t, both, rootPriv), verifier); err != nil {
+	if err := store.install(signKeyList(t, both, rootPriv), verifier); err != nil {
 		t.Fatalf("Install(serial 2) = %v", err)
 	}
-	if ids := store.IDs(); !slices.Equal(ids, []string{"upd-a", "upd-b"}) {
+	if ids := store.ids(); !slices.Equal(ids, []string{"upd-a", "upd-b"}) {
 		t.Fatalf("IDs() = %v, want ascending [upd-a upd-b]", ids)
 	}
-	if err := store.Install(signKeyList(t, keyListPayload(3, updateKeyEntry("upd-b", pubB)), rootPriv), verifier); err != nil {
+	if err := store.install(signKeyList(t, keyListPayload(3, updateKeyEntry("upd-b", pubB)), rootPriv), verifier); err != nil {
 		t.Fatalf("Install(serial 3) = %v", err)
 	}
-	if ids := store.IDs(); !slices.Equal(ids, []string{"upd-b"}) {
+	if ids := store.ids(); !slices.Equal(ids, []string{"upd-b"}) {
 		t.Fatalf("IDs() = %v after rotation, want [upd-b]", ids)
 	}
-	if _, ok := store.PublicKey("upd-a"); ok {
+	if _, ok := store.publicKey("upd-a"); ok {
 		t.Fatalf("PublicKey(upd-a) resolved after rotation, want it dropped")
 	}
 }
@@ -252,12 +252,12 @@ func TestKeyListEntriesAreValidated(t *testing.T) {
 	}
 	for name, entries := range cases {
 		t.Run(name, func(t *testing.T) {
-			store := NewKeyListStore()
+			store := newKeyListStore()
 			listing := signKeyList(t, keyListPayload(1, entries...), rootPriv)
-			if err := store.Install(listing, verifier); !errors.Is(err, ErrMalformedDoc) {
+			if err := store.install(listing, verifier); !errors.Is(err, ErrMalformedDoc) {
 				t.Fatalf("Install = %v, want an error wrapping ErrMalformedDoc", err)
 			}
-			if ids := store.IDs(); len(ids) != 0 {
+			if ids := store.ids(); len(ids) != 0 {
 				t.Fatalf("IDs() = %v after a rejected list, want none installed", ids)
 			}
 		})
@@ -267,15 +267,15 @@ func TestKeyListEntriesAreValidated(t *testing.T) {
 func TestKeyListInstalledKeyVerifiesUpdateRevocations(t *testing.T) {
 	rootPub, rootPriv := keyPair(t)
 	updPub, updPriv := keyPair(t)
-	keys := NewKeyListStore()
+	keys := newKeyListStore()
 	verifier := staticVerifierFor(map[string]ed25519.PublicKey{KeyRootUpdate: rootPub})
-	if err := keys.Install(signKeyList(t, keyListPayload(1, updateKeyEntry("upd-2026-10", updPub)), rootPriv), verifier); err != nil {
+	if err := keys.install(signKeyList(t, keyListPayload(1, updateKeyEntry("upd-2026-10", updPub)), rootPriv), verifier); err != nil {
 		t.Fatalf("Install = %v", err)
 	}
 
 	active := NewRevocationStore()
 	doc := signUpdateRevocations(t, updateRevocationsPayload(7, []uint64{5}, []string{"0.3.9"}), updPriv)
-	if err := active.ApplyUpdate(doc, keys.Verifier()); err != nil {
+	if err := active.ApplyUpdate(doc, keys.verifier()); err != nil {
 		t.Fatalf("ApplyUpdate = %v, want nil", err)
 	}
 	if got := active.ActiveSerial(); got != 7 {
@@ -294,7 +294,7 @@ func TestKeyListInstalledKeyVerifiesUpdateRevocations(t *testing.T) {
 	// A rollback is rejected and the active pack is retained: a stale
 	// revocation can never un-revoke anything.
 	older := signUpdateRevocations(t, updateRevocationsPayload(3, nil, nil), updPriv)
-	if err := active.ApplyUpdate(older, keys.Verifier()); !errors.Is(err, ErrRevocationRollback) {
+	if err := active.ApplyUpdate(older, keys.verifier()); !errors.Is(err, ErrRevocationRollback) {
 		t.Fatalf("ApplyUpdate(rollback) = %v, want ErrRevocationRollback", err)
 	}
 	if got := active.ActiveSerial(); got != 7 {
@@ -306,18 +306,18 @@ func TestKeyListInstalledKeyVerifiesUpdateRevocations(t *testing.T) {
 
 	// An unsigned document and a tampered document are both rejected, and
 	// neither changes the active pack.
-	if err := active.ApplyUpdate(updateRevocationsPayload(8, []uint64{6}, nil), keys.Verifier()); !errors.Is(err, ErrBadSignature) {
+	if err := active.ApplyUpdate(updateRevocationsPayload(8, []uint64{6}, nil), keys.verifier()); !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("ApplyUpdate(unsigned) = %v, want ErrBadSignature", err)
 	}
 	tampered := signUpdateRevocations(t, updateRevocationsPayload(8, []uint64{6}, nil), updPriv)
 	tampered.RevokedSerials = []uint64{9}
-	if err := active.ApplyUpdate(tampered, keys.Verifier()); !errors.Is(err, ErrBadSignature) {
+	if err := active.ApplyUpdate(tampered, keys.verifier()); !errors.Is(err, ErrBadSignature) {
 		t.Fatalf("ApplyUpdate(tampered) = %v, want ErrBadSignature", err)
 	}
 	// A document naming a key that was never installed fails closed too.
 	unknown := signUpdateRevocations(t, updateRevocationsPayload(8, []uint64{6}, nil), updPriv)
 	unknown.KeyID = "upd-unknown"
-	if err := active.ApplyUpdate(unknown, keys.Verifier()); !errors.Is(err, ErrWrongKey) {
+	if err := active.ApplyUpdate(unknown, keys.verifier()); !errors.Is(err, ErrWrongKey) {
 		t.Fatalf("ApplyUpdate(unknown key) = %v, want ErrWrongKey", err)
 	}
 	if got := active.ActiveSerial(); got != 7 || !active.IsSerialRevoked(5) {
@@ -339,8 +339,8 @@ func TestKeyListRulesRevocationsApply(t *testing.T) {
 		RevokedSerials: []uint64{4},
 	}
 	doc.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(rulesPriv, RulesRevocationsSigningInput(doc)))
-	if err := store.ApplyRules(doc, verifier); err != nil {
-		t.Fatalf("ApplyRules = %v, want nil", err)
+	if err := store.applyRules(doc, verifier); err != nil {
+		t.Fatalf("applyRules = %v, want nil", err)
 	}
 	if err := store.Check(4, ""); !errors.Is(err, ErrRevokedSerial) {
 		t.Fatalf("Check(revoked serial) = %v, want ErrRevokedSerial", err)
@@ -355,8 +355,8 @@ func TestKeyListRulesRevocationsApply(t *testing.T) {
 	older.Serial = 1
 	older.RevokedSerials = nil
 	older.Signature = base64.RawURLEncoding.EncodeToString(ed25519.Sign(rulesPriv, RulesRevocationsSigningInput(older)))
-	if err := store.ApplyRules(older, verifier); !errors.Is(err, ErrRevocationRollback) {
-		t.Fatalf("ApplyRules(rollback) = %v, want ErrRevocationRollback", err)
+	if err := store.applyRules(older, verifier); !errors.Is(err, ErrRevocationRollback) {
+		t.Fatalf("applyRules(rollback) = %v, want ErrRevocationRollback", err)
 	}
 	if !store.IsSerialRevoked(4) || store.ActiveSerial() != 2 {
 		t.Fatalf("rules rollback dropped the active revocations")
@@ -366,18 +366,18 @@ func TestKeyListRulesRevocationsApply(t *testing.T) {
 func TestKeyListDecodeIsStrict(t *testing.T) {
 	valid := `{"serial":1,"key_id":"root-2026-09","not_before":"2026-09-14T00:00:00Z",` +
 		`"expires":"2027-09-14T00:00:00Z","keys":[]}`
-	if _, err := DecodeUpdateKeyList([]byte(valid)); err != nil {
-		t.Fatalf("DecodeUpdateKeyList(valid) = %v, want nil", err)
+	if _, err := decodeUpdateKeyList([]byte(valid)); err != nil {
+		t.Fatalf("decodeUpdateKeyList(valid) = %v, want nil", err)
 	}
 	unknown := strings.Replace(valid, `"serial":1`, `"serial":1,"extra":true`, 1)
-	if _, err := DecodeUpdateKeyList([]byte(unknown)); !errors.Is(err, ErrMalformedDoc) {
-		t.Fatalf("DecodeUpdateKeyList(unknown field) = %v, want ErrMalformedDoc", err)
+	if _, err := decodeUpdateKeyList([]byte(unknown)); !errors.Is(err, ErrMalformedDoc) {
+		t.Fatalf("decodeUpdateKeyList(unknown field) = %v, want ErrMalformedDoc", err)
 	}
-	if _, err := DecodeUpdateKeyList([]byte(valid + `{}`)); !errors.Is(err, ErrMalformedDoc) {
-		t.Fatalf("DecodeUpdateKeyList(trailing) = %v, want ErrMalformedDoc", err)
+	if _, err := decodeUpdateKeyList([]byte(valid + `{}`)); !errors.Is(err, ErrMalformedDoc) {
+		t.Fatalf("decodeUpdateKeyList(trailing) = %v, want ErrMalformedDoc", err)
 	}
-	if _, err := DecodeUpdateKeyList(make([]byte, MaxUpdateDocBytes+1)); !errors.Is(err, ErrDocTooLarge) {
-		t.Fatalf("DecodeUpdateKeyList(oversize) = %v, want ErrDocTooLarge", err)
+	if _, err := decodeUpdateKeyList(make([]byte, MaxUpdateDocBytes+1)); !errors.Is(err, ErrDocTooLarge) {
+		t.Fatalf("decodeUpdateKeyList(oversize) = %v, want ErrDocTooLarge", err)
 	}
 
 	revocations := `{"channel":"stable","serial":7,"key_id":"upd-2026-10",` +

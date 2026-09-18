@@ -46,16 +46,16 @@ type serialState struct {
 	serial int64
 }
 
-// MemHighWater is an in-memory HighWater for tests and ephemeral stores.
-type MemHighWater struct {
+// memHighWater is an in-memory HighWater for tests and ephemeral stores.
+type memHighWater struct {
 	state serialState
 }
 
-// NewMemHighWater returns a HighWater starting at serial zero.
-func NewMemHighWater() *MemHighWater { return &MemHighWater{} }
+// newMemHighWater returns a HighWater starting at serial zero.
+func newMemHighWater() *memHighWater { return &memHighWater{} }
 
 // Advance implements HighWater.
-func (m *MemHighWater) Advance(serial int64) error {
+func (m *memHighWater) Advance(serial int64) error {
 	m.state.mu.Lock()
 	defer m.state.mu.Unlock()
 	if serial < m.state.serial {
@@ -66,7 +66,7 @@ func (m *MemHighWater) Advance(serial int64) error {
 }
 
 // Current implements HighWater.
-func (m *MemHighWater) Current() int64 {
+func (m *memHighWater) Current() int64 {
 	m.state.mu.Lock()
 	defer m.state.mu.Unlock()
 	return m.state.serial

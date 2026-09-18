@@ -31,15 +31,6 @@ func DecodeUpdateRevocations(data []byte) (UpdateRevocationsPayload, error) {
 	return doc, nil
 }
 
-// DecodeRulesRevocations decodes one raw rules-revocations document.
-func DecodeRulesRevocations(data []byte) (RulesRevocationsPayload, error) {
-	var doc RulesRevocationsPayload
-	if err := decodeFrozenDoc(DomainRulesRevocations, data, &doc); err != nil {
-		return RulesRevocationsPayload{}, err
-	}
-	return doc, nil
-}
-
 // RevocationStore applies one revocation stream, update or rules. A document
 // must verify under its frozen projection before any state changes; a lower
 // serial is a rollback and an equal serial is an idempotent replay.
@@ -62,9 +53,9 @@ func (s *RevocationStore) ApplyUpdate(doc UpdateRevocationsPayload, verifier Ver
 	return s.apply(doc.Serial, doc.RevokedSerials, doc.RevokedVersions)
 }
 
-// ApplyRules verifies and applies a rules-revocations document. The rules
+// applyRules verifies and applies a rules-revocations document. The rules
 // stream revokes serials only.
-func (s *RevocationStore) ApplyRules(doc RulesRevocationsPayload, verifier Verifier) error {
+func (s *RevocationStore) applyRules(doc RulesRevocationsPayload, verifier Verifier) error {
 	if err := verifyFrozen(verifier, DomainRulesRevocations, doc.KeyID, doc.Signature, RulesRevocationsSigningInput(doc)); err != nil {
 		return err
 	}

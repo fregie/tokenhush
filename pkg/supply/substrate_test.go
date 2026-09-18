@@ -85,10 +85,10 @@ func TestSubstrate(t *testing.T) {
 		paths := map[string]string{
 			"/v1/update/manifest":    UpdateManifestPath,
 			"/v1/update/revocations": UpdateRevocationsPath,
-			"/v1/update/keylist":     UpdateKeylistPath,
+			"/v1/update/keylist":     updateKeylistPath,
 			"/v1/rules/manifest":     RulesManifestPath,
 			"/v1/rules/bundle":       RulesBundlePath,
-			"/v1/rules/revocations":  RulesRevocationsPath,
+			"/v1/rules/revocations":  rulesRevocationsPath,
 		}
 		for want, got := range paths {
 			if got != want {
@@ -152,8 +152,8 @@ func TestSubstrate(t *testing.T) {
 			t.Fatalf("VerifyEd25519(valid) = %v, want nil", err)
 		}
 		sigB64 := base64.RawURLEncoding.EncodeToString(sig)
-		if err := VerifyEd25519B64(pub, input, sigB64); err != nil {
-			t.Fatalf("VerifyEd25519B64(valid) = %v, want nil", err)
+		if err := verifyEd25519B64(pub, input, sigB64); err != nil {
+			t.Fatalf("verifyEd25519B64(valid) = %v, want nil", err)
 		}
 		if _, err := DecodeSignature(sigB64); err != nil {
 			t.Fatalf("DecodeSignature(valid) = %v, want nil", err)
@@ -174,7 +174,7 @@ func TestSubstrate(t *testing.T) {
 			{"non-base64 key", VerifyEd25519("!!!not-base64!!!", input, sig), ErrWrongKey},
 			{"truncated signature", VerifyEd25519(pub, input, sig[:len(sig)-1]), ErrBadSignature},
 			{"empty signature", VerifyEd25519(pub, input, nil), ErrBadSignature},
-			{"non-base64 signature", VerifyEd25519B64(pub, input, "!!!not-base64!!!"), ErrBadSignature},
+			{"non-base64 signature", verifyEd25519B64(pub, input, "!!!not-base64!!!"), ErrBadSignature},
 			{"static verifier unknown key", NewStaticVerifier().Verify(DomainUpdateManifest, "upd-2026-09", input, sig), ErrWrongKey},
 			{"static verifier empty domain", NewStaticVerifier().Verify("", KeyRootUpdate, input, sig), ErrBadSignature},
 			{"static verifier unverifiable root", NewStaticVerifier().Verify(DomainUpdateManifest, KeyRootUpdate, input, sig), ErrBadSignature},
