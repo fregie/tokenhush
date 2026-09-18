@@ -434,7 +434,7 @@ func TestUpdateVersionGate(t *testing.T) {
 			t.Errorf("min_binary_version 9.9.9 = %v, want ErrMinBinaryVersion", err)
 		}
 	})
-	run := func(t *testing.T, allow bool, env string) (UpdateResult, error, *updateHarness) {
+	run := func(t *testing.T, allow bool, env string) (UpdateResult, *updateHarness, error) {
 		t.Helper()
 		h := newUpdateHarness(t)
 		h.publish(func(m *UpdateManifestPayload) { m.Version = "0.4.0" })
@@ -448,27 +448,27 @@ func TestUpdateVersionGate(t *testing.T) {
 			}
 		})
 		result, err := updater.Update(context.Background(), false)
-		return result, err, h
+		return result, h, err
 	}
 	t.Run("a downgrade without the flag and env is refused", func(t *testing.T) {
-		_, err, h := run(t, false, "")
+		_, h, err := run(t, false, "")
 		if !errors.Is(err, ErrDowngrade) {
 			t.Fatalf("Update downgrade = %v, want ErrDowngrade", err)
 		}
 		h.assertTargetBytes(updateTestOriginal)
 	})
 	t.Run("the flag alone is not enough", func(t *testing.T) {
-		if _, err, _ := run(t, true, ""); !errors.Is(err, ErrDowngrade) {
+		if _, _, err := run(t, true, ""); !errors.Is(err, ErrDowngrade) {
 			t.Fatalf("Update with the flag only = %v, want ErrDowngrade", err)
 		}
 	})
 	t.Run("the env alone is not enough", func(t *testing.T) {
-		if _, err, _ := run(t, false, "1"); !errors.Is(err, ErrDowngrade) {
+		if _, _, err := run(t, false, "1"); !errors.Is(err, ErrDowngrade) {
 			t.Fatalf("Update with the env only = %v, want ErrDowngrade", err)
 		}
 	})
 	t.Run("the flag and the env together admit the downgrade", func(t *testing.T) {
-		result, err, h := run(t, true, "true")
+		result, h, err := run(t, true, "true")
 		if err != nil {
 			t.Fatalf("Update with the flag and env = %v, want nil", err)
 		}

@@ -47,10 +47,10 @@ func DecodeRulesManifest(data []byte) (RulesManifestPayload, error) {
 		return RulesManifestPayload{}, fmt.Errorf("%w: %w", ErrMalformedDoc, err)
 	}
 	var extra any
-	switch err := dec.Decode(&extra); {
-	case err == io.EOF:
+	switch err := dec.Decode(&extra); err {
+	case io.EOF:
 		return manifest, nil
-	case err == nil:
+	case nil:
 		return RulesManifestPayload{}, fmt.Errorf("%w: trailing data after the document", ErrMalformedDoc)
 	default:
 		return RulesManifestPayload{}, fmt.Errorf("%w: trailing data: %w", ErrMalformedDoc, err)

@@ -2,12 +2,14 @@
 # `unused` keeps the dead-export surface honest for production code; it is
 # excluded from _test.go files because guard and invariant tests deliberately
 # keep fixture helpers whose only readers are other test files.
+version: "2"
+
 run:
   timeout: 5m
   tests: true
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck      # error-swallowing
     - govet         # correctness / nil safety
@@ -16,11 +18,14 @@ linters:
     - nilnil
     - errorlint
     - unused        # dead production code, including unreferenced exports
+  exclusions:
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - unused
 
 issues:
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - unused
   max-issues-per-linter: 0
   max-same-issues: 0
