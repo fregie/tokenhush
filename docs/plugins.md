@@ -156,11 +156,13 @@ through `RegisterCompiled` and evaluate in the same order as everything else.
 Two constraints apply to remote packs specifically:
 
 - **The non-weakening floor.** A pack may add detections and tighten
-  sensitivity, but it may not disable a baseline detector, drop a required
-  category, or carry a rule with an `allow` action. The floor is
-  allowlist-neutral (OD-3): it does not inspect global or per-rule allowlists,
-  because a stricter floor would reject real signed packs and drop the client to
-  the built-ins.
+  sensitivity, but the floor rejects exactly four things: a pack that disables a
+  baseline detector, a pack that drops a required category, a rule carrying an
+  `allow` action, and a rule that sets the email `replace` flag (which would
+  narrow the built-in suffix set). Additive `email.suffixes` extend the built-in
+  set and remain allowed. The floor is allowlist-neutral (OD-3): it does not
+  inspect global or per-rule allowlists, because a stricter floor would reject
+  real signed packs and drop the client to the built-ins.
 - **The trust root.** A pack is only compiled after signature verification
   against the embedded rule trust root (`rules-2026-09`). A local operator
   document and a signed remote pack share the same strict decoder and compiler;

@@ -1,11 +1,12 @@
 package filter
 
 // floor_test.go pins OD-3 and the frozen floor behaviour: the floor rejects
-// exactly three things — a remote pack that disables a baseline detector, drops
-// a required category, or carries an `allow` action — and it is
-// allowlist-neutral, proven by a positive test so it cannot be "helpfully"
-// tightened later. The floor applies to remote packs only; local operator
-// switches are never inspected.
+// exactly four things — a remote pack that disables a baseline detector, drops
+// a required category, carries an `allow` action, or sets a rule's email
+// `replace` flag (an explicit contract amendment: additive suffixes extend the
+// built-in set, replace narrows it) — and it is allowlist-neutral, proven by a
+// positive test so it cannot be "helpfully" tightened later. The floor applies
+// to remote packs only; local operator switches are never inspected.
 
 import (
 	"errors"
@@ -102,6 +103,66 @@ func TestFloorAcceptsCompliantRemotePack(t *testing.T) {
 	}
 }
 
+// TestFloorRejectsEmailReplace is the fourth frozen rejection — an explicit
+// contract amendment, not legacy v0.4.x behaviour: a remote pack may not set a
+// rule's email `replace` flag, because that swaps the built-in suffix set for
+// the pack's own and narrows what the email detector can ever match. Additive
+// suffixes only extend the set and stay allowed. The rejection names the
+// offending rule id.
+func TestFloorRejectsEmailReplace(t *testing.T) {
+	doc := remotePack(t, `{"serial": 7, "key_id": "rules-2026a", "rules": [
+		{"id": "corp-email", "type": "email", "action": "redact", "options": {"email": {"suffixes": ["corp.com"], "replace": true}}}
+	]}`)
+	assertFloorRejection(t, DefaultFloorBaseline().Check(doc), ErrFloorNarrowsEmail, "corp-email")
+
+	// The three legacy rejections keep their precedence: a pack that both
+	// disables a detector and narrows email still reports the detector first,
+	// so a pack v0.4.x already rejected keeps the same diagnosis. The new
+	// check only adds a rejection; it never masks one.
+	t.Run("detector rejection keeps priority", func(t *testing.T) {
+		doc := remotePack(t, `{"serial": 7, "key_id": "rules-2026a", "detectors": {"email": false}, "rules": [
+			{"id": "corp-email", "type": "email", "action": "redact", "options": {"email": {"replace": true}}}
+		]}`)
+		assertFloorRejection(t, DefaultFloorBaseline().Check(doc), ErrFloorDisablesDetector, DetectorEmail)
+	})
+}
+
+// TestFloorAllowsAdditiveSuffixes is the floor's positive control for the
+// amendment: a remote pack whose email rule declares additively is accepted,
+// and the effective suffix set must still be a superset of the built-in table —
+// the floor permits the extension WITHOUT weakening the built-ins. The second
+// rule carries an options object without an email sub-object, so the nil guard
+// on Options and Email is exercised rather than assumed.
+func TestFloorAllowsAdditiveSuffixes(t *testing.T) {
+	doc := remotePack(t, `{"serial": 7, "key_id": "rules-2026a", "rules": [
+		{"id": "corp-email", "type": "email", "action": "redact", "options": {"email": {"suffixes": ["corp.com"]}}},
+		{"id": "ticket", "type": "keyword", "keywords": ["PROJ-"], "action": "warn", "options": {}}
+	]}`)
+	if err := DefaultFloorBaseline().Check(doc); err != nil {
+		t.Fatalf("Check() rejected additive email suffixes: %v (a pack may extend the built-in suffix set)", err)
+	}
+	if doc.Rules[0].Options == nil || doc.Rules[0].Options.Email == nil {
+		t.Fatalf("fixture lost its email options: %+v", doc.Rules[0])
+	}
+	if doc.Rules[1].Options == nil || doc.Rules[1].Options.Email != nil {
+		t.Fatalf("fixture lost its options object without an email sub-object: %+v", doc.Rules[1])
+	}
+	effective, err := effectiveEmailSuffixes(doc.Rules[0].Options.Email)
+	if err != nil {
+		t.Fatalf("effectiveEmailSuffixes() error = %v", err)
+	}
+	builtins := BuiltinEmailSuffixes()
+	for _, suffix := range builtins {
+		if !slices.Contains(effective, suffix) {
+			t.Errorf("additive effective suffix set lost built-in %q", suffix)
+		}
+	}
+	if !slices.Contains(effective, ".corp.com") {
+		t.Errorf("additive effective suffix set %v is missing the declared canonical suffix .corp.com", effective)
+	}
+	t.Logf("accepted: effective suffix set = %d entries, superset of the %d built-ins plus .corp.com", len(effective), len(builtins))
+}
+
 // TestFloorBaselineIsAllSix pins the baseline: all six detector ids and all six
 // categories, regardless of the runtime default that leaves entropy off.
 func TestFloorBaselineIsAllSix(t *testing.T) {
@@ -130,11 +191,12 @@ func TestFloorBaselineIsAllSix(t *testing.T) {
 }
 
 // TestFloorAppliesToRemotePacksOnly pins the scope: a local operator document
-// that violates every floor rule is not floor-rejected, because local switches
-// stay the operator's choice.
+// that violates every floor rule — including the amended email-replace one — is
+// not floor-rejected, because local switches stay the operator's choice.
 func TestFloorAppliesToRemotePacksOnly(t *testing.T) {
 	body := `{"detectors": {"prefix": false}, "disabled_categories": ["credit_card"], "rules": [
-		{"id": "local-allow", "type": "keyword", "keywords": ["x"], "action": "allow"}
+		{"id": "local-allow", "type": "keyword", "keywords": ["x"], "action": "allow"},
+		{"id": "local-email", "type": "email", "action": "redact", "options": {"email": {"replace": true}}}
 	]}`
 	doc, err := DecodeDocument([]byte(body))
 	if err != nil {
@@ -142,6 +204,11 @@ func TestFloorAppliesToRemotePacksOnly(t *testing.T) {
 	}
 	if doc.RemotePack {
 		t.Fatalf("fixture decoded as a remote pack, want a local document")
+	}
+	// The local document must really carry the narrowing email option, or its
+	// acceptance proves nothing about the fourth rejection's remote-only scope.
+	if len(doc.Rules) != 2 || doc.Rules[1].Options == nil || doc.Rules[1].Options.Email == nil || !doc.Rules[1].Options.Email.Replace {
+		t.Fatalf("fixture lost its local email replace rule: %+v", doc.Rules)
 	}
 	if err := DefaultFloorBaseline().Check(doc); err != nil {
 		t.Fatalf("floor rejected a local operator document: %v", err)

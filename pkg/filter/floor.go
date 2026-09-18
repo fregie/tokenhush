@@ -6,10 +6,13 @@ package filter
 // `detectors:` switches in tokenhush.yaml — is the operator's own choice and is
 // deliberately out of scope: the floor never reads, alters or depends on it.
 //
-// The floor rejects exactly three things, matching the legacy client so a pack
-// the v0.4.x client accepted is not rejected here: a pack that disables a
-// baseline detector, a pack that drops a required category, and a rule
-// carrying an `allow` action. It is ALLOWLIST-NEUTRAL: it does not inspect
+// The floor rejects exactly four things: the three the legacy client already
+// rejected — a pack that disables a baseline detector, a pack that drops a
+// required category, and a rule carrying an `allow` action — plus one explicit
+// contract amendment: a rule whose email options set Replace. Additive email
+// suffixes only EXTEND the built-in set, but Replace swaps it out, so a pack
+// could silently refuse to detect the addresses the built-ins cover while still
+// passing the other checks. It is ALLOWLIST-NEUTRAL: it does not inspect
 // global or per-rule allowlists. The frozen canary `rules-pack-rich` itself
 // carries both, so a stricter floor would reject real packs, drop the client to
 // built-ins and leave it weaker than the client it replaces. Making this check
@@ -21,7 +24,7 @@ import (
 	"slices"
 )
 
-// Floor sentinels. ErrFloor classifies every floor rejection; the three
+// Floor sentinels. ErrFloor classifies every floor rejection; the four
 // wrapped kinds are the frozen floor contract surfaced to plugin authors and
 // pinned by pkg/filter/floor_test.go and pkg/supply/rules_test.go.
 // specific sentinels each wrap it, so errors.Is branches on either granularity.
@@ -30,12 +33,14 @@ var (
 	ErrFloorDisablesDetector = fmt.Errorf("%w: remote pack may not disable a built-in detector", ErrFloor)
 	ErrFloorRemovesCategory  = fmt.Errorf("%w: remote pack may not remove a required category", ErrFloor)
 	ErrFloorAutoAllow        = fmt.Errorf("%w: remote pack may not auto-allow", ErrFloor)
+	ErrFloorNarrowsEmail     = fmt.Errorf("%w: remote pack may not replace the built-in email suffix set", ErrFloor)
 )
 
 // FloorError is one floor rejection. Kind is the sentinel errors.Is matches —
-// ErrFloorDisablesDetector, ErrFloorRemovesCategory or ErrFloorAutoAllow — and
-// Item names the offending baseline detector id, baseline category, or the rule
-// id carrying the `allow` action.
+// ErrFloorDisablesDetector, ErrFloorRemovesCategory, ErrFloorAutoAllow or
+// ErrFloorNarrowsEmail — and Item names the offending baseline detector id,
+// baseline category, or the rule id (the rule carrying the `allow` action and
+// the rule whose email options replace the built-in suffix set).
 type FloorError struct {
 	Kind error
 	Item string
@@ -94,6 +99,17 @@ func (b FloorBaseline) Check(doc *Document) error {
 	for i := range doc.Rules {
 		if doc.Rules[i].Action == ActionAllow {
 			return &FloorError{Kind: ErrFloorAutoAllow, Item: doc.Rules[i].ID}
+		}
+	}
+	// Fourth rejection (explicit contract amendment): an email rule that sets
+	// Replace swaps the built-in suffix set for the pack's own. It is checked
+	// last on purpose, so the three legacy rejections keep their existing
+	// precedence and a pack the v0.4.x client already rejected still reports
+	// the same reason. Additive suffixes stay allowed: they only extend the
+	// built-in set (see the floor header comment).
+	for i := range doc.Rules {
+		if doc.Rules[i].Options != nil && doc.Rules[i].Options.Email != nil && doc.Rules[i].Options.Email.Replace {
+			return &FloorError{Kind: ErrFloorNarrowsEmail, Item: doc.Rules[i].ID}
 		}
 	}
 	return nil
