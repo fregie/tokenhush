@@ -184,11 +184,11 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 	if !json.Valid(value) {
 		return false, nil
 	}
+	s.handoffWriter()
 	leaves, err := protocol.Walk(value)
 	if err != nil || !hasIdentifiableLeaf(leaves) {
 		return false, nil
 	}
-	s.handoffWriter()
 
 	if len(s.carry) == 0 {
 		content := s.withinLeafContent(value, leaves)
@@ -250,7 +250,7 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 
 	content := s.withinLeafContent(value, leaves)
 	if (placeholderMatcher{}).PrefixLen(combined) != len(combined) ||
-		len(combined) > maxPlaceholderLen || !s.fitsBudget(len(ev.Raw)+len(content)) {
+		len(combined) > maxPlaceholderLen || !s.fitsBudget(len(ev.Raw)+len(content)+len(match.Value)) {
 		out = s.flushHeld()
 		s.emitSegment(seg, content, nil)
 		return true, append(out, s.drain()...)

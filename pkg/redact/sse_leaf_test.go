@@ -1011,3 +1011,39 @@ func TestSSEBackfillAbortResetsCarry(t *testing.T) {
 		t.Fatalf("Flush() after abort = %q, want empty", out)
 	}
 }
+
+// TestSSEBackfillRawPrefixDoesNotLeakIntoLeafLessJSON pins D2's writer handoff
+// for a VALID-JSON event that falls back to the raw path because it carries NO
+// identifiable string leaf (`{"a":1,"b":true,"c":null}`). The preceding raw
+// event leaves the single writer holding a partial placeholder tail; that
+// handoff must happen BEFORE the JSON event is processed, even though the event
+// is then handled by the raw writer. Otherwise the held tail is fed together
+// with the JSON value and the event ships as `__PII_api_{"a":1}`: invalid JSON
+// and a leaked fragment. Every input byte must leave literally, exactly once,
+// in order.
+func TestSSEBackfillRawPrefixDoesNotLeakIntoLeafLessJSON(t *testing.T) {
+	back, _ := mintRestorable(t, ossKeySecret, "api_key")
+
+	in := sseRecord("delta", "PREFIX-__PII_api_") +
+		sseRecord("delta", `{"a":1,"b":true,"c":null}`)
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
+
+	if !bytes.Equal(out, []byte(in)) {
+		t.Fatalf("raw prefix leaked into a leaf-less JSON event:\n got %q\nwant byte-identical %q", out, in)
+	}
+
+	events := decodeStream(t, out)
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want exactly 2", len(events))
+	}
+	if !json.Valid(events[1].Data) {
+		t.Fatalf("event 2 data is not valid JSON: %q", events[1].Data)
+	}
+	if bytes.Contains(events[1].Data, []byte("__PII_")) {
+		t.Fatalf("raw held prefix leaked into the JSON event: %q", events[1].Data)
+	}
+	concat := string(events[0].Data) + string(events[1].Data)
+	if got := strings.Count(concat, "__PII_api_"); got != 1 {
+		t.Fatalf("raw fragment occurrences = %d, want exactly 1 in %q", got, concat)
+	}
+}
