@@ -181,7 +181,23 @@ At runtime the pieces line up like this:
    depth (exactly the spelling the client sent), so a multi-line or
    quote-bearing secret cannot corrupt the client's JSON. A raw stream fragment
    or a non-JSON body keeps the raw spelling, and a foreign placeholder is
-   returned byte-identical.
+   returned byte-identical. A placeholder content-split across
+   **complete-JSON-envelope** `data:` events is restored exactly once: while the
+   token is unresolved, the contributing segments of the affected channel are
+   held and not yet sent, and once it resolves (typically the next 1-2 events)
+   each held segment's edits are applied once against its **own original
+   bytes**, the contributing fragment deleted and the completing leaf carrying
+   the secret, so every emitted envelope stays valid JSON. The joint
+   **256 KiB** budget (`protocol.SSEBackfillHoldbackBytes`; the writer tail plus
+   the unresolved carry plus the held segments) bounds the held memory, and when
+   it would be exceeded the held segments are released **literally,
+   un-restored** as the stream keeps progressing. That added delay is confined
+   to the **affected channel**, while all other traffic streams unchanged:
+   correctness (never emit a partial placeholder) and bounded memory are
+   preferred over zero added latency for that channel. A **torn inner-JSON
+   origin** (not `Encoded`, not valid JSON, opening `{` or `[`) whose secret
+   needs JSON escaping keeps the **placeholder** rather than corrupting the
+   client's nested document, the residual recorded in `docs/security.md` R6.
 6. **The control surface is exactly `GET /status`.** It is metadata only, it
    requires the session bearer token, and the data plane and the control surface
    are separate mux patterns.
