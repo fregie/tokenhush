@@ -166,6 +166,14 @@ type SSEBackfiller struct {
 	segments []sseSegment
 	tail     []byte
 	closed   bool
+
+	// Hold-until-resolution leaf channel state: the unresolved placeholder
+	// prefix, the identity of the leaf it continues, the queue index and span
+	// of each held contributor, and the joint byte count of held segments.
+	carry      []byte
+	carryKey   string
+	carryParts []carryPart
+	heldBytes  int
 }
 
 // sseSegment is one decoded event's exact bytes plus, for an event with exactly
@@ -175,6 +183,10 @@ type sseSegment struct {
 	span    protocol.Span
 	content []byte
 	hasSpan bool
+	// leaf marks a segment processed by the hold-until-resolution leaf path;
+	// extraEdits accumulates edits relative to the ORIGINAL data value.
+	leaf       bool
+	extraEdits []protocol.Edit
 }
 
 // bytes renders the segment's client-bound bytes: the record verbatim, with its
@@ -273,14 +285,22 @@ func (s *SSEBackfiller) accept(ev protocol.Event) []byte {
 	seg := sseSegment{raw: ev.Raw}
 	if len(ev.DataSpans) == 1 {
 		seg.hasSpan, seg.span = true, ev.DataSpans[0]
-		value := seg.raw[seg.span.Start:seg.span.End]
+		if handled, out := s.acceptLeaf(ev, seg); handled {
+			return out
+		}
+		out := s.flushHeld()
+		value := segmentValue(seg)
 		s.spellFeed(value)
 		seg.content = s.writer.Feed(value)
+		s.segments = append(s.segments, seg)
+		if seg.hasSpan {
+			out = append(out, s.release(len(s.segments)-1)...)
+		} else if s.pendingIndex() < 0 {
+			out = append(out, s.release(len(s.segments))...)
+		}
+		return out
 	}
 	s.segments = append(s.segments, seg)
-	if seg.hasSpan {
-		return s.release(len(s.segments) - 1)
-	}
 	if s.pendingIndex() >= 0 {
 		return nil
 	}
