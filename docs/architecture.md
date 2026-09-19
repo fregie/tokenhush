@@ -182,7 +182,8 @@ At runtime the pieces line up like this:
    quote-bearing secret cannot corrupt the client's JSON. A raw stream fragment
    or a non-JSON body keeps the raw spelling, and a foreign placeholder is
    returned byte-identical. A placeholder content-split across
-   **complete-JSON-envelope** `data:` events is restored exactly once: while the
+   **consecutive complete-JSON-envelope** `data:` events at the **same channel
+   identity** is restored exactly once: while the
    token is unresolved, the contributing segments of the affected channel are
    held and not yet sent, and once it resolves (typically the next 1-2 events)
    each held segment's edits are applied once against its **own original
@@ -197,7 +198,10 @@ At runtime the pieces line up like this:
    preferred over zero added latency for that channel. A **torn inner-JSON
    origin** (not `Encoded`, not valid JSON, opening `{` or `[`) whose secret
    needs JSON escaping keeps the **placeholder** rather than corrupting the
-   client's nested document, the residual recorded in `docs/security.md` R6.
+   client's nested document, the residual recorded in `docs/security.md` R6. An
+   event of a non-matching channel that interleaves between the halves releases
+   the held segments **unchanged**, so such a split is delivered literally and
+   is **not** restored.
 6. **The control surface is exactly `GET /status`.** It is metadata only, it
    requires the session bearer token, and the data plane and the control surface
    are separate mux patterns.
