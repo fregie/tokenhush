@@ -124,7 +124,7 @@ SSE 流上响应作用域的 `Block` 无法撤回已经发出的增量：决策�
 | R3 | A signed remote pack may weaken detection through its own allowlist（签名远程包可能通过自身 allowlist 弱化检测） | 签名远程包可能通过其全局或每条规则的 allowlist 压制匹配：按 OD-3，非弱化 floor 对 allowlist 保持中立、不检查 allowlist；规则签名密钥 `rules-2026-09` 仍是信任根。 | 已记录并接受 |
 | R4 | The OD-2 command-rule rejection is dormant and the v2 manifest bump is backward-incompatible（OD-2 command 规则拒绝处于休眠，v2 manifest 升级不向后兼容） | OD-2 的 `command` 规则拒绝保持休眠，直到 OD-4 闸门打开；闸门只在规则 manifest `schema_version` 达到 2 时打开；该升级与钉住 `== 1` 的客户端不兼容，因此后端必须继续提供 v1 manifest，直到旧版本线退出支持。 | 已记录并接受 |
 | R5 | Response-path bodies are not capped by scan_budget_bytes（响应路径 body 不受 scan_budget_bytes 上限约束） | 响应 body 不受请求侧 `scan_budget_bytes` 闸门限制，而响应作用域的原始检测器仍最多扫描每原始检测器 `budget`：超过该预算的响应叶会被截断，且没有 stderr 报告、没有计数器，因此响应作用域检测可能漏掉预算之外的内容。预算报告有意只存在于请求路径，且不移动任何状态键。 | 已记录并接受 |
-| R6 | A placeholder split across two SSE JSON-envelope `data:` events is not restored at the enclosing depth（跨两个 SSE JSON 信封 `data:` 事件拆分的占位符未按外层深度还原） | 当 JSON 信封流把占位符或信封自身拆到两个 `data:` 值里时，都无法按外层 JSON 深度还原。上游把 JSON 文档沿拆分点撕开时，占位符字节保持连续，有界重组器仍能补全 token，但补全后的值不是 JSON 文档，因此 secret 以原始拼写被拼接——带引号、反斜杠或控制字节的 secret 会以原始形态落在信封片段中。当每个事件本身是完整信封、占位符在内容层被拆分时，两半之间的信封字节意味着 token 永远无法补全，占位符片段会以未替换状态到达客户端。原始片段拆分（raw-fragment split）已处理：没有信封字节介入时，有界重组器会把跨连续 data 增量补全的 token 按原始拼写还原，且字节一致。 | 已记录并接受 |
+| R6 | A placeholder split across SSE JSON-envelope `data:` events is only partially restored（跨 SSE JSON 信封 `data:` 事件拆分的占位符仅部分还原） | 占位符在**完整 JSON 信封**的 `data:` 事件之间做内容层拆分时，现在会被精确还原一次，`choices[].delta.content` 通道与 `tool_calls[].function.arguments` 通道皆然：每个贡献事件只从自身事件字节里删除自己的片段，且每个发出的信封仍是独立合法的 JSON；匹配在**解码域**进行，因此像 `__PII_\u0061pi_key_…__` 这样的转义拼写也会被接受并还原。剩余边界：当上游把 JSON 文档本身撕开时，token 仍能跨拆分补全，但只有**原始拼写**可知，带引号、反斜杠或控制字节的 secret 会以原始形态落在信封片段中；而当**起始叶**是撕裂的内层 JSON 片段（非 `Encoded`、非法 JSON、以 `{` 或 `[` 开头）、其 secret 又需要 JSON 转义时，会刻意**保留**占位符，而不是破坏客户端嵌套文档。无匹配的 JSON 事件流（包括其值以不完整的 `__PII_` 前缀收尾者）**字节完全一致**，拆分的异源占位符同样字节一致，且绝不会被捏造成 secret。延迟契约（所有者决策 D13）：token 未解析期间，**仅受影响通道**的贡献分段被扣留、不发送给客户端，直到 token 解析（通常是接下来 1-2 个事件）或联合 **256 KiB** 预算触发，届时被扣留的分段按字面释放、不还原；延迟局限于受影响通道，其余流量照常流动，因为对该通道而言，正确性（绝不发出不完整占位符）与有界内存优先于零新增延迟。同一时刻**只有一个** carry 生效；通道身份 = RFC 6901 路径 + 每个外层 frame 的前置非字符串标量成员 + 该叶在同路径叶中的 0 基出现序号，因此**省略**判别性标量（或在该叶之后才发出该标量）的事件不在身份之内、不会匹配；比内层更深一层的撕裂嵌套、且 secret 需要转义时，仍是残余。 | 部分关闭；剩余项已记录并接受 |
 | R7 | The opt-in `high_entropy` detector replaces legitimate base64 payloads（按需启用的 `high_entropy` 检测器会替换合法 base64 载荷） | `entropy` 默认关闭，因为合法的高熵载荷与 secret 在构造上无法区分：设置 `detectors: {entropy: true}` 后，OpenAI `image_url` 片段或 Anthropic `image` 内容块里约 2.7 KB 的 base64 图片会在请求抵达上游之前被替换成单个占位符，因此模型看不到该图片——客户端仍会通过回填收到它，但上游载荷已被替换。仅对不携带图片、data URL 或长随机标识符的工作负载启用它，或者接受这次替换。纯 hex 串仍被排除，因此 hex 摘要不受影响。 | 已记录并接受 |
 
 每项为何保持现状：
@@ -146,13 +146,17 @@ SSE 流上响应作用域的 `Block` 无法撤回已经发出的增量：决策�
   （一次没有请求侧对应物的产品变更），要么新增响应路径预算报告（一种本次重写拒绝的
   新可观察表面）。响应作用域检测器受同一每原始检测器预算约束，该边界被记录而不是
   被隐藏。
-- **R6——信封拆分是上游的选择。** 事件值在文档中途被拆分的 JSON 信封流，任何客户端
-  本就无法逐事件解析，因此没有可保留的逐事件 JSON 文档；有界重组器仍会跨拆分补全
-  token，并使用原始拼写。原始片段流按契约就不是 JSON，同样保持原始拼写且字节不变。
-  缓冲 body 与未被拆分的 JSON 信封继续使用深度感知、保持合法 JSON 的还原。当信封
-  自身被撕开时，token 能补全，但只有原始拼写可知；当信封完整、占位符在内容层被拆分
-  时，token 根本无法补全。两者都是上游选择的分帧方式，且都不会向第三方隐藏 secret：
-  客户端才是预期的接收方。
+- **R6——信封拆分是上游的选择；完整信封内容拆分现已关闭。** 事件值在文档中途被拆分的
+  JSON 信封流，任何客户端本就无法逐事件解析，因此没有可保留的逐事件 JSON 文档；有界
+  重组器仍会跨拆分补全 token，但只有原始拼写可知，带引号、反斜杠或控制字节的 secret
+  会以原始形态落在信封片段中。撕裂的内层 JSON 起始叶、其 secret 又需要 JSON 转义，是
+  第二项残余：会有意保留占位符，而不是破坏客户端嵌套文档。当每个事件都是完整 JSON
+  信封时，内容层拆分的占位符会被精确还原一次，涉及 `content` 与
+  `tool_calls[].function.arguments` 通道，匹配在解码域进行，因此转义拼写也会被接受；
+  无匹配流与拆分的异源占位符保持字节一致。延迟契约（D13）是这份正确性刻意付出的代价：
+  受影响通道的贡献分段被扣留，直到 token 解析或联合 `256 KiB` 预算触发，随后按字面
+  释放、不还原。缓冲 body 与未被拆分的 JSON 信封继续使用深度感知、保持合法 JSON 的
+  还原。两项残余都不会向第三方隐藏 secret：客户端才是预期的接收方。
 - **R7——entropy 默认关闭是有原因的。** 高熵并不是 secret 的证据：一张图片、一个
   data URL 或一个随机标识符看起来与 secret 一模一样。因此该检测器默认关闭，它对
   合法 base64 载荷所做的替换被记录在此，而不是被隐藏。从不携带此类载荷的工作负载
