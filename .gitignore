@@ -8,3 +8,4 @@
 # Local tooling state — never committed
 .omo/
 .codegraph
+cloudflare_token.txt

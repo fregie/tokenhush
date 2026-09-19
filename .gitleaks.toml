@@ -8,6 +8,7 @@ useDefault = true
 description = "synthetic credential fixtures, local plan state, the placeholder grammar and synthetic test constants are never real credentials"
 paths = [
   '''testdata/''',
+  '''rules/''',
   '''\.omo/''',
   '''internal/cli/agent_scenarios_cases_test\.go''',
   '''internal/cli/redact_request_test\.go''',
