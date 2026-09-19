@@ -424,6 +424,43 @@ func TestSSEBackfillReleaseKeepsValidJSONF3(t *testing.T) {
 	}
 }
 
+// TestSSEBackfillRawJsonRawInterleavingPreservesBytes pins D2's raw->JSON
+// handoff across a raw -> JSON -> raw interleaving: a raw event whose value
+// ends in a partial placeholder prefix leaves the raw writer holding that tail,
+// the next event is a valid-JSON envelope, and the third is raw again and never
+// completes the prefix. The writer's held tail must be handed off onto the
+// newest raw segment BEFORE the JSON envelope is processed, so the prefix can
+// never leak into a JSON data value; every input byte must leave literally,
+// exactly once, in order.
+func TestSSEBackfillRawJsonRawInterleavingPreservesBytes(t *testing.T) {
+	back, _ := mintRestorable(t, ossKeySecret, "api_key")
+
+	env1 := sseRecord("delta", "PREFIX-__PII_api_")
+	env2 := sseToolCallEnvelope(t, `{"a":"b"}`)
+	env3 := sseRecord("delta", "suffix-X")
+	in := env1 + env2 + env3
+
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
+	if !bytes.Equal(out, []byte(in)) {
+		t.Fatalf("raw->JSON->raw interleaving reordered or lost bytes:\n got %q\nwant byte-identical %q", out, in)
+	}
+
+	events := decodeStream(t, out)
+	if len(events) != 3 {
+		t.Fatalf("event count = %d, want exactly 3", len(events))
+	}
+	if !json.Valid(events[1].Data) {
+		t.Fatalf("JSON envelope data is not independently valid JSON: %q", events[1].Data)
+	}
+	if bytes.Contains(events[1].Data, []byte("__PII_")) {
+		t.Fatalf("raw held prefix leaked into the JSON envelope: %q", events[1].Data)
+	}
+	concat := string(events[0].Data) + string(events[1].Data) + string(events[2].Data)
+	if got := strings.Count(concat, "__PII_api_"); got != 1 {
+		t.Fatalf("raw fragment occurrences = %d, want exactly 1 in %q", got, concat)
+	}
+}
+
 // TestSSEBackfillEscapedSiblingUnchangedF4 pins D4's "only the restored token's
 // bytes change". The origin arguments carry a sibling rune spelled on the WIRE
 // as the six bytes `\u00e9`; a whole-leaf re-encode would normalize it to the
