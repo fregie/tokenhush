@@ -193,7 +193,7 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 	if len(s.carry) == 0 {
 		content := s.withinLeafContent(value, leaves)
 		p, leaf, ok := trailingPrefix(leaves)
-		if ok && s.fitsBudget(len(ev.Raw)+len(content)) {
+		if ok && s.fitsBudget(len(ev.Raw)+len(content)+len(p)) {
 			out = s.release(len(s.segments))
 			cur := s.holdSegment(seg, content, nil)
 			s.carry, s.carryKey = p, leaf.Identity
@@ -209,7 +209,7 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 		out = s.flushHeld()
 		content := s.withinLeafContent(value, leaves)
 		p, leaf, pok := trailingPrefix(leaves)
-		if pok && s.fitsBudget(len(ev.Raw)+len(content)) {
+		if pok && s.fitsBudget(len(ev.Raw)+len(content)+len(p)) {
 			cur := s.holdSegment(seg, content, nil)
 			s.carry, s.carryKey = p, leaf.Identity
 			s.carryParts = []carryPart{{seg: cur, leaf: leaf, decodedStart: len(leaf.Value) - len(p), decodedEnd: len(leaf.Value)}}
@@ -238,7 +238,7 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 		extra := []protocol.Edit{{Leaf: match, Start: 0, End: k, Replacement: spelled}}
 		matchContent := s.contentWith(value, leaves, extra)
 		p2, leaf2, pok := trailingPrefixAfter(leaves, match, k)
-		if pok && s.fitsBudget(len(ev.Raw)+len(matchContent)) {
+		if pok && s.fitsBudget(len(ev.Raw)+len(matchContent)+len(p2)) {
 			cur := s.holdSegment(seg, matchContent, extra)
 			s.carry, s.carryKey = p2, leaf2.Identity
 			s.carryParts = []carryPart{{seg: cur, leaf: leaf2, decodedStart: len(leaf2.Value) - len(p2), decodedEnd: len(leaf2.Value)}}

@@ -879,6 +879,52 @@ func TestSSEBackfillerHoldsAreBounded(t *testing.T) {
 	}
 }
 
+// TestSSEBackfillerOriginHoldStaysWithinBound pins D9 at the branch that
+// ESTABLISHES a carry: the budget check must count the prefix the branch is
+// about to install, because Held() counts both the held segment's content
+// (which already contains that prefix) and len(carry) again. The inert pad is
+// sized from the production constant so len(env)+len(value) lands just under
+// the cap yet within len(p) of it: the pre-fix check admits a hold whose Held()
+// overshoots the cap by len(p). After the fix the hold is rejected, every byte
+// is released literally in order, and no secret is fabricated.
+func TestSSEBackfillerOriginHoldStaysWithinBound(t *testing.T) {
+	back, _ := mintRestorable(t, ossKeySecret, "api_key")
+	b := NewSSEBackfiller(back, nil)
+
+	const content = "hold __PII_ap"
+	p := content[strings.Index(content, placeholderPrefix):]
+
+	// len(env)+len(value) must equal cap-max(1,len(p)/2): <= cap, yet within
+	// len(p) of it. Each pad byte lengthens env and value by exactly one, so
+	// solve the pad length from an empty-pad baseline.
+	target := protocol.SSEBackfillHoldbackBytes - max(1, len(p)/2)
+	base := sseJSONEnvelopeWithPad(t, "", content)
+	baseValue := base[len("data: ") : len(base)-len("\n\n")]
+	pad := strings.Repeat("x", (target-(len(base)+len(baseValue)))/2)
+	env := sseJSONEnvelopeWithPad(t, pad, content)
+	value := env[len("data: ") : len(env)-len("\n\n")]
+	if got := len(env) + len(value); got != target {
+		t.Fatalf("envelope sizing: len(env)+len(value) = %d, want %d", got, target)
+	}
+	if target <= protocol.SSEBackfillHoldbackBytes-len(p) {
+		t.Fatalf("sizing is not inside the overshoot window: %d <= %d", target, protocol.SSEBackfillHoldbackBytes-len(p))
+	}
+
+	out := b.Write([]byte(env))
+	h := b.Held()
+	t.Logf("Held() = %d, cap = %d, len(p) = %d", h, protocol.SSEBackfillHoldbackBytes, len(p))
+	if h > protocol.SSEBackfillHoldbackBytes {
+		t.Fatalf("Held() = %d, want <= %d", h, protocol.SSEBackfillHoldbackBytes)
+	}
+	out = append(out, b.Flush()...)
+	if !bytes.Equal(out, []byte(env)) {
+		t.Fatalf("rejected hold did not release literally:\n got %q\nwant %q", out, env)
+	}
+	if bytes.Contains(out, ossKeySecret) {
+		t.Fatalf("rejected hold fabricated a secret: %q", out)
+	}
+}
+
 // sseEncodedContentEnvelope renders one SSE record whose data value carries a
 // `content` string that is ITSELF a JSON document with a `content` string.
 // Walk therefore yields the inner `content` leaf with Encoded=true, so a
