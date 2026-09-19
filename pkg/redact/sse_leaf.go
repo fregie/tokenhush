@@ -17,6 +17,38 @@ type carryPart struct {
 	decodedStart, decodedEnd int
 }
 
+// firstNonSpace returns the first non-whitespace byte of b, or 0.
+func firstNonSpace(b []byte) byte {
+	for _, c := range b {
+		switch c {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			return c
+		}
+	}
+	return 0
+}
+
+// originTornInner reports whether l is a torn inner-JSON fragment: not reached
+// by decoding a JSON-encoded string, not valid JSON itself, and opening an
+// object or array (so restoring an escape-needing secret into it would corrupt
+// the client's nested document).
+func originTornInner(l protocol.Leaf) bool {
+	if l.Encoded || json.Valid(l.Value) {
+		return false
+	}
+	c := firstNonSpace(l.Value)
+	return c == '{' || c == '['
+}
+
+// keepPlaceholder reports whether a completing secret must be left as the
+// placeholder: the origin is a torn inner-JSON fragment AND the secret's JSON
+// spelling differs from its raw bytes (it needs escaping).
+func keepPlaceholder(origin protocol.Leaf, secret []byte) bool {
+	return originTornInner(origin) && !bytes.Equal(protocol.EscapeJSONString(secret), secret)
+}
+
 // contentWith applies the leaf-token restores plus any accumulated extra edits
 // to V. It returns V unchanged when no edit changes a byte.
 func (s *SSEBackfiller) contentWith(V []byte, leaves []protocol.Leaf, extra []protocol.Edit) []byte {
@@ -191,7 +223,8 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 	t := (placeholderMatcher{}).TokenLen(combined)
 	if t > len(s.carry) {
 		secret := s.restorer.Backfill(combined[:t])
-		if bytes.Equal(secret, combined[:t]) {
+		origin := s.carryParts[0].leaf
+		if bytes.Equal(secret, combined[:t]) || keepPlaceholder(origin, secret) {
 			out = s.flushHeld()
 			s.emitSegment(seg, s.withinLeafContent(value, leaves), nil)
 			return true, append(out, s.drain()...)

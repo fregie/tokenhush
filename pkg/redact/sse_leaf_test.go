@@ -841,3 +841,96 @@ func TestSSEBackfillerHoldsAreBounded(t *testing.T) {
 		t.Fatalf("bounded hold fabricated a secret: %q", out)
 	}
 }
+
+// sseEncodedContentEnvelope renders one SSE record whose data value carries a
+// `content` string that is ITSELF a JSON document with a `content` string.
+// Walk therefore yields the inner `content` leaf with Encoded=true, so a
+// restore into it must re-spell the secret through BOTH enclosing JSON string
+// wrappers (D4).
+func sseEncodedContentEnvelope(t *testing.T, inner string) string {
+	t.Helper()
+	nested, err := json.Marshal(map[string]any{"content": inner})
+	if err != nil {
+		t.Fatalf("marshal nested content: %v", err)
+	}
+	doc, err := json.Marshal(map[string]any{
+		"choices": []any{
+			map[string]any{"delta": map[string]string{"content": string(nested)}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal encoded envelope: %v", err)
+	}
+	return "data: " + string(doc) + "\n\n"
+}
+
+// encodedEnvelopeContent decodes one SSE data value two levels: the outer
+// choices[0].delta.content string, then the `content` string inside it.
+func encodedEnvelopeContent(t *testing.T, data []byte) string {
+	t.Helper()
+	var outer struct {
+		Choices []struct {
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &outer); err != nil {
+		t.Fatalf("unmarshal outer envelope: %v", err)
+	}
+	if len(outer.Choices) == 0 {
+		t.Fatalf("outer envelope has no choices: %q", data)
+	}
+	nested := []byte(outer.Choices[0].Delta.Content)
+	var inner struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal(nested, &inner); err != nil {
+		t.Fatalf("unmarshal nested content %q: %v", nested, err)
+	}
+	return inner.Content
+}
+
+// TestSSEBackfillEncodedCrossLeafSplitRestores pins D4: a placeholder is split
+// across TWO complete JSON envelopes whose target leaf is reached via an
+// Encoded=true nested JSON string, so RawSpelling must escape the PEM secret
+// through both enclosing wrappers. The secret restores exactly once, no
+// `__PII_` remains, every emitted envelope is valid JSON, and the concatenated
+// decoded inner content equals the original text.
+func TestSSEBackfillEncodedCrossLeafSplitRestores(t *testing.T) {
+	back, p := mintRestorable(t, pemSecret, "private_key")
+	if len(p) <= 8 {
+		t.Fatalf("placeholder %q is too short to content-split", p)
+	}
+
+	const (
+		k      = 8
+		pre    = "BUCKET-"
+		suffix = " END"
+	)
+	in := sseEncodedContentEnvelope(t, pre+p[:k]) +
+		sseEncodedContentEnvelope(t, p[k:]+suffix)
+	out := NewSSEBackfiller(back, nil).process([]byte(in))
+
+	if bytes.Contains(out, []byte(placeholderPrefix)) {
+		t.Fatalf("placeholder prefix survived: %q", out)
+	}
+
+	events := decodeStream(t, out)
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	for i, ev := range events {
+		if !json.Valid(ev.Data) {
+			t.Fatalf("event %d data is not valid JSON: %q", i, ev.Data)
+		}
+	}
+	c1 := encodedEnvelopeContent(t, events[0].Data)
+	c2 := encodedEnvelopeContent(t, events[1].Data)
+	if got, want := c1+c2, pre+string(pemSecret)+suffix; got != want {
+		t.Fatalf("concatenated decoded content = %q, want %q", got, want)
+	}
+	if got := strings.Count(c1+c2, string(pemSecret)); got != 1 {
+		t.Fatalf("restored secret occurrences = %d, want exactly 1 in %q", got, c1+c2)
+	}
+}
