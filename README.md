@@ -126,17 +126,10 @@ Tokenhush adds one checkpoint in front of the tool. It reads each request, repla
 
 ## 🔁 How it works
 
-```text
-your tool  ──▶  Tokenhush (127.0.0.1)  ──▶  your provider
-```
-
-```mermaid
-flowchart LR
-    A["AI coding tool"] -->|"request body"| B["Tokenhush 127.0.0.1"]
-    B -->|"placeholders"| C["Model provider"]
-    C -->|"response with placeholders"| B
-    B -->|"originals restored"| A
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="asset/how-it-works-dark.png">
+  <img alt="Tokenhush sits between the AI coding tool and the model provider. The tool sends real secrets; Tokenhush swaps each one for a session placeholder, so the provider receives placeholders only; on the way back Tokenhush restores the originals for the tool." src="asset/how-it-works.png">
+</picture>
 
 - **Outbound:** the gateway walks the JSON body, runs the enabled detectors, and turns each match into a session placeholder before forwarding upstream.
 - **Inbound:** placeholders this session minted are swapped back to the originals, and only your tool receives them. A foreign placeholder is returned unchanged.

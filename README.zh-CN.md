@@ -124,17 +124,10 @@ Tokenhush 在工具前面加一道检查点。它读取每个请求，替换掉�
 
 ## 🔁 工作原理
 
-```text
-你的工具  ──▶  Tokenhush (127.0.0.1)  ──▶  你的厂商
-```
-
-```mermaid
-flowchart LR
-    A["AI 编程工具"] -->|HTTP 请求| B["Tokenhush 网关<br/>127.0.0.1 回环"]
-    B -->|脱敏后的请求| C["云端模型"]
-    C -->|带占位符的响应| B
-    B -->|带原值的响应| A
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="asset/how-it-works-dark.zh-CN.png">
+  <img alt="Tokenhush 位于 AI 编程工具与模型厂商之间：工具发出真实密钥，Tokenhush 把每个密钥换成会话占位符后转发，厂商只会收到占位符；响应回程再由 Tokenhush 还原原值。" src="asset/how-it-works.zh-CN.png">
+</picture>
 
 - **出站：** 网关遍历 JSON body，运行已启用的检测器（默认开启五个，`entropy` 需显式开启），把每个匹配变成会话占位符，再转发给上游。
 - **回程：** 占位符被换回原值，只有你的工具会拿到它们。
