@@ -18,6 +18,31 @@ func FuzzWalk(f *testing.F) {
 		if err != nil && leaves != nil {
 			t.Fatalf("Walk returned %d leaves together with error %v; errors must carry no leaves", len(leaves), err)
 		}
+		// D1 identity invariants: the cap is a predicate and never a
+		// truncation, the canonical identity always begins with the leaf's
+		// RFC 6901 pointer, and same-path leaves stay distinguishable by their
+		// occurrence discriminator (the property F7 relies on).
+		seen := make(map[string]map[string]bool, len(leaves))
+		for _, l := range leaves {
+			if l.Identifiable != (len(l.Identity) <= maxIdentityBytes) {
+				t.Fatalf("leaf {Path:%q Identity:%q Identifiable:%v}: Identifiable must equal len(Identity) <= %d",
+					l.Path, l.Identity, l.Identifiable, maxIdentityBytes)
+			}
+			if !strings.HasPrefix(l.Identity, l.Path) {
+				t.Fatalf("leaf {Path:%q Identity:%q Identifiable:%v}: identity must begin with the leaf's path",
+					l.Path, l.Identity, l.Identifiable)
+			}
+			ids := seen[l.Path]
+			if ids == nil {
+				ids = make(map[string]bool)
+				seen[l.Path] = ids
+			}
+			if ids[l.Identity] {
+				t.Fatalf("leaf {Path:%q Identity:%q Identifiable:%v}: same-path leaves share one identity",
+					l.Path, l.Identity, l.Identifiable)
+			}
+			ids[l.Identity] = true
+		}
 	})
 }
 

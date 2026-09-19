@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"index\":0,\"type\":\"function\",\"arguments\":\"alpha\"}")
