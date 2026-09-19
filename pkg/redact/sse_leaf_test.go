@@ -934,3 +934,43 @@ func TestSSEBackfillEncodedCrossLeafSplitRestores(t *testing.T) {
 		t.Fatalf("restored secret occurrences = %d, want exactly 1 in %q", got, c1+c2)
 	}
 }
+
+// TestSSEBackfillAbortResetsCarry pins D11's abort row: an SSEObserver abort
+// while a carry is unresolved must drop the carry, its held segments and the
+// joint accounting, so Held() returns to zero and the stream is closed. The
+// first Write establishes a real carry (Held() > 0); the observer aborts on the
+// next event, whose bytes become the sole output.
+func TestSSEBackfillAbortResetsCarry(t *testing.T) {
+	back, _ := mintRestorable(t, ossKeySecret, "api_key")
+	abortRecord := []byte("data: {\"aborted\":true}\n\n")
+	seen := 0
+	obs := func(ev protocol.Event) []byte {
+		seen++
+		if seen == 2 {
+			return abortRecord
+		}
+		return nil
+	}
+	b := NewSSEBackfiller(back, obs)
+
+	if out := b.Write([]byte(sseJSONEnvelope(t, "hold __PII_ap"))); len(out) != 0 {
+		t.Fatalf("first Write released %q, want a held carry", out)
+	}
+	if h := b.Held(); h <= 0 {
+		t.Fatalf("Held() = %d after establishing a carry, want > 0", h)
+	}
+
+	out := b.Write([]byte(sseJSONEnvelopeWithPad(t, "", "i")))
+	if !bytes.Equal(out, abortRecord) {
+		t.Fatalf("abort output = %q, want %q", out, abortRecord)
+	}
+	if h := b.Held(); h != 0 {
+		t.Fatalf("Held() = %d after abort, want 0", h)
+	}
+	if !b.Closed() {
+		t.Fatalf("Closed() = false after abort, want true")
+	}
+	if out := b.Flush(); len(out) != 0 {
+		t.Fatalf("Flush() after abort = %q, want empty", out)
+	}
+}

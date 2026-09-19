@@ -103,10 +103,10 @@ func (s *SSEBackfiller) emitSegment(seg sseSegment, content []byte, extra []prot
 	return len(s.segments) - 1
 }
 
-// fitsBudget reports whether admitting n more raw bytes keeps the joint hold
-// (writer tail + carry + held segments + new segment) within the invariant cap.
-func (s *SSEBackfiller) fitsBudget(n int) bool {
-	return s.writer.Held()+len(s.carry)+s.heldBytes+n <= protocol.SSEBackfillHoldbackBytes
+// fitsBudget reports whether admitting add more retained bytes keeps the joint
+// hold within the invariant cap.
+func (s *SSEBackfiller) fitsBudget(add int) bool {
+	return s.writer.Held()+len(s.carry)+s.heldBytes+add <= protocol.SSEBackfillHoldbackBytes
 }
 
 // clearCarry forgets the unresolved carry and its held-segment accounting.
@@ -193,7 +193,7 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 	if len(s.carry) == 0 {
 		content := s.withinLeafContent(value, leaves)
 		p, leaf, ok := trailingPrefix(leaves)
-		if ok && s.fitsBudget(len(ev.Raw)) {
+		if ok && s.fitsBudget(len(ev.Raw)+len(content)) {
 			out = s.release(len(s.segments))
 			cur := s.holdSegment(seg, content, nil)
 			s.carry, s.carryKey = p, leaf.Identity
@@ -209,7 +209,7 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 		out = s.flushHeld()
 		content := s.withinLeafContent(value, leaves)
 		p, leaf, pok := trailingPrefix(leaves)
-		if pok && s.fitsBudget(len(ev.Raw)) {
+		if pok && s.fitsBudget(len(ev.Raw)+len(content)) {
 			cur := s.holdSegment(seg, content, nil)
 			s.carry, s.carryKey = p, leaf.Identity
 			s.carryParts = []carryPart{{seg: cur, leaf: leaf, decodedStart: len(leaf.Value) - len(p), decodedEnd: len(leaf.Value)}}
@@ -238,7 +238,7 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 		extra := []protocol.Edit{{Leaf: match, Start: 0, End: k, Replacement: spelled}}
 		matchContent := s.contentWith(value, leaves, extra)
 		p2, leaf2, pok := trailingPrefixAfter(leaves, match, k)
-		if pok && s.fitsBudget(len(ev.Raw)) {
+		if pok && s.fitsBudget(len(ev.Raw)+len(matchContent)) {
 			cur := s.holdSegment(seg, matchContent, extra)
 			s.carry, s.carryKey = p2, leaf2.Identity
 			s.carryParts = []carryPart{{seg: cur, leaf: leaf2, decodedStart: len(leaf2.Value) - len(p2), decodedEnd: len(leaf2.Value)}}
@@ -248,13 +248,13 @@ func (s *SSEBackfiller) acceptLeaf(ev protocol.Event, seg sseSegment) (handled b
 		return true, append(out, s.drain()...)
 	}
 
+	content := s.withinLeafContent(value, leaves)
 	if (placeholderMatcher{}).PrefixLen(combined) != len(combined) ||
-		len(combined) > maxPlaceholderLen || !s.fitsBudget(len(ev.Raw)) {
+		len(combined) > maxPlaceholderLen || !s.fitsBudget(len(ev.Raw)+len(content)) {
 		out = s.flushHeld()
-		s.emitSegment(seg, s.withinLeafContent(value, leaves), nil)
+		s.emitSegment(seg, content, nil)
 		return true, append(out, s.drain()...)
 	}
-	content := s.withinLeafContent(value, leaves)
 	cur := s.holdSegment(seg, content, nil)
 	s.carry = combined
 	s.carryParts = append(s.carryParts, carryPart{seg: cur, leaf: match, decodedStart: 0, decodedEnd: len(match.Value)})

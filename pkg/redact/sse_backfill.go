@@ -244,12 +244,14 @@ func (s *SSEBackfiller) Flush() []byte {
 	out = append(out, s.release(len(s.segments))...)
 	out = append(out, s.tail...)
 	s.tail = nil
+	s.clearCarry()
 	return out
 }
 
-// Held reports how many bytes the single bounded accumulator is holding back,
-// never more than protocol.SSEBackfillHoldbackBytes.
-func (s *SSEBackfiller) Held() int { return s.writer.Held() }
+// Held reports how many bytes the single bounded accumulator is holding back:
+// the writer tail, the unresolved carry prefix, and the held leaf segments.
+// It is never more than protocol.SSEBackfillHoldbackBytes.
+func (s *SSEBackfiller) Held() int { return s.writer.Held() + len(s.carry) + s.heldBytes }
 
 // Closed reports whether Flush or an abort terminated the stream.
 func (s *SSEBackfiller) Closed() bool { return s.closed }
@@ -268,6 +270,7 @@ func (s *SSEBackfiller) consume(events []protocol.Event) []byte {
 		if s.observer != nil {
 			if aborted := s.observer(ev); aborted != nil {
 				s.segments, s.tail = nil, nil
+				s.clearCarry()
 				s.closed = true
 				return aborted
 			}
