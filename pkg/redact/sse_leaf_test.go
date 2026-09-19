@@ -772,41 +772,72 @@ func TestSSEBackfillBackToBackCarry(t *testing.T) {
 	}
 }
 
-// TestSSEBackfillerHoldsAreBounded pins D9. After a JSON envelope establishes an
-// unresolved carry, Held() must account for the held segments (> 0; today it
-// returns only writer.Held(), which is 0 on the JSON path), and it must never
-// exceed protocol.SSEBackfillHoldbackBytes. Feeding large held segments must
-// trip the joint `writer.Held()+len(carry)+heldBytes` cap and release every held
-// byte literally, in input order: nothing dropped, nothing fabricated.
+// TestSSEBackfillerHoldsAreBounded pins D9. A JSON envelope establishes an
+// unresolved carry (`__PII_ap`); every continuation is a valid GRAMMAR
+// extension of that carry (`i`,`_`,`k`,`e`,`y` -> `__PII_api`, `__PII_api_`,
+// ...), so the ONLY legal reason to release one is the joint budget
+// `writer.Held()+len(carry)+heldBytes`. Each continuation carries a large inert
+// sibling whose size is derived from protocol.SSEBackfillHoldbackBytes, so
+// several holds accumulate before the cap trips. Held() must never exceed the
+// production constant, the first two continuations must strictly increase it
+// (proving they were held rather than no-match released), and after the trip
+// Held() must fall back to zero. Flush then releases every byte literally and
+// in order: nothing dropped, nothing fabricated, no secret.
 func TestSSEBackfillerHoldsAreBounded(t *testing.T) {
 	back, _ := mintRestorable(t, ossKeySecret, "api_key")
 	b := NewSSEBackfiller(back, nil)
 
-	origin := sseJSONEnvelope(t, "hold __PII_")
+	origin := sseJSONEnvelope(t, "hold __PII_ap")
 	out := b.Write([]byte(origin))
-	if got := b.Held(); got <= 0 {
-		t.Fatalf("Held() = %d after a JSON carry, want > 0 (held segments must be counted)", got)
-	} else if got > protocol.SSEBackfillHoldbackBytes {
-		t.Fatalf("Held() = %d, want <= %d", got, protocol.SSEBackfillHoldbackBytes)
+	h0 := b.Held()
+	if h0 <= 0 {
+		t.Fatalf("Held() = %d after a JSON carry, want > 0 (held segments must be counted)", h0)
+	}
+	if h0 > protocol.SSEBackfillHoldbackBytes {
+		t.Fatalf("Held() = %d, want <= %d", h0, protocol.SSEBackfillHoldbackBytes)
 	}
 
-	// Each continuation carries a large inert sibling so heldBytes grows toward
-	// the cap. The carry itself never completes (ordinary prefix characters), so
-	// a bounded implementation must eventually release the held segments
-	// literally instead of buffering without limit.
-	pad := strings.Repeat("x", protocol.SSEBackfillHoldbackBytes)
+	// limit/8 per inert pad means each continuation retains about limit/4
+	// (raw+content), so at least two continuations fit before the joint cap
+	// trips. The contents keep the carry a valid prefix with TokenLen == 0, so
+	// no continuation can release for a reason other than the budget.
+	pad := strings.Repeat("x", protocol.SSEBackfillHoldbackBytes/8)
+	contents := []string{"i", "_", "k", "e", "y"}
 	in := append([]byte(nil), origin...)
-	for i := 0; i < 3; i++ {
-		seg := sseJSONEnvelopeWithPad(t, pad, "a")
+	trace := []int{h0}
+	for i, c := range contents {
+		seg := sseJSONEnvelopeWithPad(t, pad, c)
 		in = append(in, seg...)
 		out = append(out, b.Write([]byte(seg))...)
-		if got := b.Held(); got > protocol.SSEBackfillHoldbackBytes {
-			t.Fatalf("Held() = %d after held segment %d, want <= %d", got, i, protocol.SSEBackfillHoldbackBytes)
+		h := b.Held()
+		trace = append(trace, h)
+		if h > protocol.SSEBackfillHoldbackBytes {
+			t.Fatalf("Held() = %d after continuation %d (%q), want <= %d; trace=%v",
+				h, i, c, protocol.SSEBackfillHoldbackBytes, trace)
 		}
 	}
-	out = append(out, b.Flush()...)
+	if trace[1] <= trace[0] || trace[2] <= trace[1] {
+		t.Fatalf("Held() did not strictly increase across the first two held continuations: trace=%v", trace)
+	}
+	tripped := false
+	for i := 1; i < len(trace); i++ {
+		if trace[i-1] > 0 && trace[i] == 0 {
+			tripped = true
+			break
+		}
+	}
+	if !tripped {
+		t.Fatalf("joint budget never tripped during the loop: Held() trace = %v", trace)
+	}
+	if last := trace[len(trace)-1]; last != 0 {
+		t.Fatalf("Held() = %d after the trip, want 0 (held segments must be released); trace=%v", last, trace)
+	}
 
+	out = append(out, b.Flush()...)
 	if !bytes.Equal(out, in) {
 		t.Fatalf("bounded hold did not release literally in order:\n got %q\nwant %q", out, in)
+	}
+	if bytes.Contains(out, ossKeySecret) {
+		t.Fatalf("bounded hold fabricated a secret: %q", out)
 	}
 }
