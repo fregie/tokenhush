@@ -398,8 +398,9 @@ func TestSSEResponseBlockEmitsErrorRecordAndCloses(t *testing.T) {
 }
 
 // TestSSEStreamExactlyOneAccumulator: the stream path holds exactly one
-// *protocol.BackfillWriter -- in pkg/redact's canonical reassembler -- and the
-// proxy handler holds no accumulator surface of its own.
+// *protocol.BackfillWriter -- in pkg/redact's canonical reassembler -- and no
+// second bounded accumulator (a Feed([]byte) []byte + Held() int field) may
+// appear beside it; the proxy handler holds no accumulator surface of its own.
 func TestSSEStreamExactlyOneAccumulator(t *testing.T) {
 	writerType := reflect.TypeOf(&protocol.BackfillWriter{})
 	for i := 0; i < reflect.TypeOf(SSEHandler{}).NumField(); i++ {
@@ -412,14 +413,21 @@ func TestSSEStreamExactlyOneAccumulator(t *testing.T) {
 		}
 	}
 	accumulators := 0
+	var bounded []string
 	typ := reflect.TypeOf(redact.SSEBackfiller{})
 	for i := 0; i < typ.NumField(); i++ {
 		if typ.Field(i).Type == writerType {
 			accumulators++
 		}
+		if isBoundedAccumulator(typ.Field(i).Type) {
+			bounded = append(bounded, typ.Field(i).Name)
+		}
 	}
 	if accumulators != 1 {
 		t.Fatalf("redact.SSEBackfiller holds %d *protocol.BackfillWriter fields, want exactly 1", accumulators)
+	}
+	if len(bounded) != 1 {
+		t.Fatalf("redact.SSEBackfiller exposes %d bounded-accumulator fields %v, want exactly 1", len(bounded), bounded)
 	}
 	if got := NewSSEHandler(SSEResponseConfig{}).Held(); got != 0 {
 		t.Errorf("Held() = %d on a fresh handler, want 0", got)
