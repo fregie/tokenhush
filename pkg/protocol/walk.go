@@ -37,16 +37,24 @@ type Leaf struct {
 	Length  int    // len(Value)
 	Encoded bool   // true when reached by decoding a JSON-encoded string
 
+	// Identity is the channel discriminator: Path, then each enclosing frame's
+	// preceding non-string scalar members rendered name=rawValue, then the
+	// leaf's occurrence among same-Path leaves. Identifiable is false when the
+	// canonical identity exceeds maxIdentityBytes; it is never truncated.
+	Identity     string
+	Identifiable bool
+
 	tok *rawToken // raw location; nil for hand-built or plugin leaves
 }
 
 // frame is one open object or array in the non-recursive walk.
 type frame struct {
-	object bool
-	key    string
-	hasKey bool
-	index  int
-	seg    string
+	object  bool
+	key     string
+	hasKey  bool
+	index   int
+	seg     string
+	scalars []frameScalar // preceding non-string scalar members of this frame
 }
 
 // Walk collects every JSON string value in data as a Leaf.
@@ -68,15 +76,15 @@ func Walk(data []byte) ([]Leaf, error) {
 	if !utf8.Valid(data) {
 		return nil, ErrNonUTF8
 	}
-	return walkDocument(data, "", false, 0, nil)
+	return walkDocument(data, "", false, 0, nil, &walkContext{})
 }
 
 // walkDocument walks one whole JSON document at data, honouring a base
-// pointer, an encoded flag, the encoded-string recursion depth and the wrapper
-// token enclosing is set to (nil at the root).
-func walkDocument(data []byte, base string, encoded bool, depth int, enclosing *rawToken) ([]Leaf, error) {
+// pointer, an encoded flag, the encoded-string recursion depth, the wrapper
+// token enclosing is set to (nil at the root) and the identity context wc.
+func walkDocument(data []byte, base string, encoded bool, depth int, enclosing *rawToken, wc *walkContext) ([]Leaf, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
-	leaves, err := walkValue(dec, data, base, encoded, depth, enclosing)
+	leaves, err := walkValue(dec, data, base, encoded, depth, enclosing, wc)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +100,7 @@ func walkDocument(data []byte, base string, encoded bool, depth int, enclosing *
 // document the decoder reads; every string token is located in it so its raw
 // spelling can be recovered later. enclosing is the wrapper token whose
 // decoded value is this document.
-func walkValue(dec *json.Decoder, data []byte, base string, encoded bool, depth int, enclosing *rawToken) ([]Leaf, error) {
+func walkValue(dec *json.Decoder, data []byte, base string, encoded bool, depth int, enclosing *rawToken, wc *walkContext) ([]Leaf, error) {
 	var (
 		stack []frame
 		out   []Leaf
@@ -127,7 +135,7 @@ func walkValue(dec *json.Decoder, data []byte, base string, encoded bool, depth 
 		}
 		if len(stack) == 0 {
 			if raw, ok := tok.(string); ok {
-				out = appendLeaf(out, raw, base, encoded, depth, tokenNode(data, int(start), int(end), enclosing))
+				out = appendLeaf(out, raw, base, encoded, depth, tokenNode(data, int(start), int(end), enclosing), wc.child(nil))
 			}
 			return out, nil
 		}
@@ -141,10 +149,13 @@ func walkValue(dec *json.Decoder, data []byte, base string, encoded bool, depth 
 			continue
 		}
 		seg := childSegment(stack)
+		name := memberName(stack)
 		advance(stack)
 		if raw, ok := tok.(string); ok {
-			out = appendLeaf(out, raw, base+joinSegs(stack)+seg, encoded, depth, tokenNode(data, int(start), int(end), enclosing))
+			out = appendLeaf(out, raw, base+joinSegs(stack)+seg, encoded, depth, tokenNode(data, int(start), int(end), enclosing), wc.child(stack))
+			continue
 		}
+		captureScalar(stack, name, scalarRaw(data, int(start), int(end)))
 	}
 }
 
@@ -152,17 +163,23 @@ func walkValue(dec *json.Decoder, data []byte, base string, encoded bool, depth 
 // first tries to read raw as a JSON document: a document with at least one
 // string leaf replaces its wrapper, whose inner leaves carry Encoded true.
 // Anything else is emitted itself, without decoding. tok locates raw's token;
-// inner leaves get tok as their enclosing wrapper.
-func appendLeaf(out []Leaf, raw, path string, encoded bool, depth int, tok *rawToken) []Leaf {
+// inner leaves get tok as their enclosing wrapper. The identity context is
+// variadic so the pre-existing six-argument call sites keep compiling.
+func appendLeaf(out []Leaf, raw, path string, encoded bool, depth int, tok *rawToken, opt ...*walkContext) []Leaf {
+	wc := leafContext(opt)
 	if depth < MaxEncodedDepth {
-		if inner, err := walkDocument([]byte(raw), path, true, depth+1, tok); err == nil && len(inner) > 0 {
+		if inner, err := walkDocument([]byte(raw), path, true, depth+1, tok, wc); err == nil && len(inner) > 0 {
 			return append(out, inner...)
 		}
 	}
 	if depth >= MaxEncodedDepth {
 		encoded = false
 	}
-	return append(out, Leaf{Path: path, Value: []byte(raw), Length: len(raw), Encoded: encoded, tok: tok})
+	identity := joinIdentity(path, wc.inherited, wc.next(path))
+	return append(out, Leaf{
+		Path: path, Value: []byte(raw), Length: len(raw), Encoded: encoded, tok: tok,
+		Identity: identity, Identifiable: len(identity) <= maxIdentityBytes,
+	})
 }
 
 // tokenNode locates the raw interior of the string token occupying
