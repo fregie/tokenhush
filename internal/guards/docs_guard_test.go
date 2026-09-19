@@ -50,7 +50,12 @@ var d8Docs = []string{
 }
 
 // extraAllowedDocs are non-D8 files permitted under docs/.
+//
+// docs/AGENTS.md is the AI-agent knowledge base for the docs tree. It is
+// agent metadata, not product documentation, so it has no .zh-CN.md twin:
+// the bilingual rule below applies to the D8 set, not to this file.
 var extraAllowedDocs = []string{
+	"docs/AGENTS.md",
 	"docs/PRO-MIGRATION.md",
 	"docs/tool-setup.md",
 	"docs/verify.md",
