@@ -36,6 +36,9 @@ type walkContext struct {
 // scalar context followed by the open frames' captured scalars, outermost to
 // innermost, sharing this call's occurrence counter.
 func (c *walkContext) child(stack []frame) *walkContext {
+	if c.occurred == nil {
+		c.occurred = map[string]int{}
+	}
 	inherited := c.inherited
 	if len(stack) > 0 {
 		inherited = append(append([]frameScalar(nil), inherited...), flattenScalars(stack)...)
