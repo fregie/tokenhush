@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -116,6 +118,91 @@ func TestSSEBackfillRestoresSplitAcrossDeltaEvents(t *testing.T) {
 			}
 			if got := string(events[2].Data); got != string(secret)+" tail" {
 				t.Fatalf("event 2 data = %q, want %q", got, string(secret)+" tail")
+			}
+		})
+	}
+}
+
+// sseToolCallEnvelope renders one data-only SSE record whose compact JSON
+// document carries a single OpenAI-style tool call, with arguments embedded as
+// a JSON string.
+func sseToolCallEnvelope(t *testing.T, arguments string) string {
+	t.Helper()
+	args, err := json.Marshal(arguments)
+	if err != nil {
+		t.Fatalf("Marshal arguments: %v", err)
+	}
+	const head = `{"choices":[{"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"bash","arguments":`
+	const tail = `}}]}}]}`
+	return "data: " + head + string(args) + tail + "\n\n"
+}
+
+// sseToolCallArgs decodes the single tool-call arguments string of one envelope.
+func sseToolCallArgs(t *testing.T, data []byte) string {
+	t.Helper()
+	var doc struct {
+		Choices []struct {
+			Delta struct {
+				ToolCalls []struct {
+					Function struct {
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"delta"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("Unmarshal envelope %q: %v", data, err)
+	}
+	if len(doc.Choices) != 1 || len(doc.Choices[0].Delta.ToolCalls) != 1 {
+		t.Fatalf("envelope %q does not carry exactly one tool call", data)
+	}
+	return doc.Choices[0].Delta.ToolCalls[0].Function.Arguments
+}
+
+// TestSSEStreamJsonEnvelopeSplitRestored is the incident channel driven through
+// the real SSEHandler: one minted placeholder split across the arguments of two
+// tool-call envelopes is restored exactly once, in the completing envelope,
+// while both envelopes stay valid JSON and no placeholder prefix survives.
+func TestSSEStreamJsonEnvelopeSplitRestored(t *testing.T) {
+	ossKeySecret := []byte("SECRET-LEAF-OSSKEY-0001")
+	back, p := sseMint(t, ossKeySecret, "api_key")
+	pre := `{"Bucket":"mybucket","Object":"data.csv","AccessKeyId":"`
+	suffix := `","Secret":"x"}`
+	k := 8
+	first := sseToolCallEnvelope(t, pre+p[:k])
+	second := sseToolCallEnvelope(t, p[k:]+suffix)
+	in := first + second
+	want := pre + string(ossKeySecret) + suffix
+
+	for _, n := range []int{1, 3, 7, 64, len(in)} {
+		t.Run(fmt.Sprintf("chunk-%d", n), func(t *testing.T) {
+			out := sseDrive(t, NewSSEHandler(SSEResponseConfig{Backfiller: back}), sseChunks(in, n))
+			if got := bytes.Count(out, ossKeySecret); got != 1 {
+				t.Fatalf("secret appears %d times, want exactly 1 in %q", got, out)
+			}
+			if bytes.Contains(out, []byte("__PII_")) {
+				t.Fatalf("placeholder prefix survived in %q", out)
+			}
+			events := sseEvents(t, out)
+			if len(events) != 2 {
+				t.Fatalf("event count = %d, want 2", len(events))
+			}
+			for i, ev := range events {
+				if !json.Valid(ev.Data) {
+					t.Fatalf("event %d data is not valid JSON: %q", i, ev.Data)
+				}
+			}
+			got0 := sseToolCallArgs(t, events[0].Data)
+			got1 := sseToolCallArgs(t, events[1].Data)
+			if got0 != pre {
+				t.Fatalf("event 0 arguments = %q, want %q", got0, pre)
+			}
+			if want1 := string(ossKeySecret) + suffix; got1 != want1 {
+				t.Fatalf("event 1 arguments = %q, want %q", got1, want1)
+			}
+			if joined := got0 + got1; joined != want {
+				t.Fatalf("concatenated arguments = %q, want %q", joined, want)
 			}
 		})
 	}
