@@ -212,6 +212,8 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+response_buffer_bytes: 33554432
+response_timeout:  5m
 ```
 
 | 键 | 类型 | 默认值 | 作用 |
@@ -229,6 +231,14 @@ detector_timeout:  30s
 | `upstreams` | `{match, target}` 列表 | 空 | 指向你自己源站的路径前缀路由。 |
 | `scan_budget_bytes` | 整数 | `33554432`（32 MiB） | 确定性扫描预算。 |
 | `detector_timeout` | 时长 | `30s` | 检测兜底。 |
+| `response_buffer_bytes` | 整数 | `33554432`（32 MiB） | 单个缓冲响应的总量上限。超过上限的响应在提交任何字节之前返回 502。 |
+| `response_timeout` | 时长 | `5m` | 读取单个响应的整体上限。超过 deadline 的响应在提交任何字节之前返回 504。若上限与 deadline 同时触发，上限优先。 |
+
+每个上游响应都会**整段**缓冲，之后才会有任何字节抵达客户端，`text/event-stream`
+同样如此：不存在 token 级流式输出。缓冲响应上的响应作用域 `Block`（含 SSE）在提交
+任何字节之前返回 502，回填则在唯一一次提交之前把内容层拆分的占位符精确还原一次。
+`response_buffer_bytes` 与 `response_timeout` 分别为缓冲 body 与整段读取设界；超过
+上限是 502，超过 deadline 是 504，二者都在提交之前决定。
 
 检测器键名恰好是 `prefix`、`email`、`luhn`、`jwt`、`pem` 和 `entropy`。它们不是 `prefixes`，不是 `high_entropy`，也不是 `private_keys`。
 

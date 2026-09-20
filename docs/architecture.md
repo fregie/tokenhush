@@ -171,37 +171,37 @@ At runtime the pieces line up like this:
    `redactions` counter and the stderr log grow with the number of carried
    occurrences, not with the number of distinct secrets; that is metadata-only,
    per-request work, never a persisted body.
-5. **Client-bound responses are decoded before any status is committed.**
-   Identity-encoded `text/event-stream` bodies stream through the SSE handler
-   with a bounded backfill window; everything else is buffered, decoded and
-   evaluated. Undecodable content refuses with 502 and discards the upstream
-   bytes rather than passing them through uninspected. Backfill runs last, and
-   only a placeholder this session minted is restored. Restore is
+5. **Client-bound responses are buffered whole before any byte is committed.**
+   Every upstream response — including `text/event-stream` — is buffered and
+   decoded, an undecodable content coding refusing with 502 and discarding the
+   upstream bytes rather than passing them through uninspected. The buffered
+   response is then evaluated and backfilled, and only then committed once;
+   there is no token-level streaming. The buffer is bounded by
+   `response_buffer_bytes` (default 32 MiB) and the whole read by
+   `response_timeout` (default 5m): over the cap is a 502, past the deadline is
+   a 504, both decided before commit, and the cap wins if both trip. Backfill
+   runs last, and only a placeholder this session minted is restored. Restore is
    **escape/depth-aware**: a restored secret is re-spelled at the enclosing JSON
    depth (exactly the spelling the client sent), so a multi-line or
    quote-bearing secret cannot corrupt the client's JSON. A raw stream fragment
    or a non-JSON body keeps the raw spelling, and a foreign placeholder is
    returned byte-identical. A placeholder content-split across
    **consecutive complete-JSON-envelope** `data:` events at the **same channel
-   identity** is restored exactly once: while the
-   token is unresolved, the contributing segments of the affected channel are
-   held and not yet sent, and once it resolves (typically the next 1-2 events)
-   each held segment's edits are applied once against its **own original
-   bytes**, the contributing fragment deleted and the completing leaf carrying
-   the secret, so every emitted envelope stays valid JSON. The joint
-   **256 KiB** budget (`protocol.SSEBackfillHoldbackBytes`; the writer tail plus
-   the unresolved carry plus the held segments) bounds the held memory, and when
-   it would be exceeded the held segments are released **literally,
-   un-restored** as the stream keeps progressing. That added delay is confined
-   to the **affected channel**, while all other traffic streams unchanged:
-   correctness (never emit a partial placeholder) and bounded memory are
-   preferred over zero added latency for that channel. A **torn inner-JSON
-   origin** (not `Encoded`, not valid JSON, opening `{` or `[`) whose secret
-   needs JSON escaping keeps the **placeholder** rather than corrupting the
-   client's nested document, the residual recorded in `docs/security.md` R6. An
-   event of a non-matching channel that interleaves between the halves releases
-   the held segments **unchanged**, so such a split is delivered literally and
-   is **not** restored.
+   identity** is restored exactly once: each held segment's edit is applied once
+   against its **own original bytes**, the contributing fragment deleted and the
+   completing leaf carrying the secret, so every emitted envelope stays valid
+   JSON. The joint **256 KiB** budget (`protocol.SSEBackfillHoldbackBytes`; the
+   writer tail plus the unresolved carry plus the held segments) bounds the held
+   memory, and when it would be exceeded the held segments are released
+   **literally, un-restored**. That bounded hold is internal to the single
+   commit and is never observable at the client, which receives the whole
+   restored stream at once. A **torn inner-JSON origin** (not `Encoded`, not
+   valid JSON, opening `{` or `[`) whose secret needs JSON escaping keeps the
+   **placeholder** rather than corrupting the client's nested document, the
+   residual recorded in `docs/security.md` R6. An event of a non-matching
+   channel that interleaves between the halves releases the held segments
+   **unchanged**, so such a split is delivered literally and is **not**
+   restored.
 6. **The control surface is exactly `GET /status`.** It is metadata only, it
    requires the session bearer token, and the data plane and the control surface
    are separate mux patterns.

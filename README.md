@@ -115,13 +115,14 @@ Tokenhush adds one checkpoint in front of the tool. It reads each request, repla
 
 ## ✨ Features
 
-- **Every nested field is walked.** Tokenhush walks the entire outbound JSON request body, so secrets buried in nested objects and arrays are seen, not just top-level fields. Streaming responses are handled as they arrive.
+- **Every nested field is walked.** Tokenhush walks the entire outbound JSON request body, so secrets buried in nested objects and arrays are seen, not just top-level fields. Responses, including SSE streams, are buffered whole before anything is committed.
 - **Six built-in detectors, five on by default.** `prefix` (known key shapes: `sk-`, `AKIA`, `ghp_`, `glpat-`, `xox*`, `AIza`, `npm_`), `jwt`, `pem` (PEM private-key headers), `luhn` (Luhn-checked card numbers), and `email` are on. The sixth, `entropy` (high-entropy strings), is off by default because its false positives on real agent traffic, long tool names and session ids, broke function calling. Turn it on only for a workload that carries no images or long random identifiers.
 - **Precise email, parameterized by rule options.** The `email` detector fires only when the address's domain ends at a label boundary with a known public suffix (`.com`, `.co.uk`), so subdomains count and a look-alike such as `evilcorp.com` is rejected when the narrower `.corp.com` is the configured suffix in `replace` mode (an additive `.corp.com` still carries the built-in `.com`, so `evilcorp.com` would match). The built-in suffix table is compiled in, frozen, and always on. A rule document or signed pack may carry a typed, strictly validated `options` object: an unknown option key is a typed error, and the only detector option today is `email`, whose `suffixes` list adds suffixes to the built-in set and whose `replace` flag swaps that set out — permitted only for a non-remote local document, and refused by the floor for a remote pack.
 - **Placeholders are stable for the session.** A match becomes `__PII_<type>_<digest>__`, for example `__PII_api_key_ae9c0b46a8f3__`. The secret-to-placeholder mapping lives in memory only, for this session. Restarting drops it.
 - **Loopback only, with checks.** The gateway binds `127.0.0.1`, plus `[::1]` when the host has an IPv6 loopback. The `Host` header is always checked, `Origin` is checked for browser-style requests, and the control API sits behind a per-run bearer token stored `0600`. It fails closed rather than open.
 - **A 14-tool `env` helper.** `tokenhush env <tool>` prints a ready-to-paste snippet for `claude`, `codex`, `aider`, `cline`, `roo`, `opencode`, `qwen`, `crush`, `zed`, `continue`, `openwebui`, `goose`, `openhands`, and `kilo`.
 - **Signed rule sync, with a non-weakening floor.** `tokenhush rules sync` fetches an Ed25519-signed rule pack and verifies its signature, freshness, serial (no rollback), and the signed revocation list before use. The floor rejects exactly four things: a pack that disables a built-in detector, a pack that drops a required category, a rule that carries an `allow` action, and a rule that sets the email `replace` flag. So a pack may add detections and extend the built-in email suffix set, but can never weaken the built-ins. Packs load at the next start, never hot, and any problem falls back to the built-in defaults with a warning.
+- **Named sensitive keys are redacted by value.** A signed pack or compiled document may declare `sensitive_keys` (strict sub-object: `keys` up to 256 names, `case_sensitive` default false); the value of a matching immediate object member key, for example `password`, is redacted at any object depth on the request path. No inner substitution is minted, a `Block` rule or blocklist hit on the leaf still blocks, and allowlists still win. The container-value and k8s/docker-env sibling shapes stay unmatched and are recorded in [docs/security.md](docs/security.md).
 - **Small, portable, extensible.** Pure Go, built with `CGO_ENABLED=0`. Extension points are compile-time: the `Rule` contract in `pkg/filter` is how a built-in detector, a signed pack, and a third-party rule all enter the same registry.
 
 ## 🔁 How it works
@@ -132,7 +133,7 @@ Tokenhush adds one checkpoint in front of the tool. It reads each request, repla
 </picture>
 
 - **Outbound:** the gateway walks the JSON body, runs the enabled detectors, and turns each match into a session placeholder before forwarding upstream.
-- **Inbound:** placeholders this session minted are swapped back to the originals, and only your tool receives them. A foreign placeholder is returned unchanged.
+- **Inbound:** the whole response, SSE included, is buffered and decoded first — nothing streams token-by-token — then placeholders this session minted are swapped back to the originals, and only your tool receives them. A foreign placeholder is returned unchanged.
 
 > [!IMPORTANT]
 > Placeholders are **never** filled back in on the way out. Only your client gets the originals. That is what blocks prompt-injection tricks that try to make the gateway echo a secret back to the model.
@@ -240,7 +241,7 @@ Both go to `updates.tokenhush.com`, and both are command-scoped: update check ru
 ## 🚫 What it does NOT do
 
 - **No MITM and no root certificate.** Tokenhush never terminates TLS. That is also why Cursor agent traffic, the ChatGPT and Claude desktop apps, and browser web UIs are not covered: they do not honour a configurable base URL, and covering them would need system-level interception.
-- **The response path does not redact.** Response-scoped rules can allow, warn, or block only. On a streaming (SSE) response, a block takes effect from the first whole event and cannot recall deltas already emitted to the client.
+- **The response path does not redact.** Response-scoped rules can allow, warn, or block only. Responses, including SSE streams, are buffered whole before any byte is committed, so a block is a `502` with nothing already sent and there is no token-level streaming. A response over the `response_buffer_bytes` cap is a `502` and one past the `response_timeout` deadline is a `504`, both before commit.
 - **Encoded secrets are not caught.** A secret that is base64-, hex-, or URL-encoded before it leaves is not detected; the rewrite has no normalization pass by design. A non-identity request `Content-Encoding` is refused with 415 rather than decoded for detection.
 - **A secret in a JSON object key is not caught.** Only values are walked.
 - **There is no `doctor` command, no allowlist-mutation command, and no service command.** Plugins are compile-time only, so there is no runtime plugin loading.
@@ -283,6 +284,8 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+response_buffer_bytes: 33554432
+response_timeout:  5m
 ```
 
 | Location | Configuration | Data |
@@ -302,6 +305,8 @@ Set `TOKENHUSH_HOME` to move both under one root.
 | `upstreams` | A **list** of `{match, target}` entries, not a map. `match` is a path prefix; `target` is an origin with no trailing slash. |
 | `scan_budget_bytes` | Maximum bytes scanned per request, default `33554432` (32 MiB). |
 | `detector_timeout` | Per-detector time backstop, default `30s`. |
+| `response_buffer_bytes` | Total cap on one buffered response, default `33554432` (32 MiB). Over the cap is a `502` before commit. |
+| `response_timeout` | Overall bound on reading one response, default `5m`. Past the deadline is a `504` before commit; the cap wins if both trip. |
 
 Unmatched paths fall back to the built-ins: `/v1/messages` goes to Anthropic, and `/v1/chat/completions` and `/v1/responses` go to OpenAI. `GET /v1/models` is the one named exception and defaults to OpenAI. Any other unknown path is an explicit error, never a silent misroute. Routing is by request path; the model is chosen by the request body.
 

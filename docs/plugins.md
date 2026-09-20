@@ -10,6 +10,7 @@ same public registry.
 
 - [The contract](#the-contract)
 - [Detector options](#detector-options)
+- [The `sensitive_keys` block](#the-sensitive_keys-block)
 - [Compiling a rule in from your own package](#compiling-a-rule-in-from-your-own-package)
 - [What the core does and does not offer](#what-the-core-does-and-does-not-offer)
 - [The response-phase restriction](#the-response-phase-restriction)
@@ -84,6 +85,49 @@ The only detector option today is `email`:
 Additive `email.suffixes` can only extend the built-in set, so a signed pack
 may add a suffix it needs but can never remove or narrow a built-in one. The
 built-in suffix table itself is compiled in and frozen.
+
+## The `sensitive_keys` block
+
+A compiled document may carry one document-level `sensitive_keys` block beside
+its `rules`. It is a strict sub-object, not a rule type:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `keys` | list of strings | none (required) | The object member key names whose values are redacted. At least one key, at most `MaxSensitiveKeys` (256) keys, each key at most 256 bytes (`MaxLiteralBytes`); an empty key is rejected. |
+| `case_sensitive` | boolean | `false` | When false (the default) ASCII case is folded; when true the member key must match byte-for-byte. |
+
+An unknown sub-key is rejected by name as `sensitive_keys.<name>`, and the same
+validation runs on the decode path and the compile path, so a hand-built
+document cannot skip a bound. The block carries no `action` field: its effect is
+a fixed request-phase `redact`.
+
+Matching is by the leaf's **immediate object member key, at any object depth**,
+so `{"password":"hunter2"}` and `{"credentials":{"password":"hunter2"}}` both
+match `password`, while a numeric key never matches an array element. A matching
+leaf is redacted whole as one finding — no inner substitution is minted, so no
+orphan placeholder can exist — but a rule that would `Block` the leaf is still
+evaluated and keeps Block precedence, and the global and per-rule allowlists
+still suppress the finding.
+
+Two shapes stay unmatched and are the recorded residual (see `security.md` R2):
+a sensitive key whose value is a container rather than a string member
+(`{"password":{"secret":"x"}}`), and the k8s/docker-env sibling shape
+(`{"name":"DB_PASSWORD","value":"…"}`). A secret placed in a JSON object key
+itself is still not caught.
+
+### The signed-pack projection slot
+
+A signed pack carries the same block as an optional field of its rules payload.
+`SensitiveKeys` is declared **immediately after `blocklist` and before `rules`**;
+declaration order defines the projection bytes, so the Pro signing backend must
+use the same slot. The field is a pointer with `omitempty`, which is
+load-bearing: `encoding/json` does not omit a zero struct value, so a
+non-pointer field would add the key to every existing preimage and invalidate
+every existing signature. A pack without the block marshals byte-identically to
+today, and there is **no `schema_version` bump**. The operational consequence is
+recorded: an older client whose strict decoder uses `DisallowUnknownFields`
+rejects a pack carrying the block and falls back to the built-in detectors, so
+the backend must emit the block only to clients that support it.
 
 ## Compiling a rule in from your own package
 
@@ -180,9 +224,10 @@ Two constraints apply to remote packs specifically:
   baseline detector, a pack that drops a required category, a rule carrying an
   `allow` action, and a rule that sets the email `replace` flag (which would
   narrow the built-in suffix set). Additive `email.suffixes` extend the built-in
-  set and remain allowed. The floor is allowlist-neutral (OD-3): it does not
-  inspect global or per-rule allowlists, because a stricter floor would reject
-  real signed packs and drop the client to the built-ins.
+  set and remain allowed, and a pack's additive `sensitive_keys` block is
+  likewise not rejected by the floor. The floor is allowlist-neutral (OD-3): it
+  does not inspect global or per-rule allowlists, because a stricter floor would
+  reject real signed packs and drop the client to the built-ins.
 - **The trust root.** A pack is only compiled after signature verification
   against the embedded rule trust root (`rules-2026-09`). A local operator
   document and a signed remote pack share the same strict decoder and compiler;

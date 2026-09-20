@@ -120,7 +120,7 @@ var d8ResidualRisks = []docsResidualRisk{
 // after backticks and case are removed. They pin the SSE limitation and the
 // direction contract so a future edit cannot quietly drop them.
 var d8SecurityStatements = []string{
-	"cannot recall deltas already emitted",
+	"a response-scoped block on a buffered sse response is a 502 before any byte is committed",
 	"redact is request-path only",
 	"rejected at compile time and again at registration",
 }
@@ -568,5 +568,46 @@ func TestDocsGuardProductTree(t *testing.T) {
 	}
 	for _, violation := range docsSecurityStatementViolations(text) {
 		t.Error(violation)
+	}
+}
+
+// TestToolSetupDocumentsResponseLimits pins the response-limit configuration
+// keys in the tool-setup configuration reference: the whole response is
+// buffered, so the total buffer cap and the read deadline are documented with
+// their defaults beside the existing request-side keys.
+func TestToolSetupDocumentsResponseLimits(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs", "tool-setup.md"))
+	if err != nil {
+		t.Fatalf("read docs/tool-setup.md: %v", err)
+	}
+	normalized := strings.ToLower(docsStripCode(string(data)))
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	for _, want := range []string{"response_buffer_bytes", "response_timeout", "32 mib", "5m"} {
+		if !strings.Contains(normalized, want) {
+			t.Errorf("docs/tool-setup.md does not document %q", want)
+		}
+	}
+}
+
+// TestReadmeDropsStreamingClaim pins the README response contract: README.md
+// states the whole response is buffered before any byte is committed, and
+// carries no claim that a block takes effect from the first whole event or that
+// emitted deltas can be recalled.
+func TestReadmeDropsStreamingClaim(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	normalized := strings.ToLower(docsStripCode(string(data)))
+	normalized = strings.Join(strings.Fields(normalized), " ")
+	for _, claim := range []string{
+		"first whole event",
+		"cannot recall deltas already emitted",
+	} {
+		if strings.Contains(normalized, claim) {
+			t.Errorf("README.md still claims %q; the response is buffered whole before any byte is committed", claim)
+		}
 	}
 }

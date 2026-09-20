@@ -63,6 +63,7 @@ legacy versions must be ported rather than shimmed:
 | Extension point | Rules are compile-time only, through `pkg/filter`'s `Rule` registry. There is no runtime plugin loading and no capability negotiation. |
 | Response path | Rules may only block or warn; redaction is request-path only. |
 | SSE response | The incremental `SSEHandler` no longer decides (see below). |
+| Response limits | New config keys `response_buffer_bytes` (default 32 MiB) and `response_timeout` (default 5m). The whole response, SSE included, is buffered before any byte is committed: over the cap is a 502 and past the deadline a 504, both before commit. |
 
 ## The SSE response handler no longer decides
 
@@ -78,6 +79,22 @@ compatibility but are **inert**, and no production path emits an in-stream
 block record. Pro code that relied on the old first-whole-event, in-stream
 block semantics — or on the error record it returned — must consume the
 buffered verdict instead.
+
+## The rules pack gains an optional `sensitive_keys` block
+
+`RulesPackPayload` gains `SensitiveKeys *SensitiveKeysPayload` declared
+**immediately after `Blocklist` and before `Rules`**. Declaration order defines
+the projection bytes, so a Pro signing backend that emits the block must use
+that same slot. The payload type is `SensitiveKeysPayload{Keys []string; CaseSensitive bool}`
+with JSON names `keys`/`case_sensitive` and `omitempty`, and the field is a
+pointer with `omitempty` because `encoding/json` does not omit a zero struct
+value: a non-pointer field would add the key to every existing preimage and
+invalidate every existing signature. There is **no `schema_version` bump**. A
+pack without the block marshals byte-identically to today, while a pack carrying
+it is rejected by an older client's `DisallowUnknownFields` decode, which falls
+back to the built-in detectors; emit the block only to clients that support it.
+The client-side block is additive (it adds a fixed request-phase redaction of the
+matching immediate object member key's value), so the floor does not reject it.
 
 ## Migration checklist (for the separate Pro effort)
 

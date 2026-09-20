@@ -36,6 +36,31 @@
 | 已删除的子系统 | change-channel guard、出站编码复检、键位置阻断、能力层级、keyring/secret store、`pkg/license`、OS 服务桩以及运行时插件协议都不存在。建立在这些之上的 Pro 功能需要新设计，否则必须放弃。 |
 | 扩展点 | 规则仅限编译期，通过 `pkg/filter` 的 `Rule` 注册表。没有运行时插件加载，也没有能力协商。 |
 | 响应路径 | 规则只能 block 或 warn；脱敏仅限请求路径。 |
+| SSE 响应 | 增量式 `SSEHandler` 不再做决策（见下文）。 |
+| 响应上限 | 新增配置键 `response_buffer_bytes`（默认 32 MiB）与 `response_timeout`（默认 5m）。整个响应（含 SSE）在提交任何字节之前被整段缓冲：超过上限是 502，超过 deadline 是 504，二者都在提交之前。 |
+
+## SSE 响应处理器不再做决策
+
+响应作用域求值已迁移到**整段响应缓冲**路径。网关缓冲 `text/event-stream` 响应、
+解码其声明的 Content-Encoding、对每个 `data` 合并后为合法 JSON 的事件所构成的聚合
+求值（遍历失败的 JSON 事件记一次 `walk_skip`；非 JSON、`[DONE]`、ping/comment 或
+零叶事件不计），之后才提交：响应作用域的 Block 是在什么都没发出时返回的 `502`。
+增量式 `proxy.SSEHandler` 现在只做重组与占位符还原——它的 `Evaluator`、`Counters`
+与 `Warnings` 配置字段为 API 兼容而保留，但已**失效**，生产路径不再发出流内 block
+记录。依赖旧的"首个完整事件、流内 block"语义或其错误记录的 Pro 代码，必须改为消费
+缓冲后的裁决。
+
+## 规则包新增可选 `sensitive_keys` 块
+
+`RulesPackPayload` 新增 `SensitiveKeys *SensitiveKeysPayload`，声明在 **`Blocklist`
+之后、`Rules` 之前**。声明顺序决定投影字节，因此发出该块的 Pro 签名后端必须使用同一
+槽位。载荷类型为 `SensitiveKeysPayload{Keys []string; CaseSensitive bool}`，JSON 名为
+`keys`/`case_sensitive` 且带 `omitempty`，且该字段是指针并带 `omitempty`，因为
+`encoding/json` 不会省略零值结构体：非指针字段会把该键加进每一个既有原像、使所有既有
+签名失效。**不提升 `schema_version`**。不含该块的规则包与今天逐字节一致地序列化，而
+携带它的规则包会被旧客户端的 `DisallowUnknownFields` 解码拒绝、回退到内置检测器；只能
+向支持它的客户端发出该块。客户端侧该块是追加式的（它增加一次对匹配的立即对象成员键的
+值的固定请求阶段脱敏），因此 floor 不会拒绝它。
 
 ## 迁移清单（供独立的 Pro 工作使用）
 

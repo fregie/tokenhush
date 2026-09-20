@@ -113,13 +113,14 @@ Tokenhush 在工具前面加一道检查点。它读取每个请求，替换掉�
 
 ## ✨ 功能
 
-- **每个字段都查，不止顶层。** 网关会遍历整个请求 body，嵌套 JSON 同样覆盖，并处理流式响应。它能抓已知 key 形态（`sk-`、`AKIA`、`ghp_`、`glpat-`、`xox*`、`AIza`、`npm_`）、JWT、PEM 私钥头、卡号与邮箱地址。
+- **每个字段都查，不止顶层。** 网关会遍历整个请求 body，嵌套 JSON 同样覆盖；响应（含 SSE 流）会先整段缓冲，之后才提交任何内容。它能抓已知 key 形态（`sk-`、`AKIA`、`ghp_`、`glpat-`、`xox*`、`AIza`、`npm_`）、JWT、PEM 私钥头、卡号与邮箱地址。
 - **六个内置检测器，各自可开关。** 五个默认开启，可在 `detectors:` 下逐个关闭：`prefix`（已知厂商 key 形态）、`email`（邮箱地址）、`luhn`（经过 Luhn 校验的卡号）、`jwt`（JSON Web Token）、`pem`（PEM 私钥头）。第六个 `entropy`（高熵字符串）**默认关闭**，需要用 `entropy: true` 显式开启，因为它在真实 agent 流量上的误报（长工具名、会话 id）会破坏 function calling。
 - **精确邮箱匹配，可由规则 options 参数化。** `email` 检测器只在地址域名于标签边界上以已知公共后缀（`.com`、`.co.uk`）结尾时才命中，因此子域名同样计入，而 `evilcorp.com` 这类形似地址只有在 `replace` 模式下把更窄的 `.corp.com` 配置为后缀时才会被拒绝（追加模式下的 `.corp.com` 仍带有内置的 `.com`，因此 `evilcorp.com` 仍会命中）。内置后缀表编译进程序、已冻结、始终生效。规则文档或签名规则包可以携带带类型、经严格校验的 `options` 对象：未知选项键会得到带类型的错误；目前唯一的检测器选项是 `email`，其 `suffixes` 列表把后缀追加进内置集合，`replace` 标志则用声明的后缀整体换掉内置集合——`replace` 仅限非远程的本地文档，远程包设置它会被 floor 拒绝。
 - **占位符在会话内稳定，且只存在内存里。** 一个密钥变成 `__PII_email_9f2c8a4b6d1e__` 这样的 token。映射只保存在本次会话的内存中，重启即丢弃，所以你偶尔可能在输出里看到占位符，这是预期且安全的，不是泄漏。
 - **只在本机。** 网关只绑定回环：始终 `127.0.0.1`，主机有 IPv6 回环时再加 `[::1]`。它校验 Host 头，对浏览器风格请求校验 Origin，并用每次 `run` 生成的 bearer token 保护控制 API，该 token 以 `0600` 权限存放。出错时它选择停止转发，而不是放行未脱敏的内容。
 - **随附接入助手。** `tokenhush env <tool>` 为十四种工具打印可直接粘贴的片段。
 - **更多签名规则集。** `tokenhush rules sync` 可以从托管规则服务拉取额外规则包，且设计上安全：规则包用 Ed25519 签名，客户端在使用前校验签名、新鲜度、序列号（防回滚）和签名吊销列表。一条“不可弱化下限”**恰好拒绝四件**事：关闭内置检测器的包、丢弃必需类别的包、携带 `allow` 动作的规则，以及设置 email `replace` 标志的规则；因此规则包可以新增检测、扩充内置邮箱后缀集，但永远无法削弱内置检测。签名密钥仍是规则包所增内容之外的信任根，边界见 [docs/plugins.md](docs/plugins.md)。规则在下次启动时加载（绝不热加载），任何问题都会带警告回退到内置默认值。`TOKENHUSH_NO_RULE_SYNC=1` 可以关掉它。
+- **按名指定敏感键，按值脱敏。** 签名规则包或编译文档可以声明 `sensitive_keys`（严格子对象：`keys` 最多 256 个名称，`case_sensitive` 默认 false）；匹配的立即对象成员键（例如 `password`）的值会在请求路径上、任意对象深度被脱敏。不会铸造任何内部替换；该叶上的 `Block` 规则或 blocklist 命中仍会阻断，allowlist 仍然优先。容器值形态与 k8s/docker-env 同形仍不匹配，记录在 [docs/security.md](docs/security.md)。
 - **小、可移植、可扩展。** 纯 Go，以 `CGO_ENABLED=0` 构建，覆盖 macOS、Linux、Windows。跨层接口（`Router`、`CostSink`）与内容插件（`Inspector` / `Transformer`）让你扩展管线；当前只支持编译期插件。
 
 ## 🔁 工作原理
@@ -130,7 +131,7 @@ Tokenhush 在工具前面加一道检查点。它读取每个请求，替换掉�
 </picture>
 
 - **出站：** 网关遍历 JSON body，运行已启用的检测器（默认开启五个，`entropy` 需显式开启），把每个匹配变成会话占位符，再转发给上游。
-- **回程：** 占位符被换回原值，只有你的工具会拿到它们。
+- **回程：** 整段响应（含 SSE）先被缓冲并解码——不存在 token 级流式输出——占位符再被换回原值，只有你的工具会拿到它们。外部占位符按原样返回。
 
 > [!IMPORTANT]
 > 硬规则：占位符在出站方向**永不**回填。只有客户端拿到原值。这正是阻断提示注入回显的机制，注入内容试图让网关把密钥回显给模型时，回显的只会是占位符。
@@ -242,7 +243,7 @@ Tokenhush 不安装系统代理，也不改你的操作系统代理设置；它�
 ## 🚫 本产品不做什么
 
 - **不做 MITM，不装根证书。** 不终止 TLS，也不安装信任根；监听器仅限回环，非回环绑定从构造上被拒绝。
-- **响应路径不脱敏。** 响应路径上的规则只能 allow、warn 或 block。SSE 流上，响应作用域的 block 无法撤回已经发出的增量。
+- **响应路径不脱敏。** 响应路径上的规则只能 allow、warn 或 block。响应（含 SSE 流）在提交任何字节之前已整段缓冲，因此 block 是"什么都还没发出"的 `502`，不存在 token 级流式输出。响应超过 `response_buffer_bytes` 上限是 `502`，超过 `response_timeout` deadline 是 `504`，二者都在提交之前。
 - **不做编码规范化。** 先经 base64、hex 或 URL 编码再离开的密钥检测不到；非 identity 的请求 `Content-Encoding` 以 415 拒绝，而不是为检测而解码。
 - **不检查对象键。** 放在 JSON 对象**键**而不是值里的密钥会原样转发。
 - **没有多余命令。** 没有 `doctor` 命令，没有独立的 `allowlist` 变更命令，没有服务命令，也没有运行时插件加载；控制面恰好是 `GET /status`。
@@ -293,6 +294,8 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+response_buffer_bytes: 33554432
+response_timeout:  5m
 ```
 
 配置目录与数据目录分开：
@@ -314,6 +317,8 @@ detector_timeout:  30s
 | `upstreams` | `{match, target}` 组成的**列表**，不是映射。`match` 是路径前缀，`target` 是不带结尾斜杠的源站。 |
 | `scan_budget_bytes` | 扫描预算，默认 33554432（32 MiB）。 |
 | `detector_timeout` | 检测超时兜底，默认 30s。 |
+| `response_buffer_bytes` | 单个缓冲响应的总量上限，默认 33554432（32 MiB）。超过上限在提交前返回 `502`。 |
+| `response_timeout` | 读取单个响应的整体上限，默认 `5m`。超过 deadline 在提交前返回 `504`；二者同时触发时上限优先。 |
 
 路由按**请求路径**而非厂商名：未匹配的路径回退到内置规则，`/v1/messages` 去 Anthropic，`/v1/chat/completions` 和 `/v1/responses` 去 OpenAI，`GET /v1/models` 是指名的一个例外，默认去 OpenAI。其他未知路径是显式错误，绝不静默错发。模型由请求 body 决定，不由路由决定。完整规则与示例见 [docs/tool-setup.md](docs/tool-setup.md)。
 

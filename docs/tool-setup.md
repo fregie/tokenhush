@@ -235,6 +235,8 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+response_buffer_bytes: 33554432
+response_timeout:  5m
 ```
 
 | Key | Type | Default | What it does |
@@ -252,6 +254,16 @@ detector_timeout:  30s
 | `upstreams` | list of `{match, target}` | empty | Path-prefix routes to your own origins. |
 | `scan_budget_bytes` | integer | `33554432` (32 MiB) | Deterministic scan budget. |
 | `detector_timeout` | duration | `30s` | Detection backstop. |
+| `response_buffer_bytes` | integer | `33554432` (32 MiB) | Total cap on one buffered response. An over-cap response is a 502 before any byte is committed. |
+| `response_timeout` | duration | `5m` | Overall bound on reading one response. A response past the deadline is a 504 before any byte is committed. If the cap and the deadline trip together, the cap wins. |
+
+Every upstream response is buffered **whole** before any byte reaches the client,
+including `text/event-stream`: there is no token-level streaming. A
+response-scoped `Block` on the buffered response, SSE included, is a 502 before
+any byte is committed, and backfill restores a content-split placeholder exactly
+once before that single commit. `response_buffer_bytes` and `response_timeout`
+bound the buffered body and the whole read; over the cap is a 502, past the
+deadline is a 504, and both are decided before commit.
 
 The detector keys are exactly `prefix`, `email`, `luhn`, `jwt`, `pem`, and
 `entropy`. They are not `prefixes`, not `high_entropy`, and not `private_keys`.

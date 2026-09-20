@@ -6,6 +6,7 @@ tokenhush 恰好有一个扩展点：`pkg/filter` 的 `Rule` 接口。检测器�
 
 - [契约](#契约)
 - [检测器 options](#检测器-options)
+- [`sensitive_keys` 块](#sensitive_keys-块)
 - [从你自己的包中编译进规则](#从你自己的包中编译进规则)
 - [内核提供与不提供什么](#内核提供与不提供什么)
 - [响应阶段限制](#响应阶段限制)
@@ -71,6 +72,41 @@ err = reg.RegisterCompiled(compiledDocument)    // OriginRemotePack
 
 追加式 `email.suffixes` 只能扩展内置集合，因此签名规则包可以补上它需要的后缀，
 但永远无法移除或收窄任一内置后缀。内置后缀表本身编译进程序且已冻结。
+
+## `sensitive_keys` 块
+
+编译文档可以在其 `rules` 旁携带一个文档级的 `sensitive_keys` 块。它是严格的子对象，
+不是规则类型：
+
+| 键 | 类型 | 默认值 | 含义 |
+|---|---|---|---|
+| `keys` | 字符串列表 | 无（必填） | 其值要被脱敏的对象成员键名。至少一个键，最多 `MaxSensitiveKeys`（256）个，每个键最多 256 字节（`MaxLiteralBytes`）；空键会被拒绝。 |
+| `case_sensitive` | 布尔值 | `false` | 为 false（默认）时折叠 ASCII 大小写；为 true 时成员键必须逐字节匹配。 |
+
+未知子键会以 `sensitive_keys.<name>` 按名被拒绝，且同一套校验在解码路径与编译路径
+都会运行，因此手工构造的文档无法跳过任何边界。该块不携带 `action` 字段：其效果是
+固定的请求阶段 `redact`。
+
+匹配依据是叶的**立即对象成员键，在任意对象深度**：因此 `{"password":"hunter2"}` 与
+`{"credentials":{"password":"hunter2"}}` 都匹配 `password`，而数字键永远不会匹配
+数组元素。命中的叶整体作为一个 finding 被脱敏——不会铸造任何内部替换，因此不会产生
+孤儿占位符——但会让该叶 `Block` 的规则仍会被求值并保持 Block 优先，全局与每条规则的
+allowlist 也仍会压制该 finding。
+
+两种形态仍不匹配，属于已记录的残余（见 `security.md` R2）：敏感键的值是容器而非字符串
+成员时（`{"password":{"secret":"x"}}`），以及 k8s/docker-env 同形
+（`{"name":"DB_PASSWORD","value":"…"}`）。而放在 JSON 对象键本身的 secret 仍不会被
+捕获。
+
+### 签名规则包的投影槽位
+
+签名规则包把这个块作为其规则载荷的可选字段携带。`SensitiveKeys` 声明在 **`blocklist`
+之后、`rules` 之前**；声明顺序决定投影字节，因此 Pro 签名后端必须使用同一槽位。该字段
+是指向结构体的指针并带 `omitempty`，这一点至关重要：`encoding/json` 不会省略零值结构体，
+非指针字段会把该键加进每一个既有原像、使所有既有签名失效。不含该块的规则包与今天
+逐字节一致地序列化，**不提升 `schema_version`**。操作层面的后果已记录：使用
+`DisallowUnknownFields` 严格解码器的旧客户端会拒绝携带该块的规则包并回退到内置检测器，
+因此后端只能向支持它的客户端发出该块。
 
 ## 从你自己的包中编译进规则
 
@@ -155,8 +191,9 @@ findings, err := reg.Evaluate(leaves, filter.ScopeRequest)
 - **非弱化 floor。** 规则包可以增加检测、提高灵敏度，但 floor 恰好拒绝四件事：禁用
   基线检测器的包、丢弃必需类别的包、携带 `allow` 动作的规则，以及设置 email
   `replace` 标志的规则（那会换掉内置后缀集合）。追加式 `email.suffixes` 扩展内置
-  集合，仍然允许。floor 对 allowlist 保持中立（OD-3）：它不检查全局或每条规则的
-  allowlist，因为更严格的 floor 会拒绝真实签名包、使客户端退回内置检测器。
+  集合，仍然允许；规则包追加式的 `sensitive_keys` 块同样不会被 floor 拒绝。floor 对
+  allowlist 保持中立（OD-3）：它不检查全局或每条规则的 allowlist，因为更严格的 floor
+  会拒绝真实签名包、使客户端退回内置检测器。
 - **信任根。** 规则包只有在通过内嵌规则信任根（`rules-2026-09`）的签名校验之后才会
   被编译。本地运维者文档与签名远程包共用同一个严格解码器与编译器；只有远程路径受
   floor 约束。
