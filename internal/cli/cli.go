@@ -297,9 +297,9 @@ func scanBudget(cfg config.Config) int {
 // because a cache read failure must never block startup. Every warning the
 // activation carries (for example the OD-2 command-rule warning) is written to
 // stderr, so it is never silently dropped.
-func loadCachedPack(registry *filter.Registry, dataDir string, budget int, stderr io.Writer) error {
+func loadCachedPack(registry *filter.Registry, dataDir string, budget int, stderr io.Writer, verifier supply.Verifier) error {
 	sync, err := supply.NewRulesSync(supply.RulesSyncConfig{
-		DataDir: dataDir, Verifier: supply.NewStaticVerifier(),
+		DataDir: dataDir, Verifier: verifier,
 		Fetcher: supply.NewBoundedHTTPFetcher(30*time.Second, supply.MaxRulesDocBytes),
 		Budget:  budget,
 	})

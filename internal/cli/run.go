@@ -152,12 +152,20 @@ type gateway struct {
 // configured scan budget is converted once and used for the built-ins, the
 // cached pack compile and the request-path budget report, so all three agree.
 func buildGateway(cfg config.Config, dataDir string, stderr io.Writer, logRedactions bool) (*gateway, error) {
+	return buildGatewayWithVerifier(cfg, dataDir, stderr, logRedactions, supply.NewStaticVerifier())
+}
+
+// buildGatewayWithVerifier is buildGateway over an injected pack Verifier. It
+// exists so a test can drive the production cache-load path — strict decode,
+// signature verification, floor and compile — against its own in-process
+// issuer key; production always passes the embedded trust roots.
+func buildGatewayWithVerifier(cfg config.Config, dataDir string, stderr io.Writer, logRedactions bool, verifier supply.Verifier) (*gateway, error) {
 	budget := scanBudget(cfg)
 	registry := filter.NewRegistry()
 	if err := registry.RegisterBuiltin(selectBuiltins(cfg.Detectors, budget)...); err != nil {
 		return nil, err
 	}
-	if err := loadCachedPack(registry, dataDir, budget, stderr); err != nil {
+	if err := loadCachedPack(registry, dataDir, budget, stderr, verifier); err != nil {
 		return nil, err
 	}
 	token, err := proxy.NewToken()
