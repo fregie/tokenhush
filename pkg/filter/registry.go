@@ -106,8 +106,9 @@ type registryEntry struct {
 // evaluation starts; a constructed registry is read-only afterwards, and
 // Evaluate keeps no state, so concurrent evaluations are safe.
 type Registry struct {
-	entries []registryEntry
-	ids     map[string]bool
+	entries   []registryEntry
+	ids       map[string]bool
+	sensitive *sensitiveMatcher
 }
 
 // NewRegistry returns an empty, ready registry.
@@ -135,7 +136,13 @@ func (r *Registry) RegisterCompiled(set *Compiled) error {
 	for i := range set.rules {
 		rules[i] = compiledView{set: set, rule: &set.rules[i]}
 	}
-	return r.add(OriginRemotePack, rules)
+	if err := r.add(OriginRemotePack, rules); err != nil {
+		return err
+	}
+	// Only after the whole batch is accepted, so a rejected registration leaves
+	// no sensitive-key matchers behind.
+	r.sensitive = set.sensitive
+	return nil
 }
 
 // Evaluate runs every registered rule whose scope covers phase over every value
@@ -152,7 +159,7 @@ func (r *Registry) Evaluate(leaves []protocol.Leaf, phase Scope) ([]AttributedFi
 	if phase != ScopeRequest && phase != ScopeResponse {
 		return nil, fieldError(ErrInvalidValue, "phase", "unknown evaluation phase %q", phase)
 	}
-	findings, failure := collect(r.entries, leaves, phase, DefaultRuleTimeout)
+	findings, failure := collect(r.entries, r.sensitive, leaves, phase, DefaultRuleTimeout)
 	if failure != nil {
 		return nil, failure
 	}
@@ -322,52 +329,4 @@ func invoke(rule Rule, leaf []byte, phase Scope, timeout time.Duration) invocati
 	case <-timer.C:
 		return invocation{reason: ReasonTimeout}
 	}
-}
-
-// collect runs every entry over every value leaf in deterministic order and
-// returns the attributed findings sorted by (leaf, start, end), or the first
-// labelled failure. The total is bounded by MaxMatches: more is a budget
-// failure, never a truncation. The sort is stable, so an exact-span tie keeps
-// the invocation order.
-func collect(entries []registryEntry, leaves []protocol.Leaf, phase Scope, timeout time.Duration) ([]AttributedFinding, *RuleFailure) {
-	if timeout <= 0 {
-		timeout = DefaultRuleTimeout
-	}
-	var out []AttributedFinding
-	for index := range leaves {
-		value := leaves[index].Value
-		if len(value) == 0 {
-			continue
-		}
-		for i := range entries {
-			entry := entries[i]
-			result := invoke(entry.rule, value, phase, timeout)
-			if result.reason != "" {
-				return nil, &RuleFailure{RuleID: entry.id, Origin: entry.origin, Reason: result.reason}
-			}
-			if result.meta.scope != phase && result.meta.scope != ScopeBoth {
-				continue
-			}
-			if len(out)+len(result.spans) > MaxMatches {
-				return nil, &RuleFailure{RuleID: entry.id, Origin: entry.origin, Reason: ReasonBudget}
-			}
-			for _, span := range result.spans {
-				out = append(out, AttributedFinding{
-					Finding: Finding{RuleID: entry.id, Category: result.meta.category, Action: result.meta.action, LeafIndex: index, Start: span.Start, End: span.End, Confidence: result.meta.confidence},
-					Origin:  entry.origin,
-				})
-			}
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		a, b := out[i], out[j]
-		if a.LeafIndex != b.LeafIndex {
-			return a.LeafIndex < b.LeafIndex
-		}
-		if a.Start != b.Start {
-			return a.Start < b.Start
-		}
-		return a.End < b.End
-	})
-	return out, nil
 }

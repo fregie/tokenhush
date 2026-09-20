@@ -81,6 +81,7 @@ type Compiled struct {
 	rules      []compiledRule
 	allowlist  [][]byte
 	blocklist  [][]byte
+	sensitive  *sensitiveMatcher
 	commandIDs []string
 	budget     int
 }
@@ -110,6 +111,9 @@ func CompileWithBudget(doc *Document, budget int) (*Compiled, error) {
 		return nil, err
 	}
 	if set.blocklist, err = copyLiterals("blocklist", doc.Blocklist); err != nil {
+		return nil, err
+	}
+	if set.sensitive, err = newSensitiveMatcher(doc.SensitiveKeys, doc.Allowlist); err != nil {
 		return nil, err
 	}
 	seen := make(map[string]bool, len(doc.Rules))

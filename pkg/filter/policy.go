@@ -79,9 +79,10 @@ type Decision struct {
 // safe for concurrent use: the entries are immutable after construction and
 // Decide keeps no state.
 type Policy struct {
-	entries []registryEntry
-	sink    audit.AuditSink
-	timeout time.Duration
+	entries   []registryEntry
+	sensitive *sensitiveMatcher
+	sink      audit.AuditSink
+	timeout   time.Duration
 }
 
 // NewPolicy returns a policy over the registry's rules as they are now: later
@@ -97,10 +98,12 @@ func NewPolicy(reg *Registry, cfg PolicyConfig) *Policy {
 		timeout = DefaultRuleTimeout
 	}
 	var entries []registryEntry
+	var sensitive *sensitiveMatcher
 	if reg != nil {
 		entries = append(entries, reg.entries...)
+		sensitive = reg.sensitive
 	}
-	return &Policy{entries: entries, sink: sink, timeout: timeout}
+	return &Policy{entries: entries, sensitive: sensitive, sink: sink, timeout: timeout}
 }
 
 // Decide evaluates the policy's rules over leaves for phase and returns the
@@ -115,7 +118,7 @@ func (p *Policy) Decide(leaves []protocol.Leaf, phase Scope) (Decision, error) {
 	if phase != ScopeRequest && phase != ScopeResponse {
 		return Decision{}, fieldError(ErrInvalidValue, "phase", "unknown decision phase %q", phase)
 	}
-	findings, failure := collect(p.entries, leaves, phase, p.timeout)
+	findings, failure := collect(p.entries, p.sensitive, leaves, phase, p.timeout)
 	decision := Decision{Phase: phase}
 	if failure != nil {
 		decision.Action = ActionBlock

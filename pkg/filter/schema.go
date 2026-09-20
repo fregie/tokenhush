@@ -125,7 +125,11 @@ type Document struct {
 	DisabledCategories []string        `json:"disabled_categories,omitempty"`
 	Allowlist          []string        `json:"allowlist,omitempty"`
 	Blocklist          []string        `json:"blocklist,omitempty"`
-	Rules              []RuleDoc       `json:"rules,omitempty"`
+	// SensitiveKeys is the optional Feature-A block: immediate object member
+	// key names whose values are redacted on the request path. It carries no
+	// action (the effect is fixed) and is additive: absent means no matcher.
+	SensitiveKeys *SensitiveKeysPayload `json:"sensitive_keys,omitempty"`
+	Rules         []RuleDoc             `json:"rules,omitempty"`
 
 	// RemotePack is true when both envelope keys were present.
 	RemotePack bool `json:"-"`
@@ -185,7 +189,7 @@ var actionValues = map[string]bool{"allow": true, "warn": true, "redact": true, 
 
 // documentFields and ruleFields are the complete allowed key sets; every other
 // key is rejected by name with ErrUnknownField.
-var documentFields = map[string]bool{"channel": true, "schema_version": true, "min_binary_version": true, "serial": true, "key_id": true, "not_before": true, "expires": true, "detectors": true, "disabled_categories": true, "allowlist": true, "blocklist": true, "rules": true}
+var documentFields = map[string]bool{"channel": true, "schema_version": true, "min_binary_version": true, "serial": true, "key_id": true, "not_before": true, "expires": true, "detectors": true, "disabled_categories": true, "allowlist": true, "blocklist": true, "sensitive_keys": true, "rules": true}
 
 var ruleFields = map[string]bool{"id": true, "type": true, "category": true, "scope": true, "action": true, "priority": true, "pattern": true, "keywords": true, "case_sensitive": true, "confidence": true, "allowlist": true, "min_digits": true, "max_digits": true, "alphabet": true, "min_length": true, "min_entropy": true, "pure_hex_excluded": true, "pem_headers": true, "command": true, "subcommand": true, "verbs": true, "targets": true, "options": true}
 
@@ -209,6 +213,9 @@ func DecodeDocument(data []byte) (*Document, error) {
 		return nil, fieldError(ErrInvalidValue, "document", "%v", err)
 	}
 	doc.RemotePack = hasSerial
+	if err := validateSensitiveFields(fields); err != nil {
+		return nil, err
+	}
 	if err := finalizeDocument(&doc, fields["rules"]); err != nil {
 		return nil, err
 	}

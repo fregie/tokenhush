@@ -44,9 +44,12 @@ type Finding struct {
 // Evaluate applies every compiled rule whose scope covers phase to every leaf
 // and returns the findings ordered by (leaf index, start, end). A match
 // contained in an occurrence of a global or per-rule allowlist literal is
-// suppressed. A global blocklist occurrence yields a Block finding at
-// confidence 1 in both content phases and is never suppressed. More than
-// MaxMatches findings fails with ErrMatchLimit and no partial results.
+// suppressed. A request-phase leaf whose immediate member key matches the
+// compiled sensitive_keys block is gated: Redact-producing rules are skipped
+// for it and one whole-value finding is emitted, unless an allowlisted literal
+// covers the value; Block-producing rules and the blocklist are still
+// evaluated, so neither is ever suppressed by the gate. More than MaxMatches
+// findings fails with ErrMatchLimit and no partial results.
 func (c *Compiled) Evaluate(leaves []protocol.Leaf, phase Scope) ([]Finding, error) {
 	if c == nil {
 		return nil, fieldError(ErrInvalidValue, "compiled", "nil compiled rule set")
@@ -60,9 +63,13 @@ func (c *Compiled) Evaluate(leaves []protocol.Leaf, phase Scope) ([]Finding, err
 		if len(value) == 0 {
 			continue
 		}
+		gated := phase == ScopeRequest && c.sensitive.matches(leaves[index])
 		for i := range c.rules {
 			rule := &c.rules[i]
 			if rule.scope != phase && rule.scope != ScopeBoth {
+				continue
+			}
+			if gated && rule.action == ActionRedact {
 				continue
 			}
 			spans := rule.spans(value)
@@ -86,6 +93,12 @@ func (c *Compiled) Evaluate(leaves []protocol.Leaf, phase Scope) ([]Finding, err
 					Confidence: rule.confidence,
 				})
 			}
+		}
+		if gated && !c.sensitive.allows(value) {
+			if len(findings) >= MaxMatches {
+				return nil, matchLimitError()
+			}
+			findings = append(findings, sensitiveKeyFinding(index, value))
 		}
 		spans := blocklistSpans(value, c.blocklist, MaxMatches)
 		if len(spans) > MaxMatches {
