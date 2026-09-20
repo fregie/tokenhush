@@ -16,6 +16,8 @@
 //	upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 //	scan_budget_bytes: 33554432
 //	detector_timeout:  30s
+//	response_buffer_bytes: 33554432
+//	response_timeout:  5m
 //
 // A missing file is not an error: Load returns Default(). An existing file is
 // parsed strictly, then every value is validated before it is returned.
@@ -48,6 +50,10 @@ const (
 	ScanBudgetBytes = 32 << 20
 	// DetectorTimeout is the default time budget for one detector pass.
 	DetectorTimeout = 30 * time.Second
+	// ResponseBufferBytes is the default total cap on a buffered response.
+	ResponseBufferBytes = 32 << 20
+	// ResponseTimeout is the default overall bound on reading one response.
+	ResponseTimeout = 5 * time.Minute
 )
 
 // minPort and maxPort bound the accepted TCP port range.
@@ -96,6 +102,9 @@ type Config struct {
 	Upstreams       []Upstream    `yaml:"upstreams"`
 	ScanBudgetBytes int64         `yaml:"scan_budget_bytes"`
 	DetectorTimeout time.Duration `yaml:"detector_timeout"`
+
+	ResponseBufferBytes int64         `yaml:"response_buffer_bytes"`
+	ResponseTimeout     time.Duration `yaml:"response_timeout"`
 }
 
 // Listen is the address the proxy binds.
@@ -166,8 +175,10 @@ func Default() Config {
 			JWT:    true,
 			PEM:    true,
 		},
-		ScanBudgetBytes: ScanBudgetBytes,
-		DetectorTimeout: DetectorTimeout,
+		ScanBudgetBytes:     ScanBudgetBytes,
+		DetectorTimeout:     DetectorTimeout,
+		ResponseBufferBytes: ResponseBufferBytes,
+		ResponseTimeout:     ResponseTimeout,
 	}
 }
 
@@ -226,6 +237,20 @@ func (c Config) Validate() error {
 		return &FieldError{
 			Path:    "detector_timeout",
 			Problem: fmt.Sprintf("%s must be positive", c.DetectorTimeout),
+			Kind:    ErrInvalidValue,
+		}
+	}
+	if c.ResponseBufferBytes <= 0 {
+		return &FieldError{
+			Path:    "response_buffer_bytes",
+			Problem: fmt.Sprintf("%d must be positive", c.ResponseBufferBytes),
+			Kind:    ErrInvalidValue,
+		}
+	}
+	if c.ResponseTimeout <= 0 {
+		return &FieldError{
+			Path:    "response_timeout",
+			Problem: fmt.Sprintf("%s must be positive", c.ResponseTimeout),
 			Kind:    ErrInvalidValue,
 		}
 	}
