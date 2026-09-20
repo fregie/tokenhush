@@ -184,6 +184,7 @@ func appendLeaf(out []Leaf, raw, path string, encoded bool, depth int, tok *rawT
 	identity := joinIdentity(path, wc.inherited, wc.next(path))
 	return append(out, Leaf{
 		Path: path, Value: []byte(raw), Length: len(raw), Encoded: encoded, tok: tok,
+		Member: wc.member, Key: wc.key,
 		Identity: identity, Identifiable: len(identity) <= maxIdentityBytes,
 	})
 }

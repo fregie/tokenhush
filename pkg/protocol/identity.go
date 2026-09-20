@@ -30,11 +30,14 @@ type frameScalar struct {
 type walkContext struct {
 	inherited []frameScalar
 	occurred  map[string]int
+	member    bool   // the leaf's immediate parent is an object
+	key       string // that object's decoded member key (invalid when !member)
 }
 
 // child returns the context for a leaf inside the open stack: the inherited
 // scalar context followed by the open frames' captured scalars, outermost to
-// innermost, sharing this call's occurrence counter.
+// innermost, sharing this call's occurrence counter. It also records the
+// innermost frame as the leaf's immediate object member, if it is an object.
 func (c *walkContext) child(stack []frame) *walkContext {
 	if c.occurred == nil {
 		c.occurred = map[string]int{}
@@ -43,7 +46,22 @@ func (c *walkContext) child(stack []frame) *walkContext {
 	if len(stack) > 0 {
 		inherited = append(append([]frameScalar(nil), inherited...), flattenScalars(stack)...)
 	}
-	return &walkContext{inherited: inherited, occurred: c.occurred}
+	member, key := memberKey(stack)
+	return &walkContext{inherited: inherited, occurred: c.occurred, member: member, key: key}
+}
+
+// memberKey reports whether the innermost open frame is an object and, if so,
+// its decoded member key. A leaf at the document root or one inside an array is
+// not an object member.
+func memberKey(stack []frame) (bool, string) {
+	if len(stack) == 0 {
+		return false, ""
+	}
+	top := stack[len(stack)-1]
+	if !top.object {
+		return false, ""
+	}
+	return true, top.key
 }
 
 // next returns the 0-based occurrence of path and advances the counter.
