@@ -102,7 +102,7 @@ func TestRulesPackPayloadGoldenWithSensitiveKeys(t *testing.T) {
 	blockAt := strings.Index(string(richRaw), `"blocklist"`)
 	sensitiveAt := strings.Index(string(richRaw), `"sensitive_keys"`)
 	rulesAt := strings.Index(string(richRaw), `"rules"`)
-	if blockAt < 0 || sensitiveAt < 0 || rulesAt < 0 || !(blockAt < sensitiveAt && sensitiveAt < rulesAt) {
+	if blockAt < 0 || sensitiveAt < 0 || rulesAt < 0 || blockAt >= sensitiveAt || sensitiveAt >= rulesAt {
 		t.Fatalf("sensitive_keys is not pinned between blocklist and rules: %s", richRaw)
 	}
 }

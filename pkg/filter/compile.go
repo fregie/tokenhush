@@ -113,8 +113,11 @@ func CompileWithBudget(doc *Document, budget int) (*Compiled, error) {
 	if set.blocklist, err = copyLiterals("blocklist", doc.Blocklist); err != nil {
 		return nil, err
 	}
-	if set.sensitive, err = newSensitiveMatcher(doc.SensitiveKeys, doc.Allowlist); err != nil {
-		return nil, err
+	// A document without the block keeps a nil matcher and adds no behaviour.
+	if doc.SensitiveKeys != nil {
+		if set.sensitive, err = newSensitiveMatcher(doc.SensitiveKeys, doc.Allowlist); err != nil {
+			return nil, err
+		}
 	}
 	seen := make(map[string]bool, len(doc.Rules))
 	for i := range doc.Rules {

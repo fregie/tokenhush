@@ -33,13 +33,11 @@ type sensitiveMatcher struct {
 }
 
 // newSensitiveMatcher validates and builds the matcher from a decoded block and
-// the document allowlist. A nil payload yields a nil matcher, so a document
-// without the block adds no behaviour. The key list is re-validated here so a
-// hand-built document cannot skip a bound the decoder enforces.
+// the document allowlist. The caller only builds a matcher for a document that
+// carries the block, so payload must be non-nil; a document without the block
+// keeps a nil matcher and adds no behaviour. The key list is re-validated here
+// so a hand-built document cannot skip a bound the decoder enforces.
 func newSensitiveMatcher(payload *SensitiveKeysPayload, allowlist []string) (*sensitiveMatcher, error) {
-	if payload == nil {
-		return nil, nil
-	}
 	if err := checkSensitiveKeys(payload.Keys); err != nil {
 		return nil, err
 	}

@@ -74,10 +74,9 @@ type parityRecord struct {
 func parityRecords(findings []Finding) []parityRecord {
 	out := make([]parityRecord, 0, len(findings))
 	for _, finding := range findings {
-		out = append(out, parityRecord{
-			RuleID: finding.RuleID, Category: finding.Category, Action: finding.Action,
-			LeafIndex: finding.LeafIndex, Start: finding.Start, End: finding.End, Confidence: finding.Confidence,
-		})
+		// parityRecord mirrors Finding's fields exactly, so the projection is
+		// a plain conversion.
+		out = append(out, parityRecord(finding))
 	}
 	return out
 }
