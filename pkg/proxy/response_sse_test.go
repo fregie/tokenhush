@@ -332,69 +332,51 @@ func TestSSEStreamOpenWindowFlushesCleanly(t *testing.T) {
 	}
 }
 
-// TestSSEResponseBlockEmitsErrorRecordAndCloses: the first whole-event
-// evaluation decides; a Block emits exactly one error record naming the rule
-// id and closes the stream, and both counters move.
-func TestSSEResponseBlockEmitsErrorRecordAndCloses(t *testing.T) {
+// TestSSEHandlerIsNonEvaluating pins B-FD5: the incremental SSE handler
+// restores placeholders and never decides. An injected Block evaluator is
+// inert -- the stream round-trips byte-identically, no in-stream error record is
+// emitted, the evaluator is never called, and no counter or warning moves.
+// Response-scoped Block is the whole-response buffered path's job.
+func TestSSEHandlerIsNonEvaluating(t *testing.T) {
 	stream := sseRecord("delta", `{"hi":1}`) + sseRecord("delta", `{"hi":2}`)
-
-	t.Run("block", func(t *testing.T) {
-		evaluator := &scriptedEvaluator{decision: ResponseDecision{Action: ResponseBlock, RuleIDs: []string{"rule-7"}}}
-		counters := NewCounters()
-		h := NewSSEHandler(SSEResponseConfig{Evaluator: evaluator, Counters: counters})
-
-		out, err := h.Write([]byte(stream))
-		if err != nil {
-			t.Fatalf("Write: %v", err)
-		}
-		want := "event: error\ndata: {\"error\":\"rule_blocked\",\"rule_id\":\"rule-7\"}\n\n"
-		if string(out) != want {
-			t.Fatalf("block record:\n got %q\nwant %q", out, want)
-		}
-		if seen := evaluator.seen(); len(seen) != 1 || string(seen[0]) != `{"hi":1}` {
-			t.Errorf("evaluator saw %q, want the first whole event exactly once", seen)
-		}
-		if !h.closed() {
-			t.Error("stream is not closed after a Block")
-		}
-		if got := counters.ContentPolicyBlocks(); got != 1 {
-			t.Errorf("ContentPolicyBlocks = %d, want 1", got)
-		}
-		if got := counters.RuleBlocks(); got != 1 {
-			t.Errorf("RuleBlocks = %d, want 1", got)
-		}
-		if got := counters.WalkSkips(); got != 0 {
-			t.Errorf("WalkSkips = %d, want 0", got)
-		}
-		if _, err := h.Write([]byte(sseRecord("delta", `{"hi":3}`))); !errors.Is(err, ErrSSEClosed) {
-			t.Errorf("Write after Block error = %v, want ErrSSEClosed", err)
-		}
-		if extra, err := h.Flush(); err != nil || len(extra) != 0 {
-			t.Errorf("Flush after Block = (%q, %v), want (empty, nil)", extra, err)
-		}
+	evaluator := &scriptedEvaluator{decision: ResponseDecision{Action: ResponseBlock, RuleIDs: []string{"rule-7"}}}
+	counters := NewCounters()
+	warnings := &recordingWarnings{}
+	h := NewSSEHandler(SSEResponseConfig{
+		Evaluator: evaluator, Backfiller: nil, Counters: counters, Warnings: warnings,
 	})
 
-	t.Run("warn", func(t *testing.T) {
-		evaluator := &scriptedEvaluator{decision: ResponseDecision{Action: ResponseWarn, RuleIDs: []string{"warn-1"}}}
-		counters := NewCounters()
-		warnings := &recordingWarnings{}
-		h := NewSSEHandler(SSEResponseConfig{Evaluator: evaluator, Counters: counters, Warnings: warnings})
-
-		out := sseDrive(t, h, sseChunks(stream, 6))
-		if !bytes.Equal(out, []byte(stream)) {
-			t.Fatalf("a Warn must forward the stream unchanged:\n got %q\nwant %q", out, stream)
-		}
-		if got := warnings.seen(); len(got) != 1 {
-			t.Fatalf("warnings = %q, want exactly one", got)
-		}
-		if counters.ContentPolicyBlocks() != 0 || counters.RuleBlocks() != 0 || counters.WalkSkips() != 0 {
-			t.Errorf("counters moved on a Warn: content=%d rule=%d walk=%d",
-				counters.ContentPolicyBlocks(), counters.RuleBlocks(), counters.WalkSkips())
-		}
-		if !h.closed() {
-			t.Error("stream is not closed after Flush")
-		}
-	})
+	out := sseDrive(t, h, sseChunks(stream, 6))
+	if !bytes.Equal(out, []byte(stream)) {
+		t.Fatalf("stream:\n got %q\nwant %q unchanged", out, stream)
+	}
+	if bytes.Contains(out, []byte("event: error")) {
+		t.Fatalf("an in-stream block record was emitted: %q", out)
+	}
+	if seen := evaluator.seen(); len(seen) != 0 {
+		t.Errorf("evaluator saw %q, want the SSE handler to evaluate nothing", seen)
+	}
+	if got := counters.ContentPolicyBlocks(); got != 0 {
+		t.Errorf("ContentPolicyBlocks = %d, want 0", got)
+	}
+	if got := counters.RuleBlocks(); got != 0 {
+		t.Errorf("RuleBlocks = %d, want 0", got)
+	}
+	if got := counters.WalkSkips(); got != 0 {
+		t.Errorf("WalkSkips = %d, want 0", got)
+	}
+	if got := warnings.seen(); len(got) != 0 {
+		t.Errorf("warnings = %q, want none", got)
+	}
+	if !h.closed() {
+		t.Error("stream is not closed after Flush")
+	}
+	if _, err := h.Write([]byte(sseRecord("delta", `{"hi":3}`))); !errors.Is(err, ErrSSEClosed) {
+		t.Errorf("Write after Flush error = %v, want ErrSSEClosed", err)
+	}
+	if extra, err := h.Flush(); err != nil || len(extra) != 0 {
+		t.Errorf("second Flush = (%q, %v), want (empty, nil)", extra, err)
+	}
 }
 
 // TestSSEStreamExactlyOneAccumulator: the stream path holds exactly one

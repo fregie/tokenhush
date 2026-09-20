@@ -62,6 +62,22 @@ legacy versions must be ported rather than shimmed:
 | Deleted subsystems | The change-channel guard, outbound encoding re-check, key-position blocking, capability tiers, keyring/secret store, `pkg/license`, OS-service stubs and the runtime plugin protocol do not exist. Pro features built on them need a new design or must be dropped. |
 | Extension point | Rules are compile-time only, through `pkg/filter`'s `Rule` registry. There is no runtime plugin loading and no capability negotiation. |
 | Response path | Rules may only block or warn; redaction is request-path only. |
+| SSE response | The incremental `SSEHandler` no longer decides (see below). |
+
+## The SSE response handler no longer decides
+
+Response-scoped evaluation moved to a **whole-response buffered** path. The
+gateway buffers a `text/event-stream` response, decodes its declared
+Content-Encoding, evaluates the aggregate of every event whose joined `data` is
+valid JSON (a JSON event the walk fails counts one `walk_skip`; a non-JSON,
+`[DONE]`, ping/comment or zero-leaf event counts none), and only then commits:
+a response-scoped Block is a `502` with nothing already sent. The incremental
+`proxy.SSEHandler` is now pure reassembly and placeholder restore — its
+`Evaluator`, `Counters` and `Warnings` config fields are retained for API
+compatibility but are **inert**, and no production path emits an in-stream
+block record. Pro code that relied on the old first-whole-event, in-stream
+block semantics — or on the error record it returned — must consume the
+buffered verdict instead.
 
 ## Migration checklist (for the separate Pro effort)
 
