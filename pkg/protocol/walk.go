@@ -37,6 +37,12 @@ type Leaf struct {
 	Length  int    // len(Value)
 	Encoded bool   // true when reached by decoding a JSON-encoded string
 
+	// Member is true only for a string leaf whose immediate parent is an object,
+	// in which case Key holds that object's decoded member key. Hand-built and
+	// plugin leaves default to non-member (Member false, Key empty).
+	Member bool
+	Key    string
+
 	// Identity is the channel discriminator: Path, then each enclosing frame's
 	// preceding non-string scalar members rendered name=rawValue, then the
 	// leaf's occurrence among same-Path leaves. Identifiable is false when the
