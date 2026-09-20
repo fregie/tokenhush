@@ -20,10 +20,11 @@ import (
 // labelled failure. The total is bounded by MaxMatches: more is a budget
 // failure, never a truncation. The sort is stable, so an exact-span tie keeps
 // the invocation order. A request-phase leaf whose immediate member key matches
-// sensitive is gated: Redact-producing rules are skipped for it and one
-// whole-value OriginRemotePack finding is emitted unless an allowlisted literal
-// covers the value. A Block-producing rule is still evaluated, so the gate can
-// never suppress a block.
+// sensitive is gated: a Redact-producing rule is skipped BEFORE it is invoked,
+// so a rule that misbehaves only on a gated leaf can never fail the request
+// closed, and one whole-value OriginRemotePack finding is emitted unless an
+// allowlisted literal covers the value. A Block-producing rule is still
+// evaluated, so the gate can never suppress a block.
 func collect(entries []registryEntry, sensitive *sensitiveMatcher, leaves []protocol.Leaf, phase Scope, timeout time.Duration) ([]AttributedFinding, *RuleFailure) {
 	if timeout <= 0 {
 		timeout = DefaultRuleTimeout
@@ -37,6 +38,9 @@ func collect(entries []registryEntry, sensitive *sensitiveMatcher, leaves []prot
 		gated := phase == ScopeRequest && sensitive.matches(leaves[index])
 		for i := range entries {
 			entry := entries[i]
+			if gated && entry.rule.Action() == ActionRedact {
+				continue
+			}
 			result := invoke(entry.rule, value, phase, timeout)
 			if result.reason != "" {
 				return nil, &RuleFailure{RuleID: entry.id, Origin: entry.origin, Reason: result.reason}

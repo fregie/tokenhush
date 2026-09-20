@@ -27,7 +27,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/fregie/tokenhush/pkg/proxy"
@@ -115,9 +114,9 @@ func (w *responseWriter) finish() {
 	}
 	switch {
 	case w.capExceeded:
-		http.Error(w.dst, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		w.refuseLocal(http.StatusBadGateway)
 	case w.timedOut:
-		http.Error(w.dst, http.StatusText(http.StatusGatewayTimeout), http.StatusGatewayTimeout)
+		w.refuseLocal(http.StatusGatewayTimeout)
 	case w.local:
 		w.commitLocal()
 	case streamingSSE(w.Header()):
@@ -139,7 +138,7 @@ func (w *responseWriter) commitLocal() {
 func (w *responseWriter) commitBuffered() {
 	status, header, body, err := w.gate.responses.Handle(w.upstreamResponse())
 	if err != nil {
-		http.Error(w.dst, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		w.refuseLocal(http.StatusBadGateway)
 		return
 	}
 	w.commit(status, header, body)
@@ -150,10 +149,20 @@ func (w *responseWriter) commitBuffered() {
 func (w *responseWriter) commitSSE() {
 	status, header, body, err := w.gate.responses.HandleBufferedSSE(w.upstreamResponse())
 	if err != nil {
-		http.Error(w.dst, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
+		w.refuseLocal(http.StatusBadGateway)
 		return
 	}
 	w.commit(status, header, body)
+}
+
+// refuseLocal replaces the client response with a locally generated refusal.
+// It clears every header the forwarder copied from the upstream first: the
+// stdlib http.Error deliberately keeps Content-Encoding, so a refusal after a
+// Content-Encoding: gzip upstream would otherwise advertise its plain-text body
+// as gzip and the client would mis-decode it.
+func (w *responseWriter) refuseLocal(status int) {
+	clear(w.dst.Header())
+	http.Error(w.dst, http.StatusText(status), status)
 }
 
 // upstreamResponse adapts the recorded status, headers and buffer into the
@@ -176,12 +185,14 @@ func (w *responseWriter) commit(status int, header http.Header, body []byte) {
 	_, _ = w.dst.Write(body)
 }
 
-// streamingSSE reports whether a response is an identity-encoded
-// text/event-stream. It is classification only: it decides which buffered
+// streamingSSE reports whether a response is a text/event-stream, classified by
+// Content-Type alone. Tying the decision to a declared Content-Encoding would
+// route an encoded event stream to the ordinary buffered path, where the whole
+// stream is evaluated as one JSON document and placeholders are not
+// reassembled across events; pkg/proxy's HandleBufferedSSE decodes every
+// declared coding itself. It is classification only: it decides which buffered
 // response path finish() runs, and commits nothing.
 func streamingSSE(header http.Header) bool {
 	media := strings.TrimSpace(strings.SplitN(header.Get("Content-Type"), ";", 2)[0])
-	return strings.EqualFold(media, "text/event-stream") && !slices.ContainsFunc(header.Values("Content-Encoding"), func(value string) bool {
-		return !strings.EqualFold(strings.TrimSpace(value), "identity")
-	})
+	return strings.EqualFold(media, "text/event-stream")
 }
