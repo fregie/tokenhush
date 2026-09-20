@@ -32,6 +32,16 @@ type dialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
 // (fail closed) and the untransformed bytes are never forwarded.
 type BodyTransform func([]byte) ([]byte, error)
 
+// ResponseRecorder is the optional seam a client-bound http.ResponseWriter may
+// implement so the forwarder can tell it when it is about to write a locally
+// generated error and how the upstream body copy ended. The gateway's buffered
+// responseWriter implements it; a plain http.ResponseWriter does not, and every
+// call site type-asserts and tolerates a nil implementation.
+type ResponseRecorder interface {
+	MarkLocal()
+	RecordCopyError(error)
+}
+
 // forwardOption configures a Forwarder at construction.
 type forwardOption func(*forwardConfig)
 
@@ -117,18 +127,22 @@ func parseUpstream(raw string) (*url.URL, error) {
 // dispatched; Accept-Encoding is stripped so the upstream answers with bytes
 // the response path can classify.
 func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	recorder, _ := w.(ResponseRecorder)
 	if !identityOnlyEncoding(r.Header) {
+		markLocal(recorder)
 		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
 		return
 	}
 	body, err := readRequestBody(r)
 	if err != nil {
+		markLocal(recorder)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 	if f.transform != nil {
 		transformed, err := f.transform(body)
 		if err != nil {
+			markLocal(recorder)
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -137,6 +151,7 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	outbound, err := http.NewRequestWithContext(r.Context(), r.Method, f.target(r).String(), bytes.NewReader(body))
 	if err != nil {
+		markLocal(recorder)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -152,7 +167,17 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	copyEndToEndHeaders(w.Header(), response.Header)
 	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	if _, err := io.Copy(w, response.Body); err != nil && recorder != nil {
+		recorder.RecordCopyError(err)
+	}
+}
+
+// markLocal flags a locally generated response through the optional
+// ResponseRecorder seam. A writer that does not implement it is unaffected.
+func markLocal(recorder ResponseRecorder) {
+	if recorder != nil {
+		recorder.MarkLocal()
+	}
 }
 
 // readRequestBody consumes the whole client body. Reading is intentionally
@@ -264,8 +289,14 @@ func identityOnlyEncoding(header http.Header) bool {
 const defaultDialTimeout = 10 * time.Second
 
 // defaultResponseHeaderTimeout bounds time-to-first-byte from the upstream. It
-// deliberately does not cover the response body: a long-lived SSE stream may
-// stay open for minutes and must not be cut.
+// does not itself bound the response body; the whole-response read is bounded
+// separately by the gateway's response_timeout deadline on the request context.
+//
+// This deliberately reverses the earlier decision to exclude the response body
+// from any timeout: token-level streaming is removed and the gateway now
+// buffers every response whole, so a wedged upstream body must not hold a
+// client forever. An SSE stream that previously stayed open for minutes is now
+// bounded by response_timeout too.
 const defaultResponseHeaderTimeout = 5 * time.Minute
 
 // newForwardClient returns the bounded outbound client. Automatic compression
@@ -294,9 +325,13 @@ func newForwardClient(dial dialFunc) *http.Client {
 
 // writeTransportError maps an upstream transport failure to a client-visible
 // status: 504 for a timeout or deadline, 502 otherwise; never a hang and never
-// a 2xx. The body is status text only because transport errors can embed the
-// upstream URL.
+// a 2xx. The response is locally generated, so it is marked through the
+// optional ResponseRecorder seam before anything is written. The body is
+// status text only because transport errors can embed the upstream URL.
 func writeTransportError(w http.ResponseWriter, err error) {
+	if recorder, ok := w.(ResponseRecorder); ok {
+		recorder.MarkLocal()
+	}
 	status := http.StatusBadGateway
 	var netErr net.Error
 	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {

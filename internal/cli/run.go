@@ -226,8 +226,10 @@ func (g *gateway) serve(listener net.Listener, notify func(chan<- os.Signal)) er
 
 // route resolves the request path and forwards it through the redaction
 // transform, wrapping the client-bound response so the response path can
-// decode, evaluate and backfill it. An unknown path is a 404 and is never
-// guessed at; the one local route (GET /v1/models) never dials an upstream.
+// decode, evaluate and backfill it. The outbound request context also carries
+// the response_timeout deadline, so the whole upstream response read is
+// bounded. An unknown path is a 404 and is never guessed at; the one local
+// route (GET /v1/models) never dials an upstream.
 func (g *gateway) route(w http.ResponseWriter, r *http.Request) {
 	upstream, err := proxy.Resolve(r.URL.Path, g.cfg)
 	if err != nil {
@@ -238,6 +240,11 @@ func (g *gateway) route(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"object":"list","data":[]}`)
 		return
+	}
+	if g.responseTimeout > 0 {
+		ctx, cancel := context.WithTimeout(r.Context(), g.responseTimeout)
+		defer cancel()
+		r = r.WithContext(ctx)
 	}
 	forwarder, err := g.forwarder(upstream.BaseURL)
 	if err != nil {

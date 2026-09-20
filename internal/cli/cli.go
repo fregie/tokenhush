@@ -1,17 +1,15 @@
 // Package cli assembles the tokenhush command line: it is the only place that
 // wires pkg/proxy, pkg/filter, pkg/redact and pkg/supply into a running
-// product. cli.go holds the dispatcher, the content-policy glue that turns
-// rule decisions into proxy verdicts, and the client-bound response writer;
-// the run command and the HTTP surface live in run.go.
+// product. cli.go holds the dispatcher and the content-policy glue that turns
+// rule decisions into proxy verdicts; the run command and the HTTP surface live
+// in run.go, and the client-bound response writer in response_writer.go.
 package cli
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"maps"
-	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -140,117 +138,6 @@ func maskSecret(value, kind string) string {
 		return "[redacted]"
 	}
 	return "****"
-}
-
-// responseWriter intercepts the forwarder's client-bound response so the
-// buffered and SSE response paths inspect it before the client sees a byte.
-// An identity-encoded event stream is streamed through the SSE handler (a nil
-// sse means buffered); everything else is buffered and handed to the response
-// handler, which decodes the body before any status is committed (invariants 7
-// and 8).
-type responseWriter struct {
-	dst    http.ResponseWriter
-	gate   *gateway
-	req    *http.Request
-	sse    *proxy.SSEHandler
-	buf    bytes.Buffer
-	status int
-	sent   bool
-}
-
-// Header implements http.ResponseWriter.
-func (w *responseWriter) Header() http.Header { return w.dst.Header() }
-
-// WriteHeader implements http.ResponseWriter. A buffered status is recorded,
-// never committed, so decoding can still fail closed with a 502; a stream is
-// committed here because the SSE framing must flow.
-func (w *responseWriter) WriteHeader(status int) {
-	if w.sent {
-		return
-	}
-	w.sent, w.status = true, status
-	if !streamingSSE(w.Header()) {
-		return
-	}
-	w.Header().Del("Content-Length")
-	w.dst.WriteHeader(status)
-	w.sse = proxy.NewSSEHandler(proxy.SSEResponseConfig{
-		Context: w.req.Context(), Evaluator: w.gate, Backfiller: w.gate.restorer, Counters: w.gate.counters, Warnings: w.gate,
-	})
-}
-
-// Write implements http.ResponseWriter: a buffered body accumulates; a stream
-// is backfilled and written through, flushed per chunk so SSE events arrive
-// without waiting for the write buffer to fill.
-func (w *responseWriter) Write(p []byte) (int, error) {
-	if !w.sent {
-		w.WriteHeader(http.StatusOK)
-	}
-	if w.sse == nil {
-		return w.buf.Write(p)
-	}
-	out, err := w.sse.Write(p)
-	if err != nil {
-		return 0, err
-	}
-	if _, err := w.dst.Write(out); err != nil {
-		return 0, err
-	}
-	w.flush()
-	return len(p), nil
-}
-
-// flush forwards a flush to the client when the writer supports it, so SSE
-// events arrive without waiting for the write buffer to fill.
-func (w *responseWriter) flush() {
-	if flusher, ok := w.dst.(http.Flusher); ok {
-		flusher.Flush()
-	}
-}
-
-// finish completes the response after the forwarder returns: flush the SSE
-// stream, or run the buffered response path and commit its verdict. A 415 is
-// generated locally before any upstream byte is read, so it is a transport
-// refusal and must not move a content counter.
-func (w *responseWriter) finish() {
-	if w.sse != nil {
-		if out, err := w.sse.Flush(); err == nil && len(out) > 0 {
-			_, _ = w.dst.Write(out)
-			w.flush()
-		}
-		return
-	}
-	if !w.sent {
-		w.sent, w.status = true, http.StatusOK
-	}
-	status, header, body := w.status, w.Header(), w.buf.Bytes()
-	if status != http.StatusUnsupportedMediaType {
-		processed, processedHeader, processedBody, err := w.gate.responses.Handle(&http.Response{
-			StatusCode: status, Header: header.Clone(), Body: io.NopCloser(&w.buf), Request: w.req,
-		})
-		if err != nil {
-			http.Error(w.dst, http.StatusText(http.StatusBadGateway), http.StatusBadGateway)
-			return
-		}
-		status, header, body = processed, processedHeader, processedBody
-	}
-	dst := w.dst.Header()
-	clear(dst)
-	for key, values := range header {
-		dst[key] = values
-	}
-	w.dst.WriteHeader(status)
-	_, _ = w.dst.Write(body)
-}
-
-// streamingSSE reports whether a response is an identity-encoded
-// text/event-stream: the one body the client-bound writer streams instead of
-// buffering. Any other encoding is buffered and decoded by the response path.
-func streamingSSE(header http.Header) bool {
-	media := strings.TrimSpace(strings.SplitN(header.Get("Content-Type"), ";", 2)[0])
-	return strings.EqualFold(media, "text/event-stream") && !slices.ContainsFunc(header.Values("Content-Encoding"), func(value string) bool {
-		return !strings.EqualFold(strings.TrimSpace(value), "identity")
-	})
 }
 
 // Warn implements proxy.WarningWriter: the proxy's metadata-only response
