@@ -143,6 +143,9 @@ type gateway struct {
 	forwarders    map[string]*proxy.Forwarder
 	port          int
 	addrs         []string
+
+	responseBufferBytes int64
+	responseTimeout     time.Duration
 }
 
 // buildGateway builds the pipeline from the config: the built-in rule
@@ -174,6 +177,7 @@ func buildGatewayWithVerifier(cfg config.Config, dataDir string, stderr io.Write
 	}
 	gateway := &gateway{
 		cfg: cfg, stderr: stderr, logRedactions: logRedactions, budget: budget, token: token,
+		responseBufferBytes: cfg.ResponseBufferBytes, responseTimeout: cfg.ResponseTimeout,
 		policy: filter.NewPolicy(registry, filter.PolicyConfig{Timeout: cfg.DetectorTimeout}),
 		writer: redact.NewForwardWriter(nil), backfiller: sessionBackfiller(cfg, token), counters: proxy.NewCounters(),
 		started: time.Now(), forwarders: make(map[string]*proxy.Forwarder),

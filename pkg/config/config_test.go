@@ -193,6 +193,57 @@ func TestParseRejectsNonPositiveNumbers(t *testing.T) {
 	}
 }
 
+func TestParseResponseLimits(t *testing.T) {
+	doc := "response_buffer_bytes: 1048576\nresponse_timeout: 90s\n"
+	cfg, err := Parse([]byte(doc))
+	if err != nil {
+		t.Fatalf("Parse(response limits) error = %v, want nil", err)
+	}
+	if cfg.ResponseBufferBytes != 1048576 {
+		t.Errorf("ResponseBufferBytes = %d, want 1048576", cfg.ResponseBufferBytes)
+	}
+	if cfg.ResponseTimeout != 90*time.Second {
+		t.Errorf("ResponseTimeout = %s, want 90s", cfg.ResponseTimeout)
+	}
+
+	partial, err := Parse([]byte("log: {level: warn}\n"))
+	if err != nil {
+		t.Fatalf("Parse(partial document) error = %v, want nil", err)
+	}
+	if partial.ResponseBufferBytes != ResponseBufferBytes {
+		t.Errorf("absent response_buffer_bytes = %d, want the default %d", partial.ResponseBufferBytes, ResponseBufferBytes)
+	}
+	if partial.ResponseBufferBytes != 32<<20 {
+		t.Errorf("ResponseBufferBytes default = %d, want %d (32 MiB)", partial.ResponseBufferBytes, 32<<20)
+	}
+	if partial.ResponseTimeout != ResponseTimeout {
+		t.Errorf("absent response_timeout = %s, want the default %s", partial.ResponseTimeout, ResponseTimeout)
+	}
+	if partial.ResponseTimeout != 5*time.Minute {
+		t.Errorf("ResponseTimeout default = %s, want 5m", partial.ResponseTimeout)
+	}
+
+	rejections := map[string]string{
+		"zero response buffer":      "response_buffer_bytes: 0",
+		"negative response buffer":  "response_buffer_bytes: -1",
+		"zero response timeout":     "response_timeout: 0s",
+		"negative response timeout": "response_timeout: -1s",
+	}
+	for name, bad := range rejections {
+		t.Run(name, func(t *testing.T) {
+			err := mustReject(t, bad+"\n")
+			if !errors.Is(err, ErrInvalidValue) {
+				t.Errorf("Parse(%q) error = %v, want it to wrap ErrInvalidValue", bad, err)
+			}
+		})
+	}
+
+	err = mustReject(t, "response_buffer_bytes: 1048576\nunknown_response_key: 1\n")
+	if !errors.Is(err, ErrUnknownField) {
+		t.Errorf("Parse(unknown key) error = %v, want it to wrap ErrUnknownField", err)
+	}
+}
+
 func TestParseRejectsUnknownDetectorName(t *testing.T) {
 	err := mustReject(t, "detectors: {wat: true}\n")
 
