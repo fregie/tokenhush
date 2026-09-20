@@ -281,7 +281,14 @@ type RulesPackPayload struct {
 	DisabledCategories []string        `json:"disabled_categories,omitempty"`
 	Allowlist          []string        `json:"allowlist,omitempty"`
 	Blocklist          []string        `json:"blocklist,omitempty"`
-	Rules              []RulesRule     `json:"rules,omitempty"`
+	// SensitiveKeys sits IMMEDIATELY after Blocklist and before Rules: the
+	// declaration order below defines the signed projection bytes, so the Pro
+	// signing backend must use this exact slot. It is a pointer with
+	// omitempty on purpose — encoding/json does NOT omit a zero struct, so a
+	// non-pointer field would add the key to every existing preimage and
+	// invalidate every signature already in force.
+	SensitiveKeys *SensitiveKeysPayload `json:"sensitive_keys,omitempty"`
+	Rules         []RulesRule           `json:"rules,omitempty"`
 
 	// Signature is carried by the document so a decoded payload can be
 	// verified. It is never part of the signed payload: every projection
@@ -328,7 +335,9 @@ type RulesRevocationsPayload struct {
 
 // RulesPackSigningInput returns the exact bytes a pack signature covers: the
 // domain tag followed by the SHA-256 of the frozen payload JSON, computed from
-// the payload as decoded, with no defaults applied.
+// the payload as decoded, with no defaults applied. Marshaling the whole
+// payload means the projection covers SensitiveKeys (and every other declared
+// field) automatically; there is no per-field wiring to drift.
 func RulesPackSigningInput(p RulesPackPayload) []byte {
 	p.Signature = ""
 	return rulesSigningInput(DomainRulesPack, p)
