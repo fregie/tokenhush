@@ -51,7 +51,7 @@ go install github.com/fregie/tokenhush/cmd/tokenhush@main
 ```
 
 Use `@main` for the current line. `@latest` still resolves to the older
-published tag, so it does not give you the v0.5.0 rewrite.
+published tag, so it does not give you the from-scratch rewrite.
 
 ### Put it on `PATH`
 
@@ -180,13 +180,13 @@ Adjust `/TR` to the full path of `tokenhush.exe` on your machine.
 
 ## Release status
 
-v0.5.0 is published. `.goreleaser.yaml` pins the build matrix and the checksum
+Releases are published. `.goreleaser.yaml` pins the build matrix and the checksum
 artefact, and `.github/workflows/release.yml` builds and publishes them on a `v*`
 tag, pushing the Homebrew cask and the Scoop manifest from the same run.
 
 `install.sh` and `install.ps1` download and verify the published binary for the
 detected platform, so no Go toolchain is needed. A default run refuses a
-published release older than the 0.5.0 line instead of installing it; pass an
+published release older than the v0.5.0 rewrite baseline instead of installing it; pass an
 explicit `--version` to install an older release.
 
 ## What Tokenhush never does at deploy time

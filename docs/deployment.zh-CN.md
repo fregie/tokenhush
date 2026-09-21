@@ -45,7 +45,7 @@ go build -o tokenhush ./cmd/tokenhush
 go install github.com/fregie/tokenhush/cmd/tokenhush@main
 ```
 
-当前代码线用 `@main`。`@latest` 仍解析到更早的已发布 tag，给不了你 v0.5.0 重写版。
+当前代码线用 `@main`。`@latest` 仍解析到更早的已发布 tag，给不了你从零重写的版本。
 
 ### 放进 `PATH`
 
@@ -165,12 +165,12 @@ schtasks /Create /TN Tokenhush /TR "C:\path\to\tokenhush.exe run" /SC ONLOGON
 
 ## 发布状态
 
-v0.5.0 已发布。`.goreleaser.yaml` 固定构建矩阵与校验和制品，
+发行版已发布。`.goreleaser.yaml` 固定构建矩阵与校验和制品，
 `.github/workflows/release.yml` 在 `v*` tag 上构建并发布它们，并在同一次运行中推送
 Homebrew cask 与 Scoop manifest。
 
 `install.sh` 与 `install.ps1` 会下载并校验对应平台的已发布二进制，无需 Go 工具链。
-默认运行会拒绝低于 0.5.0 线的已发布版本；显式传 `--version` 才会安装旧版本。
+默认运行会拒绝低于 v0.5.0 重写基线的已发布版本；显式传 `--version` 才会安装旧版本。
 
 ## Tokenhush 在部署时绝不做的事
 
