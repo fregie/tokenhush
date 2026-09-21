@@ -120,10 +120,10 @@ The properties a rule author can rely on, and the ones the core refuses:
   (documents) and at registration (directly-registered values).
 - **Budget-bounded primitives.** A primitive-typed rule (`prefix`, `email`,
   `luhn`, `jwt`, `pem`, `entropy`) inspects at most its per-primitive byte
-  budget of one leaf. `internal/cli` aligns that budget with
-  `scan_budget_bytes` for admitted requests, so detection cost stays O(budget)
-  and the budget is never a silent blind spot: a request leaf past the budget
-  is reported on stderr (metadata only) and moves no counter.
+  budget of one leaf. `internal/cli` aligns that per-leaf, per-detector budget
+  with `scan_budget_bytes`, so detection cost stays O(budget) per leaf and the
+  budget is never a silent blind spot: a request leaf past the budget is
+  reported on stderr (metadata only) and moves no counter.
 - **Typed, strictly validated options.** A compiled rule document may carry an
   `options` object: a typed sub-object per parameterizable detector, never a
   free-form map. Strict decode rejects an unknown option key by name with a
@@ -157,15 +157,21 @@ At runtime the pieces line up like this:
 4. **Outbound requests are walked, evaluated and rewritten.** A declared-JSON
    body that cannot be walked is refused with 400; a non-identity
    `Content-Encoding` is refused with 415 before the body is read or any
-   upstream dial is opened. The request-phase decision then allows, blocks or
-   substitutes. Substitution is **span-exact**: each decoded detection span is
-   mapped back to the raw, escaped bytes that spell it, so a multi-line or
-   quote-bearing secret leaves as a placeholder and returns intact. The
-   redaction log line and the `redactions` counter count only substitutions
-   that really changed bytes. Primitive-typed detectors scan at most
-   `scan_budget_bytes` of one leaf — the per-primitive budget is aligned with
-   the configured scan budget for admitted requests — and a leaf past the
-   budget is reported on stderr (metadata only) instead of failing silently.
+   upstream dial is opened. The body itself is then read once at a shared read
+   seam under `max_body_bytes` (default 64 MiB), a memory guard rather than a
+   scan budget: a declared `Content-Length` over the cap is refused before a
+   single byte is read, and otherwise the read runs through
+   `http.MaxBytesReader`, so the cap+1 byte trips a typed overflow. A body over
+   the cap is a 403 `body_too_large`, never a truncation and never a partial
+   forward; a body exactly at the cap is read whole. The request-phase decision
+   then allows, blocks or substitutes. Substitution is **span-exact**: each
+   decoded detection span is mapped back to the raw, escaped bytes that spell
+   it, so a multi-line or quote-bearing secret leaves as a placeholder and
+   returns intact. The redaction log line and the `redactions` counter count
+   only substitutions that really changed bytes. Primitive-typed detectors scan
+   at most `scan_budget_bytes` of one leaf — the per-leaf, per-detector budget
+   is aligned with the configured scan budget — and a leaf past the budget is
+   reported on stderr (metadata only) instead of failing silently.
    Redaction runs once per request over the whole client-supplied conversation,
    so a long session re-scans and re-redacts the same secrets on every turn: the
    `redactions` counter and the stderr log grow with the number of carried

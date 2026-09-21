@@ -47,11 +47,13 @@ const (
 	DefaultPort = 8787
 	// DefaultLogLevel is the level used when the file does not set one.
 	DefaultLogLevel = "info"
-	// ScanBudgetBytes is the default cap on bytes scanned per unit of work.
+	// ScanBudgetBytes is the default per-leaf, per-detector scan budget: a
+	// primitive-typed detector inspects at most this many bytes of one leaf.
 	ScanBudgetBytes = 32 << 20
 	// DetectorTimeout is the default time budget for one detector pass.
 	DetectorTimeout = 30 * time.Second
-	// MaxBodyBytes is the default memory guard on the total request body.
+	// MaxBodyBytes is the default memory guard on the total request body. A
+	// body over it is refused at the shared read seam, never truncated.
 	MaxBodyBytes = 64 << 20
 	// ResponseBufferBytes is the default total cap on a buffered response.
 	ResponseBufferBytes = 32 << 20

@@ -235,6 +235,7 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+max_body_bytes:    67108864
 response_buffer_bytes: 33554432
 response_timeout:  5m
 ```
@@ -252,8 +253,9 @@ response_timeout:  5m
 | `detectors.entropy` | boolean | `false` | High-entropy strings. Off by default and opt-in: false positives on real agent traffic (long tool names, session ids) broke function calling. |
 | `allowlist` | list of strings | empty | Literals that are never redacted. |
 | `upstreams` | list of `{match, target}` | empty | Path-prefix routes to your own origins. |
-| `scan_budget_bytes` | integer | `33554432` (32 MiB) | Deterministic scan budget. |
+| `scan_budget_bytes` | integer | `33554432` (32 MiB) | Per-leaf, per-detector scan budget: a primitive detector inspects at most this many bytes of one leaf. |
 | `detector_timeout` | duration | `30s` | Detection backstop. |
+| `max_body_bytes` | integer | `67108864` (64 MiB) | Memory guard on the total request body. A body over it is refused with 403 `body_too_large` at the shared read seam before any walk, and is never truncated or partially forwarded. |
 | `response_buffer_bytes` | integer | `33554432` (32 MiB) | Total cap on one buffered response. An over-cap response is a 502 before any byte is committed. |
 | `response_timeout` | duration | `5m` | Overall bound on reading one response. A response past the deadline is a 504 before any byte is committed. If the cap and the deadline trip together, the cap wins. |
 

@@ -218,7 +218,7 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 你会看到三件事：
 
 1. echo 上游的终端打印出 body，里面的密钥已被替换成 `__PII_email_<digest>__` 占位符，密钥本身没有离开网关。
-2. 网关终端打印两行 stderr 日志。拦截行格式为 `tokenhush: redacted request <type> (len=<N>) <masked>`，例如 `tokenhush: redacted request email (len=17) ****`；多数类型的 `<masked>` 是 `****`，不透明凭据类型（`api_key`、`high_entropy`）是有界的前缀/后缀（如 `sk-p…j0`），掩码形式永远不会等于密钥。还原行格式为 `tokenhush: restored response placeholders=<N>`，例如 `tokenhush: restored response placeholders=1`，只包含计数。两行都只写 stderr，永不落盘。
+2. 网关终端打印两行 stderr 日志。拦截行格式为 `tokenhush: redacted request <type> (len=<N>) <masked>`，例如 `tokenhush: redacted request email (len=17) ****`；多数类型的 `<masked>` 是 `****`，不透明凭据类型（`api_key`、`high_entropy`）是有界的前缀/后缀（如 `sk-p…j0`），掩码形式永远不会等于密钥。还原行格式为 `tokenhush: restored response placeholders=<N>`，例如 `tokenhush: restored response placeholders=1`，只包含计数。两行都只写 stderr、仅含元数据、永不落盘。此外，网关本地生成的每个请求侧拒绝恰好打印一行 `tokenhush: refused request <code>`，例如 `tokenhush: refused request body_too_large`，同样只写 stderr、仅含元数据，`<code>` 之外还可能带分类的 `reason=` 或 `rule_id=`。
 3. `curl` 输出里又是原始值，因为响应路径还原了本次会话铸造的占位符。上游从未见到密钥，客户端从未见到占位符。
 
 像脚本一样读取运行中的网关：
@@ -321,6 +321,7 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+max_body_bytes:    67108864
 response_buffer_bytes: 33554432
 response_timeout:  5m
 ```
@@ -342,8 +343,9 @@ response_timeout:  5m
 | `detectors` | 六个开关，键名是 `prefix`、`email`、`luhn`、`jwt`、`pem`、`entropy`。`entropy` 默认关闭，需显式开启。 |
 | `allowlist` | 永不脱敏的字面量。 |
 | `upstreams` | `{match, target}` 组成的**列表**，不是映射。`match` 是路径前缀，`target` 是不带结尾斜杠的源站。 |
-| `scan_budget_bytes` | 扫描预算，默认 33554432（32 MiB）。 |
+| `scan_budget_bytes` | 每叶、每检测器扫描预算，默认 33554432（32 MiB）。原始检测器对单个叶最多扫描这么多字节。 |
 | `detector_timeout` | 检测超时兜底，默认 30s。 |
+| `max_body_bytes` | 整个请求 body 的内存护栏，默认 67108864（64 MiB）。超过它的 body 在共享读取 seam 处、任何遍历或上游拨号之前以 403 `body_too_large` 拒绝，且绝不截断、绝不部分转发。 |
 | `response_buffer_bytes` | 单个缓冲响应的总量上限，默认 33554432（32 MiB）。超过上限在提交前返回 `502`。 |
 | `response_timeout` | 读取单个响应的整体上限，默认 `5m`。超过 deadline 在提交前返回 `504`；二者同时触发时上限优先。 |
 

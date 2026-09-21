@@ -1,14 +1,14 @@
 # tokenhush 安全模型
 
 本文是 v0.5.0 重写对运维者可见的安全契约。它列出内核保留的八条不变量与它不隐藏的
-八项残余风险，说明各项在何处强制，并给出钉住每条不变量的测试名。
+九项残余风险，说明各项在何处强制，并给出钉住每条不变量的测试名。
 
 - [方向契约](#方向契约)
 - [八条不变量](#八条不变量)
 - [响应阶段的效应](#响应阶段的效应)
 - [缓冲响应与 SSE](#缓冲响应与-sse)
 - [磁盘上有什么](#磁盘上有什么)
-- [八项残余风险](#八项残余风险)
+- [九项残余风险](#九项残余风险)
 
 ## 方向契约
 
@@ -59,8 +59,8 @@
 5. **检测失败时故障关闭，而非故障开放。** 规则 panic、超时、超出 span 预算、返回
    畸形发现或根本无法调用时，会产生带正确原因的标签化拒绝——绝不静默放过、绝不
    崩溃——且每次失败恰好写一条仅含元数据的审计记录。检测同时受预算限制：原始类型
-   检测器每个叶最多检查自己的每原始检测器字节预算，对已准入的请求与
-   `scan_budget_bytes` 对齐。预算截断是可观察的而非静默的：超过预算的请求叶恰好写
+   检测器每个叶最多检查自己的每原始检测器字节预算，把 `scan_budget_bytes` 作为
+   每叶、每检测器预算对齐。预算截断是可观察的而非静默的：超过预算的请求叶恰好写
    一行仅含元数据的 `tokenhush: detector budget exceeded leaf=<len> budget=<n>`
    到 stderr，且不移动任何计数器与任何状态键。
 6. **恰好两个可开关、命令限期绑定的厂商出口类别。** 产品只可为两种已披露用途触达
@@ -124,7 +124,7 @@ SSE 缓冲响应上的响应作用域 `Block` 是在提交任何字节之前返�
 扫描并重新脱敏相同的 secret：`redactions` 计数器与该 stderr 日志随携带的出现次数增长，
 而不是随不同 secret 的数量增长。这是仅含元数据、按请求进行的工作，绝不持久化任何 body。
 
-## 八项残余风险
+## 九项残余风险
 
 这些风险被诚实记录，而不是被隐去。列出它们并不等于声称它们不存在；每一项都是本设计的
 已知边界。
@@ -135,10 +135,11 @@ SSE 缓冲响应上的响应作用域 `Block` 是在提交任何字节之前返�
 | R2 | A secret in a JSON object key is not caught（JSON 对象键中的 secret 不会被捕获） | 放在 JSON 对象键而不是值里的 secret 会原样转发：按 D10，键位置阻断被删除，叶遍历不提供键叶，也不存在死的键表面。`sensitive_keys` 文档块不改变这一点——它脱敏的是**值**（任意深度上、立即对象成员键名匹配者），绝不是存放在键里的 secret。两种同形仍不匹配，记录在此：敏感键的值是容器而非字符串成员时（`{"password":{"secret":"x"}}`，其立即键是 `secret`），以及 k8s/docker-env 同形（`{"name":"DB_PASSWORD","value":"…"}`）。 | 已记录并接受 |
 | R3 | A signed remote pack may weaken detection through its own allowlist（签名远程包可能通过自身 allowlist 弱化检测） | 签名远程包可能通过其全局或每条规则的 allowlist 压制匹配：按 OD-3，非弱化 floor 对 allowlist 保持中立、不检查 allowlist；规则签名密钥 `rules-2026-09` 仍是信任根。 | 已记录并接受 |
 | R4 | The OD-2 command-rule rejection is dormant and the v2 manifest bump is backward-incompatible（OD-2 command 规则拒绝处于休眠，v2 manifest 升级不向后兼容） | OD-2 的 `command` 规则拒绝保持休眠，直到 OD-4 闸门打开；闸门只在规则 manifest `schema_version` 达到 2 时打开；该升级与钉住 `== 1` 的客户端不兼容，因此后端必须继续提供 v1 manifest，直到旧版本线退出支持。 | 已记录并接受 |
-| R5 | Response-path bodies are not capped by scan_budget_bytes（响应路径 body 不受 scan_budget_bytes 上限约束） | 响应 body 不受请求侧 `scan_budget_bytes` 闸门限制：取而代之的是 `response_buffer_bytes`（默认 **32 MiB**），它是整个缓冲响应的一个**新的、独立的、总量**上限，超过它的响应在提交前返回 502。这个总量上限并没有关闭 R5。响应作用域的原始检测器仍最多扫描每原始检测器 `budget`：超过该预算的响应叶会被截断，且没有 stderr 报告、没有计数器，因此响应作用域检测仍可能漏掉总量上限放行 body 中超出每原始检测器预算的内容。预算报告仍有意只存在于请求路径，且不移动任何状态键。 | 已记录并接受 |
+| R5 | Response-path bodies are not capped by the request-side body guard（响应路径 body 不受请求侧 body 护栏约束） | 响应 body 不受请求侧护栏限制：`response_buffer_bytes`（默认 **32 MiB**）是整个缓冲响应的一个**独立的、总量**上限，超过它的响应在提交前返回 502。请求侧的 `max_body_bytes` 内存护栏从不作用于响应，而每叶、每检测器的 `scan_budget_bytes` 在两个方向上都不是整段 body 上限。这个总量上限并没有关闭 R5。响应作用域的原始检测器仍最多扫描每原始检测器 `budget`：超过该预算的响应叶会被截断，且没有 stderr 报告、没有计数器，因此响应作用域检测仍可能漏掉总量上限放行 body 中超出每原始检测器预算的内容。预算报告仍有意只存在于请求路径，且不移动任何状态键。 | 已记录并接受 |
 | R6 | A placeholder split across SSE JSON-envelope `data:` events is only partially restored（跨 SSE JSON 信封 `data:` 事件拆分的占位符仅部分还原） | 占位符在**完整 JSON 信封**的 `data:` 事件之间做内容层拆分时，现在会被精确还原一次，`choices[].delta.content` 通道与 `tool_calls[].function.arguments` 通道皆然：每个贡献事件只从自身事件字节里删除自己的片段，且每个发出的信封仍是独立合法的 JSON；匹配在**解码域**进行，因此像 `__PII_\u0061pi_key_…__` 这样的转义拼写也会被接受并还原。该关闭在拆分跨越**同一通道身份**的**连续** `data:` 事件时成立。剩余边界：当上游把 JSON 文档本身撕开时，token 仍能跨拆分补全，但只有**原始拼写**可知，带引号、反斜杠或控制字节的 secret 会以原始形态落在信封片段中；而当**起始叶**是撕裂的内层 JSON 片段（非 `Encoded`、非法 JSON、以 `{` 或 `[` 开头）、其 secret 又需要 JSON 转义时，会刻意**保留**占位符，而不是破坏客户端嵌套文档。另一项残余是**交织**拆分：若在两半之间到达一个非匹配通道的事件，被扣留的分段会在该事件处按**字节原样、不做改动**释放，token 因此永不补全，占位符片段以**字面**形式送达客户端，该拆分**不会**被还原。无匹配的 JSON 事件流（包括其值以不完整的 `__PII_` 前缀收尾者）**字节完全一致**，拆分的异源占位符同样字节一致，且绝不会被捏造成 secret。延迟契约（所有者决策 D13）：token 未解析期间，**仅受影响通道**的贡献分段被扣留、不发送给客户端，直到 token 解析（通常是接下来 1-2 个事件）或联合 **256 KiB** 预算触发，届时被扣留的分段按字面释放、不还原；延迟局限于受影响通道，其余流量照常流动，因为对该通道而言，正确性（绝不发出不完整占位符）与有界内存优先于零新增延迟。同一时刻**只有一个** carry 生效；通道身份 = RFC 6901 路径 + 每个外层 frame 的前置非字符串标量成员 + 该叶在同路径叶中的 0 基出现序号，因此**省略**判别性标量（或在该叶之后才发出该标量）的事件不在身份之内、不会匹配；比内层更深一层的撕裂嵌套、且 secret 需要转义时，仍是残余。 | 部分关闭；剩余项已记录并接受 |
 | R8 | The global blocklist is not applied on every evaluation path（全局 blocklist 并非在每条求值路径上都被应用） | `Policy.Decide` 与共享的 `collect` 不应用全局 blocklist；只有 `Compiled.Evaluate` 运行 `blocklistSpans`。因此 `sensitive_keys` 门控叶与其余每个叶在 `Compiled.Evaluate` 路径上保持 Block 优先，但通过 `Policy.Decide` 决策的调用方不会得到全局 blocklist 的应用。这一点被记录而不是被修复：blocklist 不被压制的测试位于 `Compiled.Evaluate` 路径上。 | 已记录并接受 |
 | R7 | The opt-in `high_entropy` detector replaces legitimate base64 payloads（按需启用的 `high_entropy` 检测器会替换合法 base64 载荷） | `entropy` 默认关闭，因为合法的高熵载荷与 secret 在构造上无法区分：设置 `detectors: {entropy: true}` 后，OpenAI `image_url` 片段或 Anthropic `image` 内容块里约 2.7 KB 的 base64 图片会在请求抵达上游之前被替换成单个占位符，因此模型看不到该图片——客户端仍会通过回填收到它，但上游载荷已被替换。仅对不携带图片、data URL 或长随机标识符的工作负载启用它，或者接受这次替换。纯 hex 串仍被排除，因此 hex 摘要不受影响。 | 已记录并接受 |
+| R9 | The request body guard is a memory wall, and the second walk is unguarded（请求 body 护栏是内存墙，且第二次遍历不受保护） | 等于或低于 `max_body_bytes`（默认 64 MiB）的 body 在声明 JSON 的路径上现在要被遍历两次，而只有**第一次**遍历（`DataPlane.inspect`）运行在 `guardCall` 内、受 `detector_timeout`（30 秒）约束。第二次遍历（Forwarder 内的 `redactRequest`）**不受保护、没有超时**：实践中第一次遍历把住了准入，但它不是对第二次的约束。`protocol.Walk` 会复制每个叶值（`[]byte(raw)`），因此一次遍历会再占用大致一个 body 大小的内存，而声明 JSON 的请求要遍历两次，所以峰值内存是 body 的一个小倍数，而不是 body 本身。准入上限从旧的 32 MiB 总量预算提高到 64 MiB body 护栏，使既有的标量/路径/身份放大暴露窗口从 32 MiB 扩大到 64 MiB；`MaxNestingDepth` 仍为嵌套设界，第一次遍历在超时时仍故障关闭，超时后被放弃的遍历 goroutine 是既有行为。超过 `max_body_bytes` 的 body 仍以 403 `body_too_large` 拒绝；由于会话只会增长，仍可能再次触墙——区别在于这堵墙现在是可观察、可处置的（一行仅含元数据的 `tokenhush: refused request body_too_large`），而不再是静默的总量拒绝。 | 已记录并接受 |
 
 每项为何保持现状：
 
@@ -179,6 +180,10 @@ SSE 缓冲响应上的响应作用域 `Block` 是在提交任何字节之前返�
   路径上应用；`sensitive_keys` 门控没有制造该缺口，因此在这里修复它会是无关的行为
   变更。门控在 blocklist 真正运行的路径上保持 Block 优先，运行时缺口被记录，而不是
   被悄悄声称已修复。
+- **R9——墙移到了内存护栏。** 旧的总量拒绝是一种会在合法多模态流量上触发的扫描
+  策略；诚实的替代方案是在 body 边界设一道内存护栏，让拒绝有名有姓
+  （`body_too_large`）并被记录一次。第二次不受保护的遍历与逐叶复制是遍历两次的
+  既有代价；为第二次遍历设界会改变 forwarder 的契约，因此在这里记录而不是修复。
 
 ## 相关文档
 

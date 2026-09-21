@@ -165,14 +165,15 @@ Tokenhush adds one checkpoint in front of the tool. It reads each request, repla
 
 ## ✅ Verify it works
 
-The fastest check needs only the gateway's own log. Run `tokenhush run`, watch its stderr while your tool works. Startup prints the endpoint and the routing, every value it redacts produces one masked line, and every response-side restore produces one count line:
+The fastest check needs only the gateway's own log. Run `tokenhush run`, watch its stderr while your tool works. Startup prints the endpoint and the routing, every value it redacts produces one masked line, every response-side restore produces one count line, and every locally generated request-side refusal produces one refusal line:
 
 ```text
 tokenhush: redacted request api_key (len=32) sk-p…j0
 tokenhush: restored response placeholders=1
+tokenhush: refused request body_too_large
 ```
 
-Both lines are metadata only. The redaction line carries the detector type, the matched byte length and a masked form, never the full value; the restore line carries only a count. `tokenhush status` reports the redaction counts as JSON:
+All three lines are metadata only and go to stderr only, never persisted. The redaction line carries the detector type, the matched byte length and a masked form, never the full value; the restore line carries only a count; the refusal line carries only the refusal code, plus a classified `reason=` or `rule_id=` where the refusal already carries one, and exactly one is written per locally generated request-side refusal. `tokenhush status` reports the redaction counts as JSON:
 
 ```sh
 tokenhush status --json
@@ -309,6 +310,7 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+max_body_bytes:    67108864
 response_buffer_bytes: 33554432
 response_timeout:  5m
 ```
@@ -328,8 +330,9 @@ Set `TOKENHUSH_HOME` to move both under one root.
 | `detectors` | The six switches: `prefix`, `email`, `luhn`, `jwt`, `pem`, `entropy`. Five are on by default; `entropy` is off by default. |
 | `allowlist` | Literals that are never redacted. |
 | `upstreams` | A **list** of `{match, target}` entries, not a map. `match` is a path prefix; `target` is an origin with no trailing slash. |
-| `scan_budget_bytes` | Maximum bytes scanned per request, default `33554432` (32 MiB). |
+| `scan_budget_bytes` | Per-leaf, per-detector scan budget, default `33554432` (32 MiB). A primitive detector scans at most this many bytes of one leaf. |
 | `detector_timeout` | Per-detector time backstop, default `30s`. |
+| `max_body_bytes` | Memory guard on the total request body, default `67108864` (64 MiB). A body over it is refused with 403 `body_too_large` at the shared read seam, before any walk or upstream dial, and is never truncated or partially forwarded. |
 | `response_buffer_bytes` | Total cap on one buffered response, default `33554432` (32 MiB). Over the cap is a `502` before commit. |
 | `response_timeout` | Overall bound on reading one response, default `5m`. Past the deadline is a `504` before commit; the cap wins if both trip. |
 

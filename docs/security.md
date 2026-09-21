@@ -3,7 +3,7 @@
 **English** | [中文](security.zh-CN.md)
 
 This document is the operator-facing security contract of the v0.5.0 rewrite.
-It lists the eight invariants the core keeps and the eight residual risks it does
+It lists the eight invariants the core keeps and the nine residual risks it does
 not hide, states what is enforced where, and names the test that pins each
 invariant.
 
@@ -12,7 +12,7 @@ invariant.
 - [Response-phase effects](#response-phase-effects)
 - [Buffered responses and SSE](#buffered-responses-and-sse)
 - [What is on disk](#what-is-on-disk)
-- [The eight residual risks](#the-eight-residual-risks)
+- [The nine residual risks](#the-nine-residual-risks)
 
 ## The direction contract
 
@@ -75,8 +75,8 @@ What each one means in practice:
    pass, never a crash — and each failure writes exactly one metadata-only audit
    record. Detection is also budget-bounded: a primitive-typed detector inspects
    at most its per-primitive byte budget of one leaf, aligned with
-   `scan_budget_bytes` for admitted requests. Budget truncation is observable
-   rather than silent: a request leaf past the budget writes exactly one
+   `scan_budget_bytes` as a per-leaf, per-detector budget. Budget truncation is
+   observable rather than silent: a request leaf past the budget writes exactly one
    metadata-only `tokenhush: detector budget exceeded leaf=<len> budget=<n>`
    stderr line and moves no counter and no status key.
 6. **Exactly two switchable vendor-bound egress categories, command-scoped.**
@@ -160,7 +160,7 @@ a long session re-scans and re-redacts the same secrets on every turn: the
 occurrences, not with the number of distinct secrets. That is metadata-only,
 per-request work, never a persisted body.
 
-## The eight residual risks
+## The nine residual risks
 
 These are recorded honestly rather than left implicit. Listing them is not a
 claim that they are absent; each one is a known limit of this design.
@@ -171,10 +171,11 @@ claim that they are absent; each one is a known limit of this design.
 | R2 | A secret in a JSON object key is not caught | A secret placed in a JSON object key rather than a value is forwarded unchanged: key-position blocking is dropped per D10, so the leaf walk supplies no key leaves and no dead key surface exists. The `sensitive_keys` document block does not change this — it redacts the **value** of a named immediate object member key at any depth, never a secret stored in the key itself. Two sibling shapes stay unmatched and are recorded here: when the sensitive key's value is a container rather than a string member (`{"password":{"secret":"x"}}`, whose immediate key is `secret`), and the k8s/docker-env sibling shape (`{"name":"DB_PASSWORD","value":"…"}`). | Recorded and accepted |
 | R3 | A signed remote pack may weaken detection through its own allowlist | A signed remote pack may suppress matches through its own global or per-rule allowlist: the non-weakening floor is allowlist-neutral per OD-3 and does not inspect allowlists, while the rule-signing key `rules-2026-09` remains the trust root. | Recorded and accepted |
 | R4 | The OD-2 command-rule rejection is dormant and the v2 manifest bump is backward-incompatible | The OD-2 `command`-rule rejection stays dormant until the OD-4 gate opens, and the gate opens only when the rules manifest `schema_version` reaches 2; that bump is backward-incompatible with clients pinning `== 1`, so the backend must keep serving a v1 manifest until the legacy line is out of support. | Recorded and accepted |
-| R5 | Response-path bodies are not capped by scan_budget_bytes | A response body is not limited by the request `scan_budget_bytes` gate: instead `response_buffer_bytes` (default **32 MiB**) is a new, separate **total** cap on the whole buffered response, and a response past it is a 502 before commit. That total cap does not close R5. A response-scoped primitive detector still scans at most the per-primitive `budget`, and a response leaf past that budget is truncated with no stderr report and no counter, so response-scoped detection can still miss content beyond the per-primitive budget inside a body the total cap admitted. The budget report remains deliberately request-path only and moves no status key. | Recorded and accepted |
+| R5 | Response-path bodies are not capped by the request-side body guard | A response body is not limited by the request-side guards: `response_buffer_bytes` (default **32 MiB**) is a separate **total** cap on the whole buffered response, and a response past it is a 502 before commit. The request-side `max_body_bytes` memory guard never applies to a response, and the per-leaf, per-detector `scan_budget_bytes` is not a whole-body cap in either direction. That total cap does not close R5. A response-scoped primitive detector still scans at most the per-primitive `budget`, and a response leaf past that budget is truncated with no stderr report and no counter, so response-scoped detection can still miss content beyond the per-primitive budget inside a body the total cap admitted. The budget report remains deliberately request-path only and moves no status key. | Recorded and accepted |
 | R6 | A placeholder split across SSE JSON-envelope `data:` events is only partially restored | A placeholder content-split across **complete-JSON-envelope** `data:` events is now restored exactly once, in both the `choices[].delta.content` channel and the `tool_calls[].function.arguments` channel, with each contributing event's fragment deleted from its own event's bytes and every emitted envelope still independently valid JSON; matching happens in the **decoded domain**, so an escaped spelling such as `__PII_\u0061pi_key_…__` is accepted and restored. That closure applies when the split spans **consecutive** `data:` events at the **same channel identity**. The remaining residual: when the upstream tears the JSON document itself, the token still completes across the split but only the **raw spelling** is knowable, so a secret carrying a quote, backslash or control byte would then sit raw inside an envelope fragment; and when the **origin** is a torn inner-JSON fragment (not `Encoded`, not valid JSON, opening `{` or `[`) whose secret needs JSON escaping, the placeholder is deliberately **kept** rather than corrupting the client's nested document. A further residual is an **interleaved** split: if an event of a non-matching channel arrives between the two halves, the held segments are released **byte-identically, unchanged** on that non-matching event, so the token never completes, the placeholder fragments are delivered **literally**, and that split is **not** restored. A no-match JSON event stream, including one whose value ends in a partial `__PII_` prefix, is **byte-identical**, and a split foreign placeholder is byte-identical and never fabricated into a secret. Latency contract (owner decision D13): while a token is unresolved the contributing segments of the **affected channel only** are held and not yet sent to the client, until the token resolves (typically the next 1-2 events) or the joint **256 KiB** budget trips, at which point the held segments are released literally, un-restored; the delay is confined to the affected channel and all other traffic streams unchanged, because correctness (never emit a partial placeholder) and bounded memory are preferred over zero added latency for that channel. Exactly **one** carry is active at a time; channel identity is the RFC 6901 path plus each enclosing frame's preceding non-string scalar members plus the leaf's 0-based occurrence among same-path leaves, so an event that **omits** the discriminating scalar (or emits it after the leaf) is outside the identity and will not match, and torn nesting deeper than one inner level with an escape-needing secret remains a residual. | Partially closed; residual recorded and accepted |
 | R7 | The opt-in `high_entropy` detector replaces legitimate base64 payloads | `entropy` is off by default because a legitimate high-entropy payload is indistinguishable from a secret by construction: with `detectors: {entropy: true}`, a ~2.7 KB base64 image in an OpenAI `image_url` part or an Anthropic `image` content block is replaced by a single placeholder before the request reaches the upstream, so the model never sees the image — the client still receives it back through backfill, but the upstream payload is substituted. Enable it only for a workload that carries no images, data URLs or long random identifiers, or accept the substitution. Pure-hex runs stay excluded, so hex digests are unaffected. | Recorded and accepted |
 | R8 | The global blocklist is not applied on every evaluation path | `Policy.Decide` and the shared `collect` do not apply the global blocklist; only `Compiled.Evaluate` runs `blocklistSpans`. A `sensitive_keys`-gated leaf and every other leaf therefore keep Block precedence on the `Compiled.Evaluate` path, but a caller that decides through `Policy.Decide` does not get the global blocklist applied. This is recorded rather than fixed: the blocklist-not-suppressed test lives on the `Compiled.Evaluate` path. | Recorded and accepted |
+| R9 | The request body guard is a memory wall, and the second walk is unguarded | A body at or below `max_body_bytes` (default 64 MiB) is walked twice on the declared-JSON path, and only the **first** walk (`DataPlane.inspect`) runs inside `guardCall` under `detector_timeout` (30 s). The second walk, `redactRequest` inside the Forwarder, is **unguarded and has no timeout**: the first walk gates admission in practice but is not a bound on the second. `protocol.Walk` copies every leaf value (`[]byte(raw)`), so one walk retains roughly the body size again, and a declared-JSON request walks twice, so peak memory is a small multiple of the body, not the body alone. Raising the admitted ceiling from the old 32 MiB aggregate budget to the 64 MiB body guard widens the pre-existing scalar/path/identity amplification exposure window from 32 MiB to 64 MiB; `MaxNestingDepth` still bounds nesting, the first walk is still fail-closed on timeout, and the abandoned walk goroutine on timeout is pre-existing. A body above `max_body_bytes` is still refused 403 `body_too_large`, and because a session only grows it can reach the wall again — the difference is that the wall is now observable and actionable (one metadata-only `tokenhush: refused request body_too_large` stderr line) rather than a silent aggregate refusal. | Recorded and accepted |
 
 Why each one stays as it is:
 
@@ -236,6 +237,13 @@ Why each one stays as it is:
   did not create the gap, so fixing it here would be an unrelated behaviour
   change. The gate keeps Block precedence wherever the blocklist does run, and
   the runtime gap is recorded instead of silently claimed fixed.
+- **R9 — the wall moved out to the memory guard.** The old aggregate refusal was
+  a scan policy that fired on legitimate multimodal traffic; the honest
+  replacement is a memory guard at the body boundary that names its refusal
+  (`body_too_large`) and logs it once. The second, unguarded walk and the
+  per-leaf copies are pre-existing costs of walking twice; bounding the second
+  walk would change the forwarder's contract, so they are recorded rather than
+  fixed here.
 
 ## Related documents
 

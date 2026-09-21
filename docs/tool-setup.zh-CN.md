@@ -212,6 +212,7 @@ allowlist:         ["literal"]
 upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 scan_budget_bytes: 33554432
 detector_timeout:  30s
+max_body_bytes:    67108864
 response_buffer_bytes: 33554432
 response_timeout:  5m
 ```
@@ -229,8 +230,9 @@ response_timeout:  5m
 | `detectors.entropy` | 布尔值 | `false` | 高熵字符串。默认关闭，需显式开启：它在真实 agent 流量上的误报（长工具名、会话 id）曾破坏 function calling。 |
 | `allowlist` | 字符串列表 | 空 | 永不脱敏的字面量。 |
 | `upstreams` | `{match, target}` 列表 | 空 | 指向你自己源站的路径前缀路由。 |
-| `scan_budget_bytes` | 整数 | `33554432`（32 MiB） | 确定性扫描预算。 |
+| `scan_budget_bytes` | 整数 | `33554432`（32 MiB） | 每叶、每检测器扫描预算：原始检测器对单个叶最多检查这么多字节。 |
 | `detector_timeout` | 时长 | `30s` | 检测兜底。 |
+| `max_body_bytes` | 整数 | `67108864`（64 MiB） | 整个请求 body 的内存护栏。超过它的 body 在共享读取 seam 处、任何遍历之前以 403 `body_too_large` 拒绝，且绝不截断、绝不部分转发。 |
 | `response_buffer_bytes` | 整数 | `33554432`（32 MiB） | 单个缓冲响应的总量上限。超过上限的响应在提交任何字节之前返回 502。 |
 | `response_timeout` | 时长 | `5m` | 读取单个响应的整体上限。超过 deadline 的响应在提交任何字节之前返回 504。若上限与 deadline 同时触发，上限优先。 |
 

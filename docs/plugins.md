@@ -61,8 +61,8 @@ and never a crash.
 
 Primitive-typed built-ins are additionally budget-bounded: `prefix`, `email`,
 `luhn`, `jwt`, `pem` and `entropy` inspect at most a per-primitive byte budget
-of one leaf. `internal/cli` aligns that budget with `scan_budget_bytes` for
-admitted requests; `filter.CompileWithBudget`, `filter.BuiltinDetectorsBudget`
+of one leaf. `internal/cli` aligns that per-leaf, per-detector budget with
+`scan_budget_bytes`; `filter.CompileWithBudget`, `filter.BuiltinDetectorsBudget`
 and the `New*RuleBudget` constructors set it explicitly, and
 `Compiled.Budget()` reports the effective value. A request leaf past the budget
 is reported on stderr (metadata only), never silently skipped.
