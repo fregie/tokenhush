@@ -62,6 +62,12 @@ func runCommand(args []string, _, stderr io.Writer) int {
 // Nothing is written before the bind succeeds, so a busy port fails fast and
 // leaves no session file behind. The gateway runs in the foreground only.
 func runWith(args []string, stderr io.Writer, seams runSeams) int {
+	if stderr != nil {
+		// Every locally generated request refusal logs through the proxy's
+		// shared notice seam, so refusal lines land on the gateway's own
+		// stderr beside the startup notices.
+		proxy.NoticeWriter = stderr
+	}
 	opts, code := parseRunFlags(args, stderr)
 	if code != exitOK {
 		return code

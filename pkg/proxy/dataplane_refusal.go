@@ -16,6 +16,7 @@ package proxy
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -30,6 +31,37 @@ const (
 	refusalPluginFailure  = "plugin_failure"
 	refusalUnwalkableJSON = "unwalkable_json"
 )
+
+// The forwarder's plain-text local refusals, named by the status each writes.
+const (
+	refusalUnsupportedMediaType = "unsupported_media_type"
+	refusalTransformError       = "transform_error"
+	refusalRequestBuildError    = "request_build_error"
+	refusalBadGateway           = "bad_gateway"
+	refusalGatewayTimeout       = "gateway_timeout"
+)
+
+// refusalLogPrefix opens every metadata-only refusal line.
+const refusalLogPrefix = "tokenhush: refused request"
+
+// logRefusal writes exactly one refusal line through the shared notice writer.
+// The line carries only the document's closed vocabulary -- the code, plus the
+// classified reason or the rule id where the refusal already carries one -- so
+// a matched byte, body content or a header value can never reach it. A nil
+// writer means no sink is installed and the refusal stays unobservable.
+func logRefusal(doc dataPlaneRefusal) {
+	if NoticeWriter == nil {
+		return
+	}
+	line := refusalLogPrefix + " " + doc.Error
+	if doc.Reason != "" {
+		line += " reason=" + doc.Reason
+	}
+	if doc.RuleID != "" {
+		line += " rule_id=" + doc.RuleID
+	}
+	fmt.Fprintln(NoticeWriter, line)
+}
 
 // dataPlaneRefusal is the client-bound refusal document: a fixed code, the
 // classified failure reason where one applies and the rule id of a block.
@@ -67,8 +99,11 @@ func (p *DataPlane) block(w http.ResponseWriter, ruleIDs []string) {
 	writeDataPlaneRefusal(w, http.StatusForbidden, dataPlaneRefusal{Error: refusalRuleBlocked, RuleID: primaryRule(ruleIDs)})
 }
 
-// writeDataPlaneRefusal writes one JSON refusal with an explicit length.
+// writeDataPlaneRefusal writes one JSON refusal with an explicit length and
+// emits its one shared metadata-only log line, so every structured request
+// refusal is observable without a second call site.
 func writeDataPlaneRefusal(w http.ResponseWriter, status int, doc dataPlaneRefusal) {
+	logRefusal(doc)
 	body, err := json.Marshal(doc)
 	if err != nil {
 		body = []byte(`{"error":"refusal"}`)

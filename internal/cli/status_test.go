@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/proxy"
 )
 
@@ -160,5 +161,85 @@ func TestStatusRejectsExtraArguments(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := statusCommand([]string{"extra"}, &stdout, &stderr); code != exitUsage {
 		t.Fatalf("status extra = %d, want %d", code, exitUsage)
+	}
+}
+
+// TestRefusalLogIsStderrOnly pins the observability contract at the product
+// level: one request-side refusal writes exactly one metadata-only line on the
+// gateway's own stderr, the pre-existing documented log lines stay
+// byte-identical, and the frozen /status document gains no key.
+func TestRefusalLogIsStderrOnly(t *testing.T) {
+	upstream := newE2EUpstream(t)
+	const budget = 64
+	const maxBody = 1 << 20
+	base, logs, _ := redactGatewayTuned(t, upstream, func(cfg *config.Config) {
+		cfg.ScanBudgetBytes = budget
+		cfg.MaxBodyBytes = maxBody
+	})
+	secret := e2eSecret(t)
+
+	// One admitted round trip: an over-budget leaf whose secret sits inside
+	// the scanned prefix is still redacted, reported and restored.
+	content := secret + " " + strings.Repeat("C", 200)
+	status, body := e2ePost(t, base+e2ePath, redactJSONBody(t, content), nil)
+	if status != http.StatusOK {
+		t.Fatalf("admitted POST = %d, want 200 (body %s)", status, body)
+	}
+	if !strings.Contains(string(body), secret) {
+		t.Errorf("the admitted request's secret did not return to the client")
+	}
+
+	// One refused request: a declared-JSON body over the cap, carrying a
+	// distinctive pad marker that must never reach the log.
+	const marker = "refusal-pad-9c1f"
+	over := append([]byte(`{"pad":"`+marker+`"}`), bytes.Repeat([]byte(" "), maxBody)...)
+	status, _ = e2ePost(t, base+e2ePath, over, nil)
+	if status != http.StatusForbidden {
+		t.Fatalf("over-cap POST = %d, want 403", status)
+	}
+
+	// The refusal line is stderr-only metadata: exactly one line naming the
+	// code, carrying neither the marker nor the secret.
+	if got := logs.count("tokenhush: refused request body_too_large"); got != 1 {
+		t.Fatalf("refusal lines = %d, want exactly 1 (stderr: %s)", got, logs.String())
+	}
+	if strings.Contains(logs.String(), marker) || strings.Contains(logs.String(), secret) {
+		t.Fatalf("the refusal log carries request content: %s", logs.String())
+	}
+
+	// The pre-existing documented lines are byte-identical.
+	if got := logs.count(redactLogPrefix); got != 1 {
+		t.Errorf("redaction lines = %d, want exactly 1 (stderr: %s)", got, logs.String())
+	}
+	wantBudget := fmt.Sprintf("%s leaf=%d budget=%d", budgetExceededPrefix, len(content), budget)
+	if !strings.Contains(logs.String(), wantBudget) {
+		t.Errorf("stderr does not carry %q: %s", wantBudget, logs.String())
+	}
+	if !strings.Contains(logs.String(), "tokenhush: restored response placeholders=1") {
+		t.Errorf("stderr does not carry the frozen restore line: %s", logs.String())
+	}
+
+	// The frozen /status document gains no key, and the refusal still moved
+	// its counter.
+	var stdout, stderr bytes.Buffer
+	if code := statusCommand([]string{"--json"}, &stdout, &stderr); code != exitOK {
+		t.Fatalf("status --json = %d, want %d (stderr %q)", code, exitOK, stderr.String())
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode %q: %v", stdout.String(), err)
+	}
+	got := make([]string, 0, len(decoded))
+	for key := range decoded {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	want := append([]string(nil), frozenStatusKeys...)
+	sort.Strings(want)
+	if !equalStrings(got, want) {
+		t.Fatalf("status --json keys = %v, want exactly %v", got, want)
+	}
+	if blocks := decoded["content_policy_blocks"]; blocks != float64(1) {
+		t.Errorf("content_policy_blocks = %v, want the refusal's 1", blocks)
 	}
 }

@@ -636,3 +636,240 @@ func TestPerLeafBudgetTruncatesOnlyTheOverBudgetLeaf(t *testing.T) {
 		t.Errorf("the substitution span spells %q, want the in-budget address", spelled)
 	}
 }
+
+// failingBody always fails its read, so the forwarder's 400 unreadable-body
+// refusal is reachable without a real transport fault.
+type failingBody struct{}
+
+// Read implements io.Reader.
+func (failingBody) Read([]byte) (int, error) { return 0, errors.New("read failed") }
+
+// Close implements io.Closer.
+func (failingBody) Close() error { return nil }
+
+// refusalCapture collects the NoticeWriter stream so a test can assert the
+// exact refusal lines one request produced. Every refusal under test is served
+// synchronously on the calling goroutine, so no lock is needed.
+type refusalCapture struct {
+	buf bytes.Buffer
+}
+
+// Write implements io.Writer.
+func (c *refusalCapture) Write(p []byte) (int, error) { return c.buf.Write(p) }
+
+// captureRefusals points the shared NoticeWriter at a fresh capture for the
+// rest of the test and restores it afterwards, exactly as listen_test.go does.
+func captureRefusals(t *testing.T) *refusalCapture {
+	t.Helper()
+	capture := &refusalCapture{}
+	previous := NoticeWriter
+	NoticeWriter = capture
+	t.Cleanup(func() { NoticeWriter = previous })
+	return capture
+}
+
+// requireOneRefusalLine asserts the capture holds exactly one refusal line,
+// byte-identical to want, and that no marker literal from the request reached
+// it. One line per refusal is the contract: a second line is a defect.
+func requireOneRefusalLine(t *testing.T, capture *refusalCapture, want, marker string) {
+	t.Helper()
+	got := capture.buf.String()
+	if marker != "" && strings.Contains(got, marker) {
+		t.Errorf("the refusal log carries request content: %q", got)
+	}
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	if len(lines) != 1 || lines[0] != want {
+		t.Fatalf("refusal lines = %q, want exactly one line %q", got, want)
+	}
+}
+
+// TestRefusalsLogExactlyOneMetadataOnlyLine pins the observability contract for
+// every request-side locally generated refusal: exactly one line naming the
+// refusal code, plus the classified reason or the rule id where the refusal
+// already carries one. The line is metadata only, so a distinctive marker
+// literal planted in the request body must never appear in it.
+func TestRefusalsLogExactlyOneMetadataOnlyLine(t *testing.T) {
+	blockedBody := `{"message":"` + dataPlaneSecret + `"}`
+	for _, tc := range []struct {
+		name   string
+		want   string
+		marker string
+		serve  func(t *testing.T)
+	}{
+		{
+			name:   "data plane body_too_large",
+			want:   "tokenhush: refused request body_too_large",
+			marker: dataPlaneSecret,
+			serve: func(t *testing.T) {
+				plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{Evaluator: allowRequestEvaluator(), MaxBodyBytes: 8})
+				request := dataPlanePost(blockedBody, "application/json", true)
+				request.ContentLength = -1
+				response := httptest.NewRecorder()
+				plane.ServeHTTP(response, request)
+				requireRefusal(t, response, http.StatusForbidden)
+				requireNoUpstream(t, upstream, recorder)
+			},
+		},
+		{
+			name:   "data plane plugin_failure carries its reason",
+			want:   "tokenhush: refused request plugin_failure reason=timeout",
+			marker: dataPlaneSecret,
+			serve: func(t *testing.T) {
+				evaluator := &stubRequestEvaluator{err: &DetectorFailure{RuleID: "rule-timeout", Reason: FailureTimeout}}
+				plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{Evaluator: evaluator})
+				response := httptest.NewRecorder()
+				plane.ServeHTTP(response, dataPlanePost(blockedBody, "application/json", true))
+				requireRefusal(t, response, http.StatusForbidden)
+				requireNoUpstream(t, upstream, recorder)
+			},
+		},
+		{
+			name:   "data plane unwalkable_json",
+			want:   "tokenhush: refused request unwalkable_json",
+			marker: dataPlaneSecret,
+			serve: func(t *testing.T) {
+				walker := &stubWalker{fn: func([]byte) ([]protocol.Leaf, error) { return nil, errors.New("walker exploded") }}
+				plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{Walker: walker})
+				response := httptest.NewRecorder()
+				plane.ServeHTTP(response, dataPlanePost(blockedBody, "application/json", true))
+				requireRefusal(t, response, http.StatusBadRequest)
+				requireNoUpstream(t, upstream, recorder)
+			},
+		},
+		{
+			name:   "data plane rule block carries the rule id",
+			want:   "tokenhush: refused request rule_blocked rule_id=qa-block-rule",
+			marker: dataPlaneSecret,
+			serve: func(t *testing.T) {
+				evaluator := &stubRequestEvaluator{decision: RequestDecision{Action: RequestBlock, RuleIDs: []string{"qa-block-rule"}}}
+				plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{Evaluator: evaluator})
+				response := httptest.NewRecorder()
+				plane.ServeHTTP(response, dataPlanePost(blockedBody, "application/json", true))
+				requireRefusal(t, response, http.StatusForbidden)
+				requireNoUpstream(t, upstream, recorder)
+			},
+		},
+		{
+			name: "forwarder body_too_large",
+			want: "tokenhush: refused request body_too_large",
+			serve: func(t *testing.T) {
+				recorder := &dialRecorder{}
+				forwarder, err := NewForwarder("http://upstream.test", nil, WithDialFunc(recorder.dial()), WithMaxBodyBytes(8))
+				if err != nil {
+					t.Fatalf("NewForwarder: %v", err)
+				}
+				request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(blockedBody))
+				request.ContentLength = -1
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, request)
+				requireRefusal(t, response, http.StatusForbidden)
+				if got := recorder.count(); got != 0 {
+					t.Errorf("upstream dials = %d, want 0", got)
+				}
+			},
+		},
+		{
+			name:   "forwarder 415 unsupported media type",
+			want:   "tokenhush: refused request unsupported_media_type",
+			marker: dataPlaneSecret,
+			serve: func(t *testing.T) {
+				forwarder, recorder := recordedForwarder(t, nil, nil)
+				body := &countingBody{data: []byte(blockedBody)}
+				request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
+				request.Header.Set("Content-Encoding", "gzip")
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, request)
+				if response.Code != http.StatusUnsupportedMediaType {
+					t.Errorf("status = %d, want 415", response.Code)
+				}
+				if got := body.bytesRead(); got != 0 {
+					t.Errorf("body bytes read = %d, want 0", got)
+				}
+				if got := recorder.count(); got != 0 {
+					t.Errorf("upstream dials = %d, want 0", got)
+				}
+			},
+		},
+		{
+			name: "forwarder 400 unreadable body",
+			want: "tokenhush: refused request unreadable_body",
+			serve: func(t *testing.T) {
+				forwarder, recorder := recordedForwarder(t, nil, nil)
+				request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", failingBody{})
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, request)
+				if response.Code != http.StatusBadRequest {
+					t.Errorf("status = %d, want 400", response.Code)
+				}
+				if got := recorder.count(); got != 0 {
+					t.Errorf("upstream dials = %d, want 0", got)
+				}
+			},
+		},
+		{
+			name: "forwarder 500 transform error",
+			want: "tokenhush: refused request transform_error",
+			serve: func(t *testing.T) {
+				forwarder, recorder := recordedForwarder(t, nil, func([]byte) ([]byte, error) { return nil, errors.New("transform refused") })
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader("payload")))
+				if response.Code != http.StatusInternalServerError {
+					t.Errorf("status = %d, want 500", response.Code)
+				}
+				if got := recorder.count(); got != 0 {
+					t.Errorf("upstream dials = %d, want 0", got)
+				}
+			},
+		},
+		{
+			name: "forwarder 500 request build error",
+			want: "tokenhush: refused request request_build_error",
+			serve: func(t *testing.T) {
+				forwarder, recorder := recordedForwarder(t, nil, nil)
+				request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{}`))
+				request.Method = "BAD METHOD"
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, request)
+				if response.Code != http.StatusInternalServerError {
+					t.Errorf("status = %d, want 500", response.Code)
+				}
+				if got := recorder.count(); got != 0 {
+					t.Errorf("upstream dials = %d, want 0", got)
+				}
+			},
+		},
+		{
+			name: "forwarder 502 bad gateway",
+			want: "tokenhush: refused request bad_gateway",
+			serve: func(t *testing.T) {
+				forwarder, _ := recordedForwarder(t, nil, nil)
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`)))
+				if response.Code != http.StatusBadGateway {
+					t.Errorf("status = %d, want 502", response.Code)
+				}
+			},
+		},
+		{
+			name: "forwarder 504 gateway timeout",
+			want: "tokenhush: refused request gateway_timeout",
+			serve: func(t *testing.T) {
+				forwarder, _ := recordedForwarder(t, nil, nil)
+				ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+				defer cancel()
+				request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`)).WithContext(ctx)
+				response := httptest.NewRecorder()
+				forwarder.ServeHTTP(response, request)
+				if response.Code != http.StatusGatewayTimeout {
+					t.Errorf("status = %d, want 504", response.Code)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capture := captureRefusals(t)
+			tc.serve(t)
+			requireOneRefusalLine(t, capture, tc.want, tc.marker)
+		})
+	}
+}

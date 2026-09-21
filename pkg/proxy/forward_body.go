@@ -53,3 +53,14 @@ func refuseBodyTooLarge(w http.ResponseWriter, recorder ResponseRecorder) {
 	markLocal(recorder)
 	writeDataPlaneRefusal(w, http.StatusForbidden, dataPlaneRefusal{Error: refusalBodyTooLarge})
 }
+
+// refuseLocal writes one locally generated plain-text refusal: it marks the
+// response local through the optional ResponseRecorder seam, emits the shared
+// metadata-only refusal line and writes the HTTP status text. Every forwarder
+// refusal that carries no structured document goes through here, so such a
+// refusal is observable in exactly one place.
+func refuseLocal(w http.ResponseWriter, recorder ResponseRecorder, status int, code string) {
+	markLocal(recorder)
+	logRefusal(dataPlaneRefusal{Error: code})
+	http.Error(w, http.StatusText(status), status)
+}
