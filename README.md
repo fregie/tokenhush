@@ -28,6 +28,30 @@ Your tool gets back  OPENAI_API_KEY=<real key>
 
 ---
 
+## 🛡️ What gets redacted out of the box
+
+Five detectors run by default, replacing each match with a session placeholder before the request leaves your machine:
+
+| Detector | Catches |
+|---|---|
+| `prefix` | Vendor key shapes — `sk-`, `AKIA`, `ghp_`, `glpat-`, `xox*`, `AIza`, `npm_` |
+| `jwt` | JSON Web Tokens |
+| `pem` | PEM private-key headers (`-----BEGIN … PRIVATE KEY-----`) |
+| `luhn` | Credit-card numbers that pass the Luhn check |
+| `email` | Email addresses ending in a known public suffix (`.com`, `.co.uk`, …) |
+
+A sixth detector, `entropy` (high-entropy strings), is off by default and opt-in per workload because its false positives on real agent traffic broke function calling.
+
+**Need more? Rules are extensible.** Three paths, all through the same `Rule` contract in `pkg/filter`:
+
+- **Signed rule packs.** `tokenhush rules sync` fetches Ed25519-signed packs that add detections; a non-weakening floor refuses any pack that disables a built-in detector, drops a required category, or carries an `allow` action.
+- **Declared sensitive keys.** A rule document or pack may list key names (for example `password`); the value of a matching key is redacted at any object depth.
+- **Compile-time plugins.** Implement the eight-method `Rule` interface in your own Go package; built-ins, signed packs, and third-party rules all enter the same registry and evaluate in one deterministic order.
+
+Contract and limits: [docs/plugins.md](docs/plugins.md). Switches: [Configuration](#-configuration).
+
+---
+
 ## 🚀 Quick start
 
 Any client that lets you set a custom OpenAI-compatible or Anthropic base URL works. Four steps: install, start the gateway, point one tool at it, and route requests to your provider.
