@@ -16,6 +16,7 @@
 //	upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
 //	scan_budget_bytes: 33554432
 //	detector_timeout:  30s
+//	max_body_bytes:    67108864
 //	response_buffer_bytes: 33554432
 //	response_timeout:  5m
 //
@@ -50,6 +51,8 @@ const (
 	ScanBudgetBytes = 32 << 20
 	// DetectorTimeout is the default time budget for one detector pass.
 	DetectorTimeout = 30 * time.Second
+	// MaxBodyBytes is the default memory guard on the total request body.
+	MaxBodyBytes = 64 << 20
 	// ResponseBufferBytes is the default total cap on a buffered response.
 	ResponseBufferBytes = 32 << 20
 	// ResponseTimeout is the default overall bound on reading one response.
@@ -102,6 +105,7 @@ type Config struct {
 	Upstreams       []Upstream    `yaml:"upstreams"`
 	ScanBudgetBytes int64         `yaml:"scan_budget_bytes"`
 	DetectorTimeout time.Duration `yaml:"detector_timeout"`
+	MaxBodyBytes    int64         `yaml:"max_body_bytes"`
 
 	ResponseBufferBytes int64         `yaml:"response_buffer_bytes"`
 	ResponseTimeout     time.Duration `yaml:"response_timeout"`
@@ -177,6 +181,7 @@ func Default() Config {
 		},
 		ScanBudgetBytes:     ScanBudgetBytes,
 		DetectorTimeout:     DetectorTimeout,
+		MaxBodyBytes:        MaxBodyBytes,
 		ResponseBufferBytes: ResponseBufferBytes,
 		ResponseTimeout:     ResponseTimeout,
 	}
@@ -237,6 +242,13 @@ func (c Config) Validate() error {
 		return &FieldError{
 			Path:    "detector_timeout",
 			Problem: fmt.Sprintf("%s must be positive", c.DetectorTimeout),
+			Kind:    ErrInvalidValue,
+		}
+	}
+	if c.MaxBodyBytes <= 0 {
+		return &FieldError{
+			Path:    "max_body_bytes",
+			Problem: fmt.Sprintf("%d must be positive", c.MaxBodyBytes),
 			Kind:    ErrInvalidValue,
 		}
 	}

@@ -69,6 +69,12 @@ func TestDefaults(t *testing.T) {
 	if cfg.DetectorTimeout != DetectorTimeout {
 		t.Errorf("Default().DetectorTimeout = %s, want DetectorTimeout %s", cfg.DetectorTimeout, DetectorTimeout)
 	}
+	if cfg.MaxBodyBytes != 64<<20 {
+		t.Errorf("Default().MaxBodyBytes = %d, want %d (64 MiB)", cfg.MaxBodyBytes, 64<<20)
+	}
+	if cfg.MaxBodyBytes != MaxBodyBytes {
+		t.Errorf("Default().MaxBodyBytes = %d, want MaxBodyBytes %d", cfg.MaxBodyBytes, MaxBodyBytes)
+	}
 }
 
 func TestParseEmptyDocumentReturnsDefault(t *testing.T) {
@@ -244,6 +250,46 @@ func TestParseResponseLimits(t *testing.T) {
 	}
 }
 
+func TestParseBodySizeCap(t *testing.T) {
+	cfg, err := Parse([]byte("max_body_bytes: 1048576\n"))
+	if err != nil {
+		t.Fatalf("Parse(max_body_bytes) error = %v, want nil", err)
+	}
+	if cfg.MaxBodyBytes != 1048576 {
+		t.Errorf("MaxBodyBytes = %d, want 1048576", cfg.MaxBodyBytes)
+	}
+
+	partial, err := Parse([]byte("log: {level: warn}\n"))
+	if err != nil {
+		t.Fatalf("Parse(partial document) error = %v, want nil", err)
+	}
+	if partial.MaxBodyBytes != MaxBodyBytes {
+		t.Errorf("absent max_body_bytes = %d, want the default %d", partial.MaxBodyBytes, MaxBodyBytes)
+	}
+	if partial.MaxBodyBytes != 64<<20 {
+		t.Errorf("MaxBodyBytes default = %d, want %d (64 MiB)", partial.MaxBodyBytes, 64<<20)
+	}
+
+	rejections := map[string]string{
+		"zero body cap":     "max_body_bytes: 0",
+		"negative body cap": "max_body_bytes: -1",
+	}
+	for name, bad := range rejections {
+		t.Run(name, func(t *testing.T) {
+			err := mustReject(t, bad+"\n")
+			if !errors.Is(err, ErrInvalidValue) {
+				t.Errorf("Parse(%q) error = %v, want it to wrap ErrInvalidValue", bad, err)
+			}
+			if !strings.Contains(err.Error(), "max_body_bytes") {
+				t.Errorf("Parse(%q) error = %v, want it to name max_body_bytes", bad, err)
+			}
+			if !strings.Contains(err.Error(), "must be positive") {
+				t.Errorf("Parse(%q) error = %v, want it to say the value must be positive", bad, err)
+			}
+		})
+	}
+}
+
 func TestParseRejectsUnknownDetectorName(t *testing.T) {
 	err := mustReject(t, "detectors: {wat: true}\n")
 
@@ -332,6 +378,9 @@ func TestParseKeepsDefaultsForAbsentKeys(t *testing.T) {
 	if cfg.ScanBudgetBytes != ScanBudgetBytes || cfg.DetectorTimeout != DetectorTimeout {
 		t.Errorf("numeric knobs = %d/%s, want defaults %d/%s",
 			cfg.ScanBudgetBytes, cfg.DetectorTimeout, ScanBudgetBytes, DetectorTimeout)
+	}
+	if cfg.MaxBodyBytes != MaxBodyBytes {
+		t.Errorf("MaxBodyBytes = %d, want the default %d", cfg.MaxBodyBytes, MaxBodyBytes)
 	}
 	if cfg.Log.Level != "warn" {
 		t.Errorf("Log.Level = %q, want %q", cfg.Log.Level, "warn")
