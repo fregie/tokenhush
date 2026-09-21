@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -435,4 +436,127 @@ func e2eRepoRoot(t *testing.T) string {
 		t.Fatal("runtime.Caller failed: cannot locate the repository root")
 	}
 	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
+}
+
+// TestE2EMultimodalBodySizeIsAdmitted is the CLI-level regression for the
+// reported multimodal failure: a declared-JSON body above scan_budget_bytes
+// (32 MiB) and below max_body_bytes (64 MiB), dominated by base64 image leaves
+// and carrying exactly one detectable secret in a text leaf, used to be refused
+// with 403 scan_budget_exceeded before the walk. Through the real run gateway it
+// must be admitted, redacted outbound, restored inbound, and refused by
+// nothing: no refusal line on stderr and no content-policy block.
+func TestE2EMultimodalBodySizeIsAdmitted(t *testing.T) {
+	const (
+		imageLeaves = 20
+		imageBytes  = 1_800_000
+	)
+
+	// Given a multimodal body above the per-leaf scan budget and below the cap,
+	// built once from one shared detector-inert filler. The secret is the
+	// runtime-generated e2e address, so no email-shaped literal sits in the
+	// source.
+	secret := e2eSecret(t)
+	filler := strings.Repeat("A", imageBytes)
+	var body bytes.Buffer
+	body.Grow(imageLeaves*(imageBytes+96) + 256)
+	body.WriteString(`{"model":"vision-probe","messages":[{"role":"user","content":[{"type":"text","text":"contact `)
+	body.WriteString(secret)
+	body.WriteString(`"}`)
+	for i := 0; i < imageLeaves; i++ {
+		body.WriteString(`,{"type":"image_url","image_url":{"url":"data:image/png;base64,`)
+		body.WriteString(filler)
+		body.WriteString(`"}}`)
+	}
+	body.WriteString(`]}]}`)
+	raw := body.Bytes()
+	if int64(len(raw)) <= config.ScanBudgetBytes || int64(len(raw)) >= config.MaxBodyBytes {
+		t.Fatalf("the fixture body is %d bytes, want inside (scan budget %d, max body %d)", len(raw), config.ScanBudgetBytes, config.MaxBodyBytes)
+	}
+
+	upstream := newE2EUpstream(t)
+	// The echo upstream answers with the redacted request body, so the
+	// client-bound echo is ~36 MB and would trip the 32 MiB response cap -- a
+	// documented response-side guard outside this request-path regression.
+	// Raising it lets the real buffered restore path run over the admitted body.
+	base, logs, dataDir := redactGatewayTuned(t, upstream, func(cfg *config.Config) {
+		cfg.ResponseBufferBytes = config.MaxBodyBytes
+	})
+	token := readControlToken(t, dataDir)
+	before := readLiveCounters(t, base, token)
+
+	// When the real run gateway serves it.
+	status, got := e2ePostTimeout(t, base+e2ePath, raw, nil, 120*time.Second)
+
+	// Then (1) the request is admitted and the upstream observed it.
+	if status != http.StatusOK {
+		t.Fatalf("POST = %d, want 200 (client body %d bytes)", status, len(got))
+	}
+	if upstream.count() != 1 {
+		t.Fatalf("the upstream served %d requests, want exactly 1", upstream.count())
+	}
+	sent := upstream.recorded()
+	if !e2ePlaceholder.Match(sent) {
+		t.Error("the upstream body carries no session placeholder")
+	}
+	// (2) the text-leaf secret never left the gateway.
+	if bytes.Contains(sent, []byte(secret)) {
+		t.Error("the text-leaf secret left the gateway")
+	}
+	// (3) the client-bound body restored the original secret.
+	if !bytes.Contains(got, []byte(secret)) {
+		t.Error("the client-bound body did not restore the text-leaf secret")
+	}
+	// (4) the request was admitted, not refused: no refusal line was logged and
+	// the content-policy counter did not move.
+	if count := logs.count("tokenhush: refused request"); count != 0 {
+		t.Errorf("refusal lines = %d, want exactly 0 (stderr: %s)", count, logs.String())
+	}
+	after := readLiveCounters(t, base, token)
+	if after.ContentPolicyBlocks != before.ContentPolicyBlocks {
+		t.Errorf("content_policy_blocks moved: %d -> %d", before.ContentPolicyBlocks, after.ContentPolicyBlocks)
+	}
+	// The text leaf held exactly one detectable secret: exactly one
+	// substitution was applied.
+	if delta := after.Redactions - before.Redactions; delta != 1 {
+		t.Errorf("redactions moved by %d, want exactly 1", delta)
+	}
+}
+
+// TestE2EOverCapBodyRefusalCarriesTheFrozenDocument pins what the existing
+// TestRefusalLogIsStderrOnly leaves open at the CLI level: a declared-JSON body
+// exactly one byte over max_body_bytes is refused with the frozen
+// {"error":"body_too_large"} document, dials nothing, and emits exactly one
+// stderr line.
+func TestE2EOverCapBodyRefusalCarriesTheFrozenDocument(t *testing.T) {
+	const maxBody = 1 << 20
+	upstream := newE2EUpstream(t)
+	base, logs, _ := redactGatewayTuned(t, upstream, func(cfg *config.Config) {
+		cfg.MaxBodyBytes = maxBody
+	})
+
+	// Given a declared-JSON body exactly one byte over the cap.
+	pad := maxBody - len(`{"pad":""}`) + 1
+	body := []byte(`{"pad":"` + strings.Repeat("E", pad) + `"}`)
+	if int64(len(body)) != maxBody+1 {
+		t.Fatalf("the fixture body is %d bytes, want exactly %d", len(body), maxBody+1)
+	}
+
+	// When the real run gateway serves it.
+	before := upstream.count()
+	status, got := e2ePost(t, base+e2ePath, body, nil)
+
+	// Then it is refused with the frozen document, before any dial, and the
+	// refusal is observable on stderr exactly once.
+	if status != http.StatusForbidden {
+		t.Fatalf("POST = %d, want 403 (client body %d bytes)", status, len(got))
+	}
+	if want := `{"error":"body_too_large"}`; string(got) != want {
+		t.Errorf("refusal body = %q, want exactly %q", got, want)
+	}
+	if upstream.count() != before {
+		t.Errorf("an over-cap body dialled the upstream (%d -> %d)", before, upstream.count())
+	}
+	if count := logs.count("tokenhush: refused request body_too_large"); count != 1 {
+		t.Errorf("refusal lines = %d, want exactly 1 (stderr: %s)", count, logs.String())
+	}
 }
