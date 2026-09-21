@@ -107,13 +107,11 @@ func (f WalkerFunc) Walk(data []byte) ([]protocol.Leaf, error) { return f(data) 
 // Counters means a fresh discarded set. MaxBodyBytes is the memory cap on the
 // total request body (pkg/config MaxBodyBytes) and Timeout the detector bound
 // (pkg/config DetectorTimeout); a non-positive value takes the pkg/config
-// default. Budget is the legacy per-request scan cap: the aggregate whole-body
-// refusal it gated is gone, so this path no longer reads it.
+// default.
 type DataPlaneConfig struct {
 	Walker       Walker
 	Evaluator    RequestEvaluator
 	Counters     *Counters
-	Budget       int64
 	MaxBodyBytes int64
 	Timeout      time.Duration
 }
@@ -127,7 +125,6 @@ type DataPlane struct {
 	walker       Walker
 	evaluator    RequestEvaluator
 	counters     *Counters
-	budget       int64
 	maxBodyBytes int64
 	timeout      time.Duration
 }
@@ -149,10 +146,6 @@ func NewDataPlane(next http.Handler, cfg DataPlaneConfig) *DataPlane {
 	if counters == nil {
 		counters = NewCounters()
 	}
-	budget := cfg.Budget
-	if budget <= 0 {
-		budget = config.ScanBudgetBytes
-	}
 	maxBody := cfg.MaxBodyBytes
 	if maxBody <= 0 {
 		maxBody = config.MaxBodyBytes
@@ -161,7 +154,7 @@ func NewDataPlane(next http.Handler, cfg DataPlaneConfig) *DataPlane {
 	if timeout <= 0 {
 		timeout = config.DetectorTimeout
 	}
-	return &DataPlane{next: next, walker: walker, evaluator: cfg.Evaluator, counters: counters, budget: budget, maxBodyBytes: maxBody, timeout: timeout}
+	return &DataPlane{next: next, walker: walker, evaluator: cfg.Evaluator, counters: counters, maxBodyBytes: maxBody, timeout: timeout}
 }
 
 // ServeHTTP applies the request-side contract in order: an encoded request goes

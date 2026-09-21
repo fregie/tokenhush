@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fregie/tokenhush/pkg/config"
 	"github.com/fregie/tokenhush/pkg/protocol"
 )
 
@@ -258,31 +259,38 @@ func TestDataPlaneContentTypeGate(t *testing.T) {
 	}
 }
 
-// TestDataPlaneScanBudgetIsDeterministic: the aggregate per-request scan-budget
-// refusal is gone, so a declared-JSON body over the old scan budget is walked
-// and forwarded like any other while a non-JSON body is still never walked. The
-// per-leaf scan budget stays in pkg/filter and internal/cli; the bridge cases
-// here are rewritten for the new body-size semantics in the next change.
-func TestDataPlaneScanBudgetIsDeterministic(t *testing.T) {
-	valid := `{"message":"` + strings.Repeat("x", 64) + `"}`
-
-	t.Run("over the old aggregate budget is admitted", func(t *testing.T) {
+// TestDataPlaneAdmitsBodyAboveTheScanBudget pins the narrowed scan-budget
+// semantics: the aggregate per-request refusal is gone, so a declared-JSON body
+// larger than config.ScanBudgetBytes is walked and forwarded instead of
+// refused, and the only request-side cap is config.MaxBodyBytes at the shared
+// read seam. The per-leaf budget stays in pkg/filter and internal/cli.
+func TestDataPlaneAdmitsBodyAboveTheScanBudget(t *testing.T) {
+	t.Run("above the scan budget and under the cap is admitted whole", func(t *testing.T) {
+		// Given a declared-JSON body one byte over the per-leaf scan budget,
+		// streamed so the test does not materialise a second full payload.
+		const total = int64(config.ScanBudgetBytes) + 1
 		counters := NewCounters()
 		walker := &stubWalker{}
 		plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{
-			Walker: walker, Evaluator: allowRequestEvaluator(), Counters: counters, Budget: 16,
+			Walker: walker, Evaluator: allowRequestEvaluator(), Counters: counters,
 		})
-		response := httptest.NewRecorder()
-		plane.ServeHTTP(response, dataPlanePost(valid, "application/json", true))
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", &sizedBody{Total: total, JSON: true})
+		request.Header.Set("Content-Type", "application/json")
+		request.ContentLength = total
 
+		// When the data plane serves it.
+		response := httptest.NewRecorder()
+		plane.ServeHTTP(response, request)
+
+		// Then it is walked and forwarded byte-for-byte, with no refusal.
 		if response.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200: the aggregate gate is gone (body %q)", response.Code, response.Body.String())
+			t.Fatalf("status = %d, want 200: a body over scan_budget_bytes is no longer refused (body %q)", response.Code, response.Body.String())
 		}
-		if got := requireUpstream(t, upstream); string(got.body) != valid {
-			t.Errorf("upstream body = %q, want the identical body", got.body)
+		if got := int64(len(requireUpstream(t, upstream).body)); got != total {
+			t.Errorf("upstream body length = %d, want the full %d bytes", got, total)
 		}
 		if got := walker.calls.Load(); got != 1 {
-			t.Errorf("walker calls = %d, want 1: the body is scanned, not skipped", got)
+			t.Errorf("walker calls = %d, want exactly 1: the body is scanned, not skipped", got)
 		}
 		if got := recorder.count(); got != 1 {
 			t.Errorf("upstream dials = %d, want exactly 1", got)
@@ -290,36 +298,36 @@ func TestDataPlaneScanBudgetIsDeterministic(t *testing.T) {
 		requireCounters(t, counters, 0, 0, 0)
 	})
 
-	t.Run("exactly at budget", func(t *testing.T) {
+	t.Run("over the cap is refused before any walk", func(t *testing.T) {
 		counters := NewCounters()
 		walker := &stubWalker{}
 		plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{
-			Walker: walker, Evaluator: allowRequestEvaluator(), Counters: counters, Budget: int64(len(valid)),
+			Walker: walker, Evaluator: allowRequestEvaluator(), Counters: counters,
 		})
-		response := httptest.NewRecorder()
-		plane.ServeHTTP(response, dataPlanePost(valid, "application/json", true))
+		request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", overCapJSONBody())
+		request.Header.Set("Content-Type", "application/json")
+		request.ContentLength = -1
 
-		if response.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200 at exactly the budget", response.Code)
+		response := httptest.NewRecorder()
+		plane.ServeHTTP(response, request)
+
+		fields := requireRefusal(t, response, http.StatusForbidden)
+		if fields["error"] != "body_too_large" {
+			t.Errorf("refusal error = %q, want body_too_large", fields["error"])
 		}
-		if got := requireUpstream(t, upstream); string(got.body) != valid {
-			t.Errorf("upstream body = %q, want the identical body", got.body)
+		if got := walker.calls.Load(); got != 0 {
+			t.Errorf("walker calls = %d, want 0: the cap is decided before any walk", got)
 		}
-		if got := recorder.count(); got != 1 {
-			t.Errorf("upstream dials = %d, want exactly 1", got)
-		}
-		if got := walker.calls.Load(); got != 1 {
-			t.Errorf("walker calls = %d, want 1", got)
-		}
-		requireCounters(t, counters, 0, 0, 0)
+		requireNoUpstream(t, upstream, recorder)
+		requireCounters(t, counters, 1, 0, 0)
 	})
 
-	t.Run("a non-JSON body is never budgeted", func(t *testing.T) {
+	t.Run("a non-JSON body is never walked", func(t *testing.T) {
 		body := strings.Repeat("x", 4096)
 		counters := NewCounters()
 		walker := &stubWalker{}
 		plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{
-			Walker: walker, Evaluator: allowRequestEvaluator(), Counters: counters, Budget: 16,
+			Walker: walker, Evaluator: allowRequestEvaluator(), Counters: counters,
 		})
 		response := httptest.NewRecorder()
 		plane.ServeHTTP(response, dataPlanePost(body, "application/octet-stream", true))
