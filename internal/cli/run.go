@@ -197,7 +197,7 @@ func (g *gateway) serve(listener net.Listener, notify func(chan<- os.Signal)) er
 		Addrs: g.addrs, Port: g.port, Started: g.started, Counters: g.counters,
 	})))
 	mux.Handle("/", countRequests(g.counters, proxy.NewDataPlane(http.HandlerFunc(g.route), proxy.DataPlaneConfig{
-		Evaluator: g, Counters: g.counters, Budget: g.cfg.ScanBudgetBytes, Timeout: g.cfg.DetectorTimeout,
+		Evaluator: g, Counters: g.counters, Budget: g.cfg.ScanBudgetBytes, MaxBodyBytes: g.cfg.MaxBodyBytes, Timeout: g.cfg.DetectorTimeout,
 	})))
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := proxy.CheckHostOrigin(r.Host, r.Header.Get("Origin"), proxy.Allowed{Port: g.port}); err != nil {
@@ -264,7 +264,7 @@ func (g *gateway) forwarder(baseURL string) (*proxy.Forwarder, error) {
 	if forwarder, ok := g.forwarders[baseURL]; ok {
 		return forwarder, nil
 	}
-	forwarder, err := proxy.NewForwarder(baseURL, g.redactionTransform)
+	forwarder, err := proxy.NewForwarder(baseURL, g.redactionTransform, proxy.WithMaxBodyBytes(g.cfg.MaxBodyBytes))
 	if err != nil {
 		return nil, err
 	}

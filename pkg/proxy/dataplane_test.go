@@ -258,14 +258,15 @@ func TestDataPlaneContentTypeGate(t *testing.T) {
 	}
 }
 
-// TestDataPlaneScanBudgetIsDeterministic: a declared-JSON body over the scan
-// budget is refused before any walk, so the verdict cannot depend on timing; a
-// body exactly at the budget is walked and forwarded, and a non-JSON body is
-// never budgeted at all.
+// TestDataPlaneScanBudgetIsDeterministic: the aggregate per-request scan-budget
+// refusal is gone, so a declared-JSON body over the old scan budget is walked
+// and forwarded like any other while a non-JSON body is still never walked. The
+// per-leaf scan budget stays in pkg/filter and internal/cli; the bridge cases
+// here are rewritten for the new body-size semantics in the next change.
 func TestDataPlaneScanBudgetIsDeterministic(t *testing.T) {
 	valid := `{"message":"` + strings.Repeat("x", 64) + `"}`
 
-	t.Run("over budget", func(t *testing.T) {
+	t.Run("over the old aggregate budget is admitted", func(t *testing.T) {
 		counters := NewCounters()
 		walker := &stubWalker{}
 		plane, upstream, recorder := dataPlaneHarness(t, DataPlaneConfig{
@@ -274,15 +275,19 @@ func TestDataPlaneScanBudgetIsDeterministic(t *testing.T) {
 		response := httptest.NewRecorder()
 		plane.ServeHTTP(response, dataPlanePost(valid, "application/json", true))
 
-		fields := requireRefusal(t, response, http.StatusForbidden)
-		if fields["error"] != "scan_budget_exceeded" {
-			t.Errorf("refusal error = %q, want scan_budget_exceeded", fields["error"])
+		if response.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: the aggregate gate is gone (body %q)", response.Code, response.Body.String())
 		}
-		if got := walker.calls.Load(); got != 0 {
-			t.Errorf("walker calls = %d, want 0: the budget is checked before any walk", got)
+		if got := requireUpstream(t, upstream); string(got.body) != valid {
+			t.Errorf("upstream body = %q, want the identical body", got.body)
 		}
-		requireNoUpstream(t, upstream, recorder)
-		requireCounters(t, counters, 1, 0, 0)
+		if got := walker.calls.Load(); got != 1 {
+			t.Errorf("walker calls = %d, want 1: the body is scanned, not skipped", got)
+		}
+		if got := recorder.count(); got != 1 {
+			t.Errorf("upstream dials = %d, want exactly 1", got)
+		}
+		requireCounters(t, counters, 0, 0, 0)
 	})
 
 	t.Run("exactly at budget", func(t *testing.T) {

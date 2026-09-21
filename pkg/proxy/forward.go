@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/fregie/tokenhush/pkg/config"
 )
 
 // ErrInvalidUpstream means a configured upstream base URL is unusable: it must
@@ -47,7 +49,8 @@ type forwardOption func(*forwardConfig)
 
 // forwardConfig collects the optional construction settings.
 type forwardConfig struct {
-	dial dialFunc
+	dial         dialFunc
+	maxBodyBytes int64
 }
 
 // WithDialFunc injects the dial function. A nil dial is ignored so the default
@@ -62,12 +65,24 @@ func WithDialFunc(dial dialFunc) forwardOption {
 	}
 }
 
+// WithMaxBodyBytes overrides the memory cap on the total request body. A
+// non-positive value is ignored, so the pkg/config default can never be
+// accidentally removed. The cap itself is enforced in forward_body.go.
+func WithMaxBodyBytes(n int64) forwardOption {
+	return func(cfg *forwardConfig) {
+		if n > 0 {
+			cfg.maxBodyBytes = n
+		}
+	}
+}
+
 // Forwarder forwards requests to one fixed upstream base URL and relays the
 // response. It implements http.Handler and is safe for concurrent use.
 type Forwarder struct {
-	base      *url.URL
-	client    *http.Client
-	transform BodyTransform
+	base         *url.URL
+	client       *http.Client
+	transform    BodyTransform
+	maxBodyBytes int64
 }
 
 // Forwarder serves HTTP.
@@ -93,7 +108,10 @@ func NewForwarder(baseURL string, transform BodyTransform, opts ...forwardOption
 		dialer := &net.Dialer{Timeout: defaultDialTimeout, KeepAlive: 30 * time.Second}
 		cfg.dial = dialer.DialContext
 	}
-	return &Forwarder{base: base, client: newForwardClient(cfg.dial), transform: transform}, nil
+	if cfg.maxBodyBytes <= 0 {
+		cfg.maxBodyBytes = config.MaxBodyBytes
+	}
+	return &Forwarder{base: base, client: newForwardClient(cfg.dial), transform: transform, maxBodyBytes: cfg.maxBodyBytes}, nil
 }
 
 // parseUpstream validates and canonicalises an upstream base URL.
@@ -123,9 +141,10 @@ func parseUpstream(raw string) (*url.URL, error) {
 // carrying a non-identity Content-Encoding is refused with 415 BEFORE its body
 // is read and BEFORE any upstream connection is opened, because the pipeline
 // inspects plain bytes and the gateway never decompresses untrusted request
-// content. The body is then read in full, transformed exactly once and
-// dispatched; Accept-Encoding is stripped so the upstream answers with bytes
-// the response path can classify.
+// content. The body is then read in full under the memory cap, transformed
+// exactly once and dispatched; a body over the cap is refused with the shared
+// 403 body_too_large and never dispatched. Accept-Encoding is stripped so the
+// upstream answers with bytes the response path can classify.
 func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	recorder, _ := w.(ResponseRecorder)
 	if !identityOnlyEncoding(r.Header) {
@@ -133,8 +152,12 @@ func (f *Forwarder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusUnsupportedMediaType), http.StatusUnsupportedMediaType)
 		return
 	}
-	body, err := readRequestBody(r)
+	body, err := readRequestBody(w, r, f.maxBodyBytes)
 	if err != nil {
+		if errors.Is(err, errBodyTooLarge) {
+			refuseBodyTooLarge(w, recorder)
+			return
+		}
 		markLocal(recorder)
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return

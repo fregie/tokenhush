@@ -15,10 +15,9 @@ package proxy
 // change. A request carrying a non-identity Content-Encoding goes to the
 // forwarder untouched, which refuses it with 415 before reading a byte.
 //
-// Refusals: an unwalkable declared-JSON body is a 400 carrying the walk's
-// classification; a body over the pkg/config scan budget is 403
-// scan_budget_exceeded (refused before the walk, so the verdict is
-// deterministic and independent of timing); a walk or detector panic, a
+// Refusals: a body over the pkg/config max_body_bytes cap is 403 body_too_large
+// (refused at the shared read seam before any walk); an unwalkable declared-JSON
+// body is a 400 carrying the walk's classification; a walk or detector panic, a
 // detector timeout and a failed evaluation are 403 plugin_failure with a closed
 // reason; a request-scoped Block -- including a global blocklist literal, which
 // the evaluator reports as the rule id "blocklist" -- is 403 naming the rule
@@ -29,11 +28,9 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -107,28 +104,32 @@ func (f WalkerFunc) Walk(data []byte) ([]protocol.Leaf, error) { return f(data) 
 
 // DataPlaneConfig wires the request-side data plane's injectable seams. A nil
 // Walker means protocol.Walk, a nil Evaluator means no evaluation and a nil
-// Counters means a fresh discarded set. Budget is the deterministic scan cap
-// (pkg/config ScanBudgetBytes) and Timeout the detector bound (pkg/config
-// DetectorTimeout); a non-positive value takes the pkg/config default.
+// Counters means a fresh discarded set. MaxBodyBytes is the memory cap on the
+// total request body (pkg/config MaxBodyBytes) and Timeout the detector bound
+// (pkg/config DetectorTimeout); a non-positive value takes the pkg/config
+// default. Budget is the legacy per-request scan cap: the aggregate whole-body
+// refusal it gated is gone, so this path no longer reads it.
 type DataPlaneConfig struct {
-	Walker    Walker
-	Evaluator RequestEvaluator
-	Counters  *Counters
-	Budget    int64
-	Timeout   time.Duration
+	Walker       Walker
+	Evaluator    RequestEvaluator
+	Counters     *Counters
+	Budget       int64
+	MaxBodyBytes int64
+	Timeout      time.Duration
 }
 
-// DataPlane is the request-side fail-closed gate. It reads the whole body,
-// decides whether the request declares JSON, and either refuses locally or
-// hands the request to the next handler with the identical body restored. It is
-// safe for concurrent use.
+// DataPlane is the request-side fail-closed gate. It reads the whole body
+// under the memory cap, decides whether the request declares JSON, and either
+// refuses locally or hands the request to the next handler with the identical
+// body restored. It is safe for concurrent use.
 type DataPlane struct {
-	next      http.Handler
-	walker    Walker
-	evaluator RequestEvaluator
-	counters  *Counters
-	budget    int64
-	timeout   time.Duration
+	next         http.Handler
+	walker       Walker
+	evaluator    RequestEvaluator
+	counters     *Counters
+	budget       int64
+	maxBodyBytes int64
+	timeout      time.Duration
 }
 
 // DataPlane serves HTTP.
@@ -152,11 +153,15 @@ func NewDataPlane(next http.Handler, cfg DataPlaneConfig) *DataPlane {
 	if budget <= 0 {
 		budget = config.ScanBudgetBytes
 	}
+	maxBody := cfg.MaxBodyBytes
+	if maxBody <= 0 {
+		maxBody = config.MaxBodyBytes
+	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {
 		timeout = config.DetectorTimeout
 	}
-	return &DataPlane{next: next, walker: walker, evaluator: cfg.Evaluator, counters: counters, budget: budget, timeout: timeout}
+	return &DataPlane{next: next, walker: walker, evaluator: cfg.Evaluator, counters: counters, budget: budget, maxBodyBytes: maxBody, timeout: timeout}
 }
 
 // ServeHTTP applies the request-side contract in order: an encoded request goes
@@ -168,8 +173,12 @@ func (p *DataPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.next.ServeHTTP(w, r)
 		return
 	}
-	body, err := readRequestBody(r)
+	body, err := readRequestBody(w, r, p.maxBodyBytes)
 	if err != nil {
+		if errors.Is(err, errBodyTooLarge) {
+			p.refuse(w, http.StatusForbidden, dataPlaneRefusal{Error: refusalBodyTooLarge})
+			return
+		}
 		p.refuse(w, http.StatusBadRequest, dataPlaneRefusal{Error: refusalUnreadableBody})
 		return
 	}
@@ -180,13 +189,10 @@ func (p *DataPlane) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.inspect(w, r, body)
 }
 
-// inspect walks and evaluates one declared-JSON body under the scan budget and
-// the detector bound.
+// inspect walks and evaluates one declared-JSON body under the detector bound.
+// The total-body cap was enforced at the read seam, so there is no aggregate
+// gate here: a body above the per-leaf scan budget is scanned like any other.
 func (p *DataPlane) inspect(w http.ResponseWriter, r *http.Request, body []byte) {
-	if int64(len(body)) > p.budget {
-		p.refuse(w, http.StatusForbidden, dataPlaneRefusal{Error: refusalScanBudget})
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), p.timeout)
 	defer cancel()
 
@@ -249,63 +255,6 @@ func guardCall[T any](timeout time.Duration, call func() (T, error)) callOutcome
 	}
 }
 
-// The metadata-only request refusal codes.
-const (
-	refusalUnreadableBody = "unreadable_body"
-	refusalScanBudget     = "scan_budget_exceeded"
-	refusalPluginFailure  = "plugin_failure"
-	refusalUnwalkableJSON = "unwalkable_json"
-)
-
-// dataPlaneRefusal is the client-bound request refusal document: a fixed code,
-// the classified failure reason where one applies and the rule id of a block.
-// No field can hold content.
-type dataPlaneRefusal struct {
-	Error  string `json:"error"`
-	Reason string `json:"reason,omitempty"`
-	RuleID string `json:"rule_id,omitempty"`
-}
-
-// failureReasons is the closed set the plugin_failure contract admits.
-var failureReasons = map[FailureReason]bool{
-	FailureBudget:    true,
-	FailureTimeout:   true,
-	FailureError:     true,
-	FailurePanic:     true,
-	FailureMalformed: true,
-}
-
-// pluginFailure renders the fail-closed detection refusal for one reason.
-func pluginFailure(reason FailureReason) dataPlaneRefusal {
-	return dataPlaneRefusal{Error: refusalPluginFailure, Reason: string(reason)}
-}
-
-// refuse moves content_policy_blocks and writes the metadata-only refusal.
-func (p *DataPlane) refuse(w http.ResponseWriter, status int, doc dataPlaneRefusal) {
-	p.counters.countContentPolicyBlock()
-	writeDataPlaneRefusal(w, status, doc)
-}
-
-// block moves both content counters and writes the rule-block refusal naming
-// the first rule id the decision carried.
-func (p *DataPlane) block(w http.ResponseWriter, ruleIDs []string) {
-	p.counters.countContentPolicyBlock()
-	p.counters.countRuleBlock()
-	writeDataPlaneRefusal(w, http.StatusForbidden, dataPlaneRefusal{Error: refusalRuleBlocked, RuleID: primaryRule(ruleIDs)})
-}
-
-// writeDataPlaneRefusal writes one JSON refusal with an explicit length.
-func writeDataPlaneRefusal(w http.ResponseWriter, status int, doc dataPlaneRefusal) {
-	body, err := json.Marshal(doc)
-	if err != nil {
-		body = []byte(`{"error":"refusal"}`)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
-}
-
 // forward hands the request to the next handler with the identical body
 // restored, so an admitted request is byte-for-byte.
 func (p *DataPlane) forward(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -338,32 +287,4 @@ func mediaType(value string) string {
 		value = value[:i]
 	}
 	return strings.ToLower(strings.TrimSpace(value))
-}
-
-// walkClassification maps a walk failure onto the stable classification the 400
-// body carries. The error text is never echoed.
-func walkClassification(err error) string {
-	switch {
-	case errors.Is(err, protocol.ErrMalformedJSON):
-		return "malformed_json"
-	case errors.Is(err, protocol.ErrTrailingData):
-		return "trailing_data"
-	case errors.Is(err, protocol.ErrNonUTF8):
-		return "invalid_utf8"
-	case errors.Is(err, protocol.ErrMaxDepth):
-		return "max_depth"
-	default:
-		return refusalUnwalkableJSON
-	}
-}
-
-// failureReason classifies an evaluator error: a *DetectorFailure names one of
-// the five reasons and anything else is FailureError, so the wire contract
-// stays closed.
-func failureReason(err error) FailureReason {
-	var failure *DetectorFailure
-	if errors.As(err, &failure) && failureReasons[failure.Reason] {
-		return failure.Reason
-	}
-	return FailureError
 }
