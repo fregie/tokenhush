@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="336px" height="386px" viewBox="0 0 336 386" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>logo</title>
+    <g id="页面-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="TonkenHush1备份" transform="translate(-78, -17)">
+            <g id="logo" transform="translate(78, 17)">
+                <polygon id="矩形备份-2" fill="#096BE5" points="1.30452118e-13 140 153 95 153 145 1.30452118e-13 190"></polygon>
+                <path d="M68,137.991903 L153,137.991903 L153,386 L120.801749,368.762165 C88.2929296,351.358063 68,317.475838 68,280.601374 L68,137.991903 L68,137.991903 Z" id="形状结合" fill="#096BE5"></path>
+                <polygon id="矩形备份" fill="#033998" transform="translate(252, 50) scale(-1, 1) translate(-252, -50)" points="168 50 336 6.31593543e-14 336 50 168 100"></polygon>
+                <polygon id="矩形备份-3" fill="#096BE5" points="3.58463259e-14 50 168 6.31593543e-14 168 50 3.58463259e-14 100"></polygon>
+                <polygon id="形状结合" fill="#033998" points="183 95 233 105.651822 233 329.117409 183 386"></polygon>
+                <path d="M286,125 L336,135 L336,205.472377 C336,229.23096 327.540965,252.213386 312.13819,270.302741 L286,301 L286,301 L286,125 Z" id="矩形备份-4" fill="#033998"></path>
+                <polygon id="矩形备份-7" fill="#033998" points="209 187 311 187 311 237 209 237"></polygon>
+            </g>
+        </g>
+    </g>
+</svg>

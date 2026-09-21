@@ -1,16 +1,17 @@
-# Tokenhush
-
-**English** | [中文](README.zh-CN.md)
-
-> Local, reversible secret redaction for AI coding tools. No MITM, no root certificate.
-
-[![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](https://go.dev/dl/)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#-quick-start)
-
-**[Star the repo](https://github.com/fregie/tokenhush/stargazers)** · **[Watch releases](https://github.com/fregie/tokenhush/watchers)**
+<div align="center">
+  <img src="asset/logo.svg" alt="Tokenhush logo" height="104">
+  <p><img src="asset/TokenHush.svg" alt="Tokenhush" height="56"></p>
+  <p><strong>English</strong> · <a href="README.zh-CN.md">中文</a></p>
+  <p><em>Local, reversible secret redaction for AI coding tools. No MITM, no root certificate.</em></p>
+  <p>
+    <a href="https://github.com/fregie/tokenhush/actions/workflows/ci.yml"><img src="https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/fregie/tokenhush/releases"><img src="https://img.shields.io/github/v/release/fregie/tokenhush" alt="Release"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+    <a href="https://go.dev/dl/"><img src="https://img.shields.io/badge/go-1.25-00ADD8.svg" alt="Go 1.25"></a>
+    <a href="#-quick-start"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg" alt="Platforms"></a>
+  </p>
+  <p><a href="https://github.com/fregie/tokenhush/stargazers"><strong>Star the repo</strong></a> · <a href="https://github.com/fregie/tokenhush/watchers"><strong>Watch releases</strong></a></p>
+</div>
 
 ![The model only ever sees placeholders](asset/screenshot_02.png)
 
@@ -248,7 +249,7 @@ Yes, in process and in memory. It has to read each request body to find and repl
 No. The only files it writes are metadata: `run.json` (`pid`, `port`, `addrs`, `started_at`), the `0600` control token, the verified rules cache, and the update anti-rollback mark. Bodies and mappings stay in memory.
 
 **Does it slow me down?**
-It runs in the request path on loopback, walks the request body, and forwards it to the provider. It does not terminate TLS and adds no network hop beyond the one your tool already makes to the provider. Measured overhead for v0.5.0 is not published yet, so treat any figure you see as unverified.
+It runs in the request path on loopback, walks the request body, and forwards it to the provider. It does not terminate TLS and adds no network hop beyond the one your tool already makes to the provider. Measured overhead is not published yet, so treat any figure you see as unverified.
 
 **Does it work offline?**
 The data path is local: the gateway binds loopback and talks to your provider, which needs network anyway. The only two requests Tokenhush itself can make to the vendor, update check and rule sync, are both switchable off. Nothing else leaves the machine.
@@ -289,7 +290,7 @@ tokenhush privacy      show the vendor-bound egress disclosure
 | `tokenhush update` | Checks for and applies a signed self-update. Homebrew and Scoop installs delegate to their package manager; a self-managed install self-replaces. | `--check` |
 | `tokenhush status` | Reads the running gateway's metadata. Human form is `key: value` lines; `--json` emits the frozen status document. When nothing is running it prints `not running` and exits 1. | `--json` |
 | `tokenhush env <tool>` | Prints a ready-to-paste setup snippet for one of the 14 tools. | `--config PATH`, `--port N` |
-| `tokenhush version` | Prints `tokenhush v0.5.0 <os>/<arch> <goversion> (commit …, built …)`. | none |
+| `tokenhush version` | Prints `tokenhush v<version> <os>/<arch> <goversion> (commit …, built …)`, where `<version>` is the release version. | none |
 | `tokenhush privacy` | Prints the vendor-bound egress disclosure: exactly two categories, each with its switch, host, and retention. | `--json` |
 
 Every command exits `0` on success, `1` when a check or operation fails, and `2` on a usage error (unknown command or tool, bad flag value).
@@ -376,11 +377,12 @@ The installers download and verify the published binary for your platform, so no
 | [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) / [中文](docs/PRO-MIGRATION.zh-CN.md) | What the Pro repository must do after this rewrite. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [中文](CONTRIBUTING.zh-CN.md) | How to build, test, and contribute. |
 | [SECURITY.md](SECURITY.md) / [中文](SECURITY.zh-CN.md) | Vulnerability disclosure policy. |
+| [CHANGELOG.md](CHANGELOG.md) / [中文](CHANGELOG.zh-CN.md) | Release history for the from-scratch core (v0.5.0 onward). |
 | [LICENSE](LICENSE) | Apache License 2.0. |
 
 ## Project status
 
-This repository is the v0.5.0 from-scratch core. It exposes the seven-command surface (`run`, `rules`, `update`, `status`, `env`, `version`, `privacy`), a strict validated `tokenhush.yaml`, and the security invariants documented in [docs/security.md](docs/security.md). CI runs unit tests plus the guard suites on Linux, macOS, and Windows.
+This repository is the from-scratch core, first released as v0.5.0. It exposes the seven-command surface (`run`, `rules`, `update`, `status`, `env`, `version`, `privacy`), a strict validated `tokenhush.yaml`, and the security invariants documented in [docs/security.md](docs/security.md). CI runs unit tests plus the guard suites on Linux, macOS, and Windows.
 
 ## 🤝 Contributing
 

@@ -1,16 +1,17 @@
-# Tokenhush
-
-**中文** | [English](README.md)
-
-> 本地、可逆的密钥脱敏；无 MITM、不装根证书。
-
-[![CI](https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg)](https://github.com/fregie/tokenhush/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/fregie/tokenhush)](https://github.com/fregie/tokenhush/releases)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Go 1.25](https://img.shields.io/badge/go-1.25-00ADD8.svg)](go.mod)
-[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)](#-快速开始)
-
-**[Star 这个仓库](https://github.com/fregie/tokenhush/stargazers)** · **[Watch 版本发布](https://github.com/fregie/tokenhush/watchers)**
+<div align="center">
+  <img src="asset/logo.svg" alt="Tokenhush logo" height="104">
+  <p><img src="asset/TokenHush.svg" alt="Tokenhush" height="56"></p>
+  <p><strong>中文</strong> · <a href="README.md">English</a></p>
+  <p><em>本地、可逆的密钥脱敏；无 MITM、不装根证书。</em></p>
+  <p>
+    <a href="https://github.com/fregie/tokenhush/actions/workflows/ci.yml"><img src="https://github.com/fregie/tokenhush/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+    <a href="https://github.com/fregie/tokenhush/releases"><img src="https://img.shields.io/github/v/release/fregie/tokenhush" alt="Release"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+    <a href="go.mod"><img src="https://img.shields.io/badge/go-1.25-00ADD8.svg" alt="Go 1.25"></a>
+    <a href="#-快速开始"><img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg" alt="Platforms"></a>
+  </p>
+  <p><a href="https://github.com/fregie/tokenhush/stargazers"><strong>Star 这个仓库</strong></a> · <a href="https://github.com/fregie/tokenhush/watchers"><strong>Watch 版本发布</strong></a></p>
+</div>
 
 ![模型只看到占位符](asset/screenshot_02.png)
 
@@ -297,7 +298,7 @@ tokenhush version      打印版本与构建信息
 | `tokenhush privacy` | 打印厂商绑定的出口披露，恰好两个类别。 | `--json` |
 | `tokenhush rules` | `sync [--check]` 同步 Ed25519 签名的检测规则包；`rollback` 回到上一个验证过的序列号或内置默认值。 | `sync --check` |
 | `tokenhush update` | 检查并应用签名自更新；`--check` 只报告。 | `--check` |
-| `tokenhush version` | 打印 `tokenhush v0.5.0 <os>/<arch> <goversion> (commit …, built …)`。 | 无 |
+| `tokenhush version` | 打印 `tokenhush v<version> <os>/<arch> <goversion> (commit …, built …)`，其中 `<version>` 为发行版本号。 | 无 |
 
 `tokenhush status --json` 是一份十键文档，全部是会话元数据：`state`、`addrs`、`port`、`uptime_ms`、`requests`、`redactions`、`content_policy_blocks`、`rule_blocks`、`walk_skips`、`pack_serial`。
 
@@ -382,11 +383,12 @@ Linux 与 Windows 的脚本在安装前会用发布页的 `checksums.txt` 校验
 | [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) / [docs/PRO-MIGRATION.zh-CN.md](docs/PRO-MIGRATION.zh-CN.md) | Pro 仓库需要单独完成的迁移（英文 / 中文） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) | 如何构建、测试与贡献（英文 / 中文） |
 | [SECURITY.md](SECURITY.md) / [SECURITY.zh-CN.md](SECURITY.zh-CN.md) | 漏洞披露流程与响应时间（英文 / 中文） |
+| [CHANGELOG.md](CHANGELOG.md) / [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md) | 从零重写核心的发行历史（自 v0.5.0 起）（英文 / 中文） |
 | [LICENSE](LICENSE) | Apache-2.0 许可证全文 |
 
 ## 项目状态
 
-本仓库是 tokenhush 内核从零开始的 **v0.5.0** 重写。它提供七个命令：`run`、`status`、`env`、`privacy`、`rules`、`update`、`version`。配置在加载时严格校验，未知键直接失败。代码是纯 Go，`CGO_ENABLED=0`，CI 在 Linux、macOS、Windows 上运行单元测试与守卫测试。
+本仓库是 tokenhush 内核从零重写的核心，首个发布版本为 **v0.5.0**。它提供七个命令：`run`、`status`、`env`、`privacy`、`rules`、`update`、`version`。配置在加载时严格校验，未知键直接失败。代码是纯 Go，`CGO_ENABLED=0`，CI 在 Linux、macOS、Windows 上运行单元测试与守卫测试。
 
 ## 🤝 参与贡献
 
