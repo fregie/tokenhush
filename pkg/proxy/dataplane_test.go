@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/fregie/tokenhush/pkg/config"
+	"github.com/fregie/tokenhush/pkg/filter"
 	"github.com/fregie/tokenhush/pkg/protocol"
 )
 
@@ -554,4 +555,84 @@ func TestDataPlaneEncodedRequestGoesStraightToTheForwarder(t *testing.T) {
 		t.Errorf("upstream dials = %d, want 0", got)
 	}
 	requireCounters(t, counters, 0, 0, 0)
+}
+
+// TestPerLeafBudgetTruncatesOnlyTheOverBudgetLeaf pins the scan-budget
+// semantics that remain after the aggregate refusal was removed: the budget is
+// per leaf and per primitive, so a leaf longer than the budget is inspected
+// only over its first budget bytes, and a sibling leaf inside the budget is
+// scanned whole. It composes the real detection stack exactly as internal/cli
+// does -- registry, built-ins with an explicit small budget, action policy --
+// and decides over the walked leaves.
+func TestPerLeafBudgetTruncatesOnlyTheOverBudgetLeaf(t *testing.T) {
+	// The address is assembled from fragments so no email-shaped literal sits
+	// in the source.
+	secret := "budget" + "-probe" + "@" + "fauxmail" + ".com"
+	const budget = 64
+
+	// Given two string leaves: A carries the address only past the budget, B
+	// carries it at its start.
+	type twoLeaves struct {
+		A string `json:"a"`
+		B string `json:"b"`
+	}
+	body, err := json.Marshal(twoLeaves{A: strings.Repeat("A", 2*budget) + " " + secret, B: secret})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	registry := filter.NewRegistry()
+	if err := registry.RegisterBuiltin(filter.BuiltinDetectorsBudget(budget)...); err != nil {
+		t.Fatalf("RegisterBuiltin: %v", err)
+	}
+	policy := filter.NewPolicy(registry, filter.PolicyConfig{Timeout: config.DetectorTimeout})
+
+	// When the walked leaves are evaluated on the request phase.
+	leaves, err := protocol.Walk(body)
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(leaves) != 2 {
+		t.Fatalf("Walk returned %d leaves, want 2: %s", len(leaves), body)
+	}
+	decision, err := policy.Decide(leaves, filter.ScopeRequest)
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+
+	// Then only the in-budget sibling was seen: exactly one substitution, and
+	// it is leaf B's, even though leaf A spells the same address past its
+	// truncation point.
+	leafB := -1
+	for i := range leaves {
+		if string(leaves[i].Value) == secret {
+			leafB = i
+		}
+	}
+	if leafB < 0 {
+		t.Fatalf("no leaf carries the address at its start: %+v", leaves)
+	}
+	leafA := 1 - leafB
+	if got := len(leaves[leafA].Value); got <= budget {
+		t.Fatalf("the over-budget leaf is %d bytes, want more than the %d-byte budget", got, budget)
+	}
+	at := strings.Index(string(leaves[leafA].Value), secret)
+	if at < 0 {
+		t.Fatalf("the over-budget leaf does not carry the address at all")
+	}
+	if at <= budget {
+		t.Fatalf("the over-budget leaf spells the address at byte %d, want it past the %d-byte truncation point", at, budget)
+	}
+	if decision.Action != filter.ActionRedact {
+		t.Fatalf("decision action = %q, want %q", decision.Action, filter.ActionRedact)
+	}
+	if len(decision.Substitutions) != 1 {
+		t.Fatalf("substitutions = %d, want exactly 1: the truncated tail of leaf A must not be seen (%+v)", len(decision.Substitutions), decision.Substitutions)
+	}
+	got := decision.Substitutions[0]
+	if got.LeafIndex != leafB || got.Start != 0 || got.End != len(secret) || got.Category != filter.CategoryEmail {
+		t.Fatalf("substitution = %+v, want leaf %d spanning [0,%d) as %s", got, leafB, len(secret), filter.CategoryEmail)
+	}
+	if spelled := string(leaves[leafB].Value[got.Start:got.End]); spelled != secret {
+		t.Errorf("the substitution span spells %q, want the in-budget address", spelled)
+	}
 }

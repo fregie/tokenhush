@@ -453,3 +453,65 @@ func TestRedactRequestExcludedControlTokenIsNotRestored(t *testing.T) {
 		t.Errorf("the client body is not valid JSON: %s", got)
 	}
 }
+
+// TestE2EBudgetReportIsOneLinePerRequest pins reportBudgetExceeded after the
+// aggregate refusal was removed: the report is per request, against the
+// effective per-primitive budget, and it stays metadata-only. A request whose
+// longest leaf exceeds scan_budget_bytes emits exactly one line naming lengths
+// only, each such request emits its own line, and a request whose longest leaf
+// fits emits none, driven end to end through the real run gateway.
+func TestE2EBudgetReportIsOneLinePerRequest(t *testing.T) {
+	upstream := newE2EUpstream(t)
+	const budget = 64
+	base, logs, _ := redactGatewayTuned(t, upstream, func(cfg *config.Config) {
+		cfg.ScanBudgetBytes = budget
+	})
+
+	secret := e2eSecret(t)
+	over := strings.Repeat("D", 200) + " " + secret
+	lineMarker := budgetExceededPrefix + " leaf="
+	wantLine := fmt.Sprintf("%s leaf=%d budget=%d", budgetExceededPrefix, len(over), budget)
+
+	// When two requests whose longest leaf exceeds the per-leaf budget are
+	// served.
+	for turn := 1; turn <= 2; turn++ {
+		status, got := e2ePost(t, base+e2ePath, redactJSONBody(t, over), nil)
+		if status != http.StatusOK {
+			t.Fatalf("over-budget POST %d = %d, want 200 (body %s)", turn, status, got)
+		}
+		if count := logs.count(lineMarker); count != turn {
+			t.Fatalf("budget lines after request %d = %d, want exactly %d (stderr: %s)", turn, count, turn, logs.String())
+		}
+	}
+
+	// Then each request reported its own line, and the line spells lengths
+	// only -- never secret bytes.
+	start := strings.Index(logs.String(), wantLine)
+	if start < 0 {
+		t.Fatalf("stderr does not carry %q: %s", wantLine, logs.String())
+	}
+	line, _, _ := strings.Cut(logs.String()[start:], "\n")
+	if line != wantLine {
+		t.Errorf("budget line = %q, want exactly %q (lengths only)", line, wantLine)
+	}
+	if strings.Contains(line, secret) {
+		t.Errorf("the budget line carries secret bytes: %q", line)
+	}
+
+	// When a request whose longest leaf fits the budget is served.
+	within := "note " + secret
+	status, got := e2ePost(t, base+e2ePath, redactJSONBody(t, within), nil)
+	if status != http.StatusOK {
+		t.Fatalf("within-budget POST = %d, want 200 (body %s)", status, got)
+	}
+
+	// Then it adds no budget line, and the transform did see it: the in-budget
+	// address was redacted upstream.
+	if count := logs.count(lineMarker); count != 2 {
+		t.Errorf("budget lines after the in-budget request = %d, want still 2 (stderr: %s)", count, logs.String())
+	}
+	placeholder := "__PII_" + "email_"
+	if sent := upstream.recorded(); !bytes.Contains(sent, []byte(placeholder)) {
+		t.Errorf("the in-budget request minted no placeholder: the transform did not run")
+	}
+}
