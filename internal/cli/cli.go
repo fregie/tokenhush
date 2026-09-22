@@ -121,23 +121,81 @@ func ruleIDs(findings []filter.AttributedFinding) []string {
 	return ids
 }
 
-// Masking policy of the redaction log: an opaque credential type reveals a
-// bounded prefix and suffix, every other type reveals nothing, and the result
-// can never equal the secret. A literal value equal to the no-reveal form
-// becomes the distinct fallback.
+// Masking policy of the redaction log. Every class is bounded and can never
+// equal the secret it hides: an opaque credential type reveals a bounded prefix
+// and suffix; a private-key block names only its PEM kind, drawn from the
+// closed pemKinds allowlist, never the captured header text; an email address
+// reveals only its domain with the local part hidden; every other type reveals
+// nothing. A masked form equal to the value, including a literal "****",
+// becomes the distinct fallback "[redacted]".
 var maskEdgeTypes = map[string]bool{"api_key": true, "high_entropy": true}
+
+// pemKinds is the closed allowlist of PEM private-key header literals the log
+// may name. The PEM detector matches any [A-Z0-9 ]* run before "PRIVATE KEY",
+// so the captured run can be secret or attacker-controlled text; the log emits
+// a literal from this list and never the captured run.
+var pemKinds = []string{
+	"PRIVATE KEY",
+	"RSA PRIVATE KEY",
+	"EC PRIVATE KEY",
+	"DSA PRIVATE KEY",
+	"OPENSSH PRIVATE KEY",
+	"ENCRYPTED PRIVATE KEY",
+	"PGP PRIVATE KEY BLOCK",
+}
+
+// maxMaskDomainBytes caps the revealed email domain so a pathological value
+// cannot be echoed whole; a longer domain falls back to the no-reveal form.
+const maxMaskDomainBytes = 64
 
 // maskSecret returns the masked, human-readable form of one redacted value for
 // the frozen redaction-log format. It works on runes, so a multi-byte value is
-// never split mid-character.
+// never split mid-character, and it never returns the value itself.
 func maskSecret(value, kind string) string {
-	if runes := []rune(value); maskEdgeTypes[kind] && len(runes) >= 16 && len(runes)-6 >= 8 {
-		return string(runes[:4]) + "…" + string(runes[len(runes)-2:])
+	masked := "****"
+	switch runes := []rune(value); {
+	case maskEdgeTypes[kind] && len(runes) >= 16 && len(runes)-6 >= 8:
+		masked = string(runes[:4]) + "…" + string(runes[len(runes)-2:])
+	case kind == filter.CategoryPrivateKey:
+		if pem := pemKind(value); pem != "" {
+			masked = pem
+		}
+	case kind == filter.CategoryEmail:
+		if domain := emailDomain(value); domain != "" {
+			masked = "****@" + domain
+		}
 	}
-	if value == "****" {
+	if masked == value {
 		return "[redacted]"
 	}
-	return "****"
+	return masked
+}
+
+// pemKind returns value's PEM private-key header literal when it is one of the
+// pemKinds allowlist, and empty otherwise, so no captured header text is ever
+// echoed.
+func pemKind(value string) string {
+	for _, kind := range pemKinds {
+		if strings.HasPrefix(value, "-----BEGIN "+kind+"-----") {
+			return kind
+		}
+	}
+	return ""
+}
+
+// emailDomain returns the domain of an '@'-delimited pair with a non-empty
+// local and domain part and no second '@', or empty otherwise. A domain past
+// maxMaskDomainBytes yields empty so the caller falls back to the no-reveal
+// form.
+func emailDomain(value string) string {
+	at := strings.IndexByte(value, '@')
+	if at <= 0 || at == len(value)-1 || strings.IndexByte(value[at+1:], '@') >= 0 {
+		return ""
+	}
+	if domain := value[at+1:]; len(domain) <= maxMaskDomainBytes {
+		return domain
+	}
+	return ""
 }
 
 // Warn implements proxy.WarningWriter: the proxy's metadata-only response

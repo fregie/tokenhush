@@ -218,7 +218,7 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 你会看到三件事：
 
 1. echo 上游的终端打印出 body，里面的密钥已被替换成 `__PII_email_<digest>__` 占位符，密钥本身没有离开网关。
-2. 网关终端打印两行 stderr 日志。拦截行格式为 `tokenhush: redacted request <type> (len=<N>) <masked>`，例如 `tokenhush: redacted request email (len=17) ****`；多数类型的 `<masked>` 是 `****`，不透明凭据类型（`api_key`、`high_entropy`）是有界的前缀/后缀（如 `sk-p…j0`），掩码形式永远不会等于密钥。还原行格式为 `tokenhush: restored response placeholders=<N>`，例如 `tokenhush: restored response placeholders=1`，只包含计数。两行都只写 stderr、仅含元数据、永不落盘。此外，网关本地生成的每个请求侧拒绝恰好打印一行 `tokenhush: refused request <code>`，例如 `tokenhush: refused request body_too_large`，同样只写 stderr、仅含元数据，`<code>` 之外还可能带分类的 `reason=` 或 `rule_id=`。
+2. 网关终端打印两行 stderr 日志。拦截行格式为 `tokenhush: redacted request <type> (len=<N>) <masked>`，例如 `tokenhush: redacted request email (len=14) ****@example.com`；多数类型的 `<masked>` 是 `****`，不透明凭据类型（`api_key`、`high_entropy`）是有界的前缀/后缀（如 `sk-p…j0`），`private_key` 命中报告 PEM 头类型（如 `RSA PRIVATE KEY`），`email` 命中只报告域名，掩码形式永远不会等于密钥。还原行格式为 `tokenhush: restored response placeholders=<N>`，例如 `tokenhush: restored response placeholders=1`，只包含计数。两行都只写 stderr、仅含元数据、永不落盘。此外，网关本地生成的每个请求侧拒绝恰好打印一行 `tokenhush: refused request <code>`，例如 `tokenhush: refused request body_too_large`，同样只写 stderr、仅含元数据，`<code>` 之外还可能带分类的 `reason=` 或 `rule_id=`。
 3. `curl` 输出里又是原始值，因为响应路径还原了本次会话铸造的占位符。上游从未见到密钥，客户端从未见到占位符。
 
 像脚本一样读取运行中的网关：

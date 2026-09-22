@@ -150,8 +150,10 @@ exactly once before the single commit.
 Request and response bodies, detected secrets and the placeholder-to-secret
 mapping are never written to disk. The redaction log line
 `tokenhush: redacted request <type> (len=<N>) <masked>` goes to stderr only and
-is never persisted; its masked form either reveals nothing (`****`,
-`[redacted]`) or a bounded prefix and suffix of an opaque credential type. The
+is never persisted; its masked form reveals nothing (`****`, `[redacted]`), a
+bounded prefix and suffix of an opaque credential type, the PEM header kind of a
+private-key block (a fixed allowlisted literal, never the captured header text),
+or the domain of an email address with its local part hidden. The
 response-side counter line `tokenhush: restored response placeholders=<N>` is
 likewise stderr-only, metadata-only and never persisted.
 Redaction runs once per request over the whole client-supplied conversation, so

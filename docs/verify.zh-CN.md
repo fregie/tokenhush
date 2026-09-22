@@ -80,7 +80,7 @@ upstream received: {"model":"echo","messages":[{"role":"user","content":"my emai
 绝不给出完整值；回程只报告还原了多少个占位符：
 
 ```text
-tokenhush: redacted request email (len=17) ****
+tokenhush: redacted request email (len=14) ****@example.com
 tokenhush: restored response placeholders=1
 ```
 
@@ -117,8 +117,9 @@ tokenhush: redacted request <type> (len=<N>) <masked>
 ```
 
 它只写 stderr，永不落盘。多数类型的 `<masked>` 是 `****`。对于不透明凭据类型
-（`api_key`、`high_entropy`），它是经过截断的前缀与后缀，例如 `sk-p…j0`。掩码形式
-永远不会等于密钥：字面量 `****` 会渲染成 `[redacted]`。
+（`api_key`、`high_entropy`），它是经过截断的前缀与后缀，例如 `sk-p…j0`。`private_key`
+命中会报告其 PEM 头类型，例如 `RSA PRIVATE KEY`；`email` 命中只报告其域名，例如
+`****@example.com`。掩码形式永远不会等于密钥：字面量 `****` 会渲染成 `[redacted]`。
 
 该日志默认开启。用 `tokenhush run --log-redactions=false` 可以静默它。
 

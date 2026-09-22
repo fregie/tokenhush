@@ -402,7 +402,12 @@ func TestRedactionLogIsSilencedByFlag(t *testing.T) {
 	}
 }
 
-// TestMaskSecretNeverRevealsTheValue pins the two masking classes.
+// pemFixture builds a minimal PEM private-key block of the given header kind.
+func pemFixture(kind string) string {
+	return "-----BEGIN " + kind + "-----\nMIIB\n-----END " + kind + "-----"
+}
+
+// TestMaskSecretNeverRevealsTheValue pins every masking class.
 func TestMaskSecretNeverRevealsTheValue(t *testing.T) {
 	secret := "sk-" + strings.Repeat("Ab3", 14)
 	masked := maskSecret(secret, "api_key")
@@ -412,8 +417,17 @@ func TestMaskSecretNeverRevealsTheValue(t *testing.T) {
 	if masked != "sk-A…b3" {
 		t.Fatalf("maskSecret(%q, api_key) = %q, want sk-A…b3", secret, masked)
 	}
-	if got := maskSecret("alice@example.com", "email"); got != "****" {
-		t.Fatalf("maskSecret(email) = %q, want ****", got)
+	if got := maskSecret("user"+"@"+"example.com", "email"); got != "****@example.com" {
+		t.Fatalf("maskSecret(email) = %q, want ****@example.com", got)
+	}
+	if got := maskSecret(pemFixture("RSA PRIVATE KEY"), "private_key"); got != "RSA PRIVATE KEY" {
+		t.Fatalf("maskSecret(pem) = %q, want RSA PRIVATE KEY", got)
+	}
+	if got := maskSecret(pemFixture("NOT ALLOWLISTED"), "private_key"); got != "****" {
+		t.Fatalf("maskSecret(non-allowlisted pem kind) = %q, want **** (never the captured header text)", got)
+	}
+	if got := maskSecret("****", "jwt"); got != "[redacted]" {
+		t.Fatalf("maskSecret(****) = %q, want [redacted]", got)
 	}
 }
 

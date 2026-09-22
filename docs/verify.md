@@ -85,7 +85,7 @@ changed is reported by type, length, and a masked form, never in full; the
 return path reports only how many placeholders it restored:
 
 ```text
-tokenhush: redacted request email (len=17) ****
+tokenhush: redacted request email (len=14) ****@example.com
 tokenhush: restored response placeholders=1
 ```
 
@@ -125,7 +125,9 @@ tokenhush: redacted request <type> (len=<N>) <masked>
 
 It goes to stderr only and is never persisted. `<masked>` is `****` for most
 types. For the opaque credential types (`api_key`, `high_entropy`) it is a
-bounded prefix and suffix instead, for example `sk-p…j0`. The masked form can
+bounded prefix and suffix instead, for example `sk-p…j0`. A `private_key` match
+reports its PEM header kind, for example `RSA PRIVATE KEY`, and an `email` match
+reports only its domain, for example `****@example.com`. The masked form can
 never equal the secret: a literal `****` renders as `[redacted]`.
 
 The log is on by default. Silence it with `tokenhush run --log-redactions=false`.

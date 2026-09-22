@@ -173,7 +173,7 @@ tokenhush: restored response placeholders=1
 tokenhush: refused request body_too_large
 ```
 
-All three lines are metadata only and go to stderr only, never persisted. The redaction line carries the detector type, the matched byte length and a masked form, never the full value; the restore line carries only a count; the refusal line carries only the refusal code, plus a classified `reason=` or `rule_id=` where the refusal already carries one, and exactly one is written per locally generated request-side refusal. `tokenhush status` reports the redaction counts as JSON:
+All three lines are metadata only and go to stderr only, never persisted. The redaction line carries the detector type, the matched byte length and a masked form, never the full value; a `private_key` match names its PEM header kind and an `email` match shows only its domain; the restore line carries only a count; the refusal line carries only the refusal code, plus a classified `reason=` or `rule_id=` where the refusal already carries one, and exactly one is written per locally generated request-side refusal. `tokenhush status` reports the redaction counts as JSON:
 
 ```sh
 tokenhush status --json
@@ -223,7 +223,7 @@ curl -sS http://127.0.0.1:8787/v1/chat/completions \
 Three things to check:
 
 1. The echo upstream terminal prints the body with the address replaced by `__PII_email_<digest>__`. The secret left as a placeholder.
-2. The gateway terminal prints two lines: `tokenhush: redacted request email (len=17) ****` and `tokenhush: restored response placeholders=1`.
+2. The gateway terminal prints two lines: `tokenhush: redacted request email (len=14) ****@example.com` and `tokenhush: restored response placeholders=1`.
 3. The `curl` output contains the original address again, restored by the gateway on the response path. The upstream never saw the secret, and the client never saw the placeholder.
 
 `tokenhush status --json` reports `"redactions": 1` for that request. The full recipe, including how to read the status document, is in [docs/verify.md](docs/verify.md).
