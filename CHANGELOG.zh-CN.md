@@ -8,7 +8,28 @@
 > **关于版本线的说明。** `v0.1.0`–`v0.4.0` 这些 tag 属于重写之前的旧代码线，
 > 不在此记录。本仓库是从零重写的核心，其历史从 `v0.5.0` 开始。
 
-## [未发布]
+## [0.7.1] - 2026-09-22
+
+### 新增
+
+- **请求体积守卫。** 新增 `max_body_bytes` 配置项（默认 `67108864`，64 MiB），
+  约束请求体总量。超限的请求体在共享读取接缝处以 `403 body_too_large` 拒绝，
+  发生在任何遍历或上游拨号之前，绝不截断、也绝不部分转发。
+- **仅含元数据的拒绝日志。** 网关本地生成的每个请求侧拒绝现在恰好向 stderr 写
+  一行 `tokenhush: refused request <code>`，只携带封闭的拒绝词汇：拒绝码，以及
+  该拒绝本已携带的分类 `reason=` 或 `rule_id=`。
+- **高精度密钥规则文档。** `rules/high-precision-secrets.json` 增加高精度厂商密钥
+  模式（AWS、GCP 及其他服务商令牌形态）。
+
+### 变更
+
+- `scan_budget_bytes` 现在严格为逐叶、逐检测器语义：原始类型检测器对单个叶子最多
+  检查这么多字节。原先的聚合扫描预算拒绝（`scan_budget_exceeded`）已移除；超过
+  总量的请求体改由 `max_body_bytes` 拒绝。
+- 脱敏日志现在会报告 `private_key` 命中的 PEM 头类型（例如 `RSA PRIVATE KEY`），
+  对 `email` 命中只暴露域名（例如 `****@example.com`）。PEM 头类型取自固定白名单
+  字面量，因此捕获到的头部文本绝不会被回显。
+- README 首屏品牌区刷新。
 
 ## [0.7.0] - 2026-09-20
 
@@ -88,7 +109,8 @@
 - **安装：** 校验 sha256 的 Linux 与 Windows 安装器；tag 触发的 GoReleaser 流水线。
 - **文档与守卫：** 参考文档、双语文档集，以及结构化守卫测试套件。
 
-[未发布]: https://github.com/fregie/tokenhush/compare/v0.7.0...HEAD
+[未发布]: https://github.com/fregie/tokenhush/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/fregie/tokenhush/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fregie/tokenhush/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/fregie/tokenhush/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/fregie/tokenhush/compare/v0.5.0...v0.5.1

@@ -9,7 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > superseded pre-rewrite line and are not documented here. This repository is
 > the from-scratch core; its history starts at `v0.5.0`.
 
-## [Unreleased]
+## [0.7.1] - 2026-09-22
+
+### Added
+
+- **Request body-size guard.** A new `max_body_bytes` configuration key (default
+  `67108864`, 64 MiB) bounds the total request body. A body over it is refused
+  with `403 body_too_large` at the shared read seam, before any walk or upstream
+  dial, and is never truncated or partially forwarded.
+- **A metadata-only refusal log.** Every locally generated request-side refusal
+  now writes exactly one `tokenhush: refused request <code>` line to stderr,
+  carrying only the closed refusal vocabulary: the code, plus a classified
+  `reason=` or `rule_id=` where the refusal already carries one.
+- **High-precision secrets rule document.** `rules/high-precision-secrets.json`
+  adds high-precision vendor key patterns (AWS, GCP, and other provider token
+  shapes).
+
+### Changed
+
+- `scan_budget_bytes` is now strictly per-leaf, per-detector: a primitive
+  detector inspects at most this many bytes of one leaf. The former aggregate
+  scan-budget refusal (`scan_budget_exceeded`) is removed; a body over the total
+  is now refused by `max_body_bytes` instead.
+- The redaction log now names the PEM header kind of a `private_key` match (for
+  example `RSA PRIVATE KEY`) and reveals only the domain of an `email` match
+  (for example `****@example.com`). The PEM kind is a fixed allowlisted literal,
+  so captured header text is never echoed.
+- README first-screen branding refresh.
 
 ## [0.7.0] - 2026-09-20
 
@@ -101,7 +127,8 @@ detectors, signed rule sync, signed self-update, and the guard suites.
 - **Docs and guards:** the reference docs, the bilingual set, and the structural
   guard suites.
 
-[Unreleased]: https://github.com/fregie/tokenhush/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/fregie/tokenhush/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/fregie/tokenhush/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fregie/tokenhush/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/fregie/tokenhush/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/fregie/tokenhush/compare/v0.5.0...v0.5.1
