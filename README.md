@@ -25,6 +25,15 @@ The model receives   OPENAI_API_KEY=__PII_api_key_ae9c0b46a8f3__
 Your tool gets back  OPENAI_API_KEY=<real key>
 ```
 
+**At a glance**
+
+- **Reversible redaction** — every detected secret becomes a session-scoped `__PII_<type>_<digest>__` placeholder in the request body, restored to the original value in the response. The model only ever sees placeholders.
+- **6 built-in detectors** — `prefix`, `jwt`, `pem`, `luhn`, and `email` on by default; `entropy` opt-in.
+- **14 AI coding tools** — each gets a ready-to-paste base-URL snippet from `tokenhush env <tool>`.
+- **Loopback only** — binds `127.0.0.1` (plus `[::1]` when available); no TLS termination, no root certificate, no MITM.
+- **Pure Go, `CGO_ENABLED=0`** — one direct dependency, a single binary for macOS, Linux, and Windows.
+- **Apache-2.0** — no telemetry by default; the two optional outbound requests (update check, rule sync) are each switchable off.
+
 [Quick start](#-quick-start) · [Why Tokenhush](#-why-tokenhush) · [Features](#-features) · [How it works](#-how-it-works) · [Verify it works](#-verify-it-works) · [CLI](#-cli) · [Configuration](#-configuration) · [Documentation](#-documentation)
 
 ---
