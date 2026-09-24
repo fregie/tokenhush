@@ -21,8 +21,7 @@ import (
 // Frozen wire constants. D6 fixes the origin, the paths, the channel query,
 // the domain tags, the root key ids and the caps: none is configurable. Every
 // constant is part of the frozen supply-chain wire surface pinned by
-// pkg/supply/substrate_test.go, internal/guards/egress_guard_test.go and
-// docs/PRO-MIGRATION.md.
+// pkg/supply/substrate_test.go and internal/guards/egress_guard_test.go.
 const (
 	BaseURL      = "https://updates.tokenhush.com"
 	ChannelQuery = "?channel=stable"

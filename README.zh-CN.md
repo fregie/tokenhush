@@ -139,7 +139,7 @@ upstreams:
 
 路由按**请求路径**而不是厂商名，一个路径对应一个上游。中转站在 `/v1` 后面服务多个模型没问题：模型由请求 body 决定，而不是由路由决定。
 
-路由的完整规则与示例：[docs/tool-setup.md#configuring-request-routing-upstreams](docs/tool-setup.md#configuring-request-routing-upstreams)。配置文件的每个键：[docs/tool-setup.md#configuration-reference](docs/tool-setup.md#configuration-reference)，或见下文[配置](#-配置)一节。
+路由的完整规则与示例、以及配置文件的每个键：[docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)，或见下文[配置](#-配置)一节。
 
 ## 🔒 为什么需要 Tokenhush
 
@@ -358,7 +358,9 @@ response_timeout:  5m
 | `response_buffer_bytes` | 单个缓冲响应的总量上限，默认 33554432（32 MiB）。超过上限在提交前返回 `502`。 |
 | `response_timeout` | 读取单个响应的整体上限，默认 `5m`。超过 deadline 在提交前返回 `504`；二者同时触发时上限优先。 |
 
-路由按**请求路径**而非厂商名：未匹配的路径回退到内置规则，`/v1/messages` 去 Anthropic，`/v1/chat/completions` 和 `/v1/responses` 去 OpenAI，`GET /v1/models` 是指名的一个例外，默认去 OpenAI。其他未知路径是显式错误，绝不静默错发。模型由请求 body 决定，不由路由决定。完整规则与示例见 [docs/tool-setup.md](docs/tool-setup.md)。
+路由按**请求路径**而非厂商名：未匹配的路径回退到内置规则，`/v1/messages` 去 Anthropic，`/v1/chat/completions` 和 `/v1/responses` 去 OpenAI，`GET /v1/models` 是指名的一个例外，默认去 OpenAI。其他未知路径是显式错误，绝不静默错发。模型由请求 body 决定，不由路由决定。
+
+完整参考 —— 每个键及其默认值、完整内置路由表、匹配规则与优先级、以及完整路由示例 —— 见 [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)。
 
 ## 🛡️ 安全模型
 
@@ -384,14 +386,14 @@ Linux 与 Windows 的脚本在安装前会用发布页的 `checksums.txt` 校验
 
 | 文档 | 内容 |
 |---|---|
-| [docs/tool-setup.md](docs/tool-setup.md) / [docs/tool-setup.zh-CN.md](docs/tool-setup.zh-CN.md) | 十四种工具的接入、请求路由与 `tokenhush.yaml` 参考（英文 / 中文） |
+| [docs/configuration.md](docs/configuration.md) / [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md) | `tokenhush.yaml` 每个键、上游路由与文件位置（英文 / 中文） |
+| [docs/tool-setup.md](docs/tool-setup.md) / [docs/tool-setup.zh-CN.md](docs/tool-setup.zh-CN.md) | 十四种工具的接入（英文 / 中文） |
 | [docs/verify.md](docs/verify.md) / [docs/verify.zh-CN.md](docs/verify.zh-CN.md) | 用本地 echo 上游亲自验证脱敏（英文 / 中文） |
 | [docs/deployment.md](docs/deployment.md) / [docs/deployment.zh-CN.md](docs/deployment.zh-CN.md) | 安装路径、服务包装、发布状态（英文 / 中文） |
 | [docs/architecture.md](docs/architecture.md) / [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md) | 核心架构、数据流、模块划分（英文 / 中文） |
 | [docs/security.md](docs/security.md) / [docs/security.zh-CN.md](docs/security.zh-CN.md) | 安全模型、威胁模型、硬不变量（英文 / 中文） |
 | [docs/plugins.md](docs/plugins.md) / [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md) | 编写内容插件（`Inspector` / `Transformer`）（英文 / 中文） |
 | [docs/generated/network-egress.md](docs/generated/network-egress.md) / [docs/generated/network-egress.zh-CN.md](docs/generated/network-egress.zh-CN.md) | 两个可开关的厂商绑定出口类别全文（英文 / 中文） |
-| [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) / [docs/PRO-MIGRATION.zh-CN.md](docs/PRO-MIGRATION.zh-CN.md) | Pro 仓库需要单独完成的迁移（英文 / 中文） |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md) | 如何构建、测试与贡献（英文 / 中文） |
 | [SECURITY.md](SECURITY.md) / [SECURITY.zh-CN.md](SECURITY.zh-CN.md) | 漏洞披露流程与响应时间（英文 / 中文） |
 | [CHANGELOG.md](CHANGELOG.md) / [CHANGELOG.zh-CN.md](CHANGELOG.zh-CN.md) | 从零重写核心的发行历史（自 v0.5.0 起）（英文 / 中文） |

@@ -76,7 +76,8 @@ One more rule is structural rather than a single guard: on the response path a r
 - [docs/architecture.md](docs/architecture.md): the layered dependency graph, the single rule abstraction, the data path, and the frozen CLI.
 - [docs/security.md](docs/security.md): the eight invariants, the response-phase effects, and the seven residual risks.
 - [docs/plugins.md](docs/plugins.md): the `Rule` extension point, its registration semantics, and a worked example.
-- [docs/tool-setup.md](docs/tool-setup.md): per-tool setup, request routing, and the `tokenhush.yaml` reference.
+- [docs/configuration.md](docs/configuration.md): every `tokenhush.yaml` key, upstream routing, and where the file lives.
+- [docs/tool-setup.md](docs/tool-setup.md): per-tool setup for the 14 tools.
 
 ## Extending Tokenhush
 

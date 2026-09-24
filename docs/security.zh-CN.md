@@ -191,4 +191,3 @@ SSE 缓冲响应上的响应作用域 `Block` 是在提交任何字节之前返�
 - [architecture.zh-CN.md](architecture.zh-CN.md)——分层图、单一规则抽象与冻结的字节
   表面。
 - [plugins.zh-CN.md](plugins.zh-CN.md)——扩展点及其限制。
-- [PRO-MIGRATION.md](PRO-MIGRATION.md)——本次重写落地后 Pro 仓库必须做的事。

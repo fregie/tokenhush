@@ -252,5 +252,3 @@ Why each one stays as it is:
 - [architecture.md](architecture.md) — the layered graph, the single rule
   abstraction and the frozen byte surfaces.
 - [plugins.md](plugins.md) — the extension point and its restrictions.
-- [PRO-MIGRATION.md](PRO-MIGRATION.md) — what the Pro repository must do after
-  this rewrite lands.

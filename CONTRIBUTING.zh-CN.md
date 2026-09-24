@@ -76,7 +76,8 @@ TOKENHUSH_GUARD_FULL_GRAPH=1 go test ./internal/guards/... ./internal/layering/.
 - [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)：分层依赖图、单一规则抽象、数据路径与冻结的 CLI。
 - [docs/security.zh-CN.md](docs/security.zh-CN.md)：八条不变量、响应阶段的效应与七项残余风险。
 - [docs/plugins.zh-CN.md](docs/plugins.zh-CN.md)：`Rule` 扩展点、它的注册语义与一个完整示例。
-- [docs/tool-setup.zh-CN.md](docs/tool-setup.zh-CN.md)：逐工具接入、请求路由与 `tokenhush.yaml` 参考。
+- [docs/configuration.zh-CN.md](docs/configuration.zh-CN.md)：`tokenhush.yaml` 每个键、上游路由与文件位置。
+- [docs/tool-setup.zh-CN.md](docs/tool-setup.zh-CN.md)：十四种工具的接入。
 
 ## 扩展 Tokenhush
 

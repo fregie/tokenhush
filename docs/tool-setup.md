@@ -179,20 +179,16 @@ values:
 Then confirm the round trip with the local check in
 [verify.md](verify.md).
 
-## Configuring request routing (`upstreams`)
+## Configuration
 
-Routing is by **request path**, not provider name. The gateway reads the path,
-picks an upstream, appends the request, and sends it. One path maps to one
-upstream.
+Tokenhush reads `tokenhush.yaml`. The full reference — every key and its
+default, where the file lives, and how to route requests to your own provider —
+is in [configuration.md](configuration.md).
 
-Declare your own upstreams under `upstreams:`. It is a **list** of
-`{match, target}` entries, not a map:
-
-- `match` is a path prefix.
-- `target` is an origin with no trailing slash and **no `/v1`**.
-
-Use the provider origin. Your tool already sends the full path, and the gateway
-appends it. This is what makes a relay work without special handling.
+The one thing to set before using a relay is an `upstreams` entry. It is a
+**list** of `{match, target}` entries: `match` is a request-path prefix and
+`target` is the provider origin (plus any prefix before `/v1`) with no trailing
+slash and **no `/v1`**.
 
 ```yaml
 upstreams:
@@ -200,97 +196,10 @@ upstreams:
     target: https://your-provider.example.com
 ```
 
-A configured `upstreams` entry wins over the built-in table. When no entry
-matches, the built-ins apply:
-
-| Request path | Built-in upstream |
-|---|---|
-| `/v1/messages` | Anthropic |
-| `/v1/chat/completions` | OpenAI |
-| `/v1/responses` | OpenAI |
-| `GET /v1/models` | OpenAI (the one named exception) |
-| any other unknown path | explicit error |
-
-`GET /v1/models` is the one named exception: it defaults to OpenAI instead of
-being treated as an unknown path. Any other unknown path is an explicit error,
-never a silent misroute. Near-miss paths are not guessed at.
-
-Because the route is chosen by path and not by model, a relay that serves many
-models behind `/v1` is fine: the model is selected by the request body.
-
-Keep your provider's API key in the tool's own config. The gateway forwards auth
-headers untouched and redacts only the request body.
-
-## Configuration reference
-
-Tokenhush reads `tokenhush.yaml`. It uses a strict, closed schema: a missing file
-means the defaults, and an unknown key is an error rather than a warning. The
-whole surface is:
-
-```yaml
-listen:            {host: 127.0.0.1, port: 8787}
-log:               {level: info}
-detectors:         {prefix: true, email: true, luhn: true, jwt: true, pem: true, entropy: false}
-allowlist:         ["literal"]
-upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
-scan_budget_bytes: 33554432
-detector_timeout:  30s
-max_body_bytes:    67108864
-response_buffer_bytes: 33554432
-response_timeout:  5m
-```
-
-| Key | Type | Default | What it does |
-|---|---|---|---|
-| `listen.host` | string | `127.0.0.1` | Only `127.0.0.1`, `::1`, or `localhost`. `0.0.0.0` is rejected. |
-| `listen.port` | integer | `8787` | 1..65535. |
-| `log.level` | string | `info` | One of `debug`, `info`, `warn`, `error`. |
-| `detectors.prefix` | boolean | `true` | Known key shapes: `sk-`, `AKIA`, `ghp_`, `glpat-`, `xox*`, `AIza`, `npm_`. |
-| `detectors.email` | boolean | `true` | Email addresses; a match requires a domain that ends at a label boundary with a known public suffix. |
-| `detectors.luhn` | boolean | `true` | Card numbers, Luhn-checked. |
-| `detectors.jwt` | boolean | `true` | JSON Web Tokens. |
-| `detectors.pem` | boolean | `true` | PEM private-key headers. |
-| `detectors.entropy` | boolean | `false` | High-entropy strings. Off by default and opt-in: false positives on real agent traffic (long tool names, session ids) broke function calling. |
-| `allowlist` | list of strings | empty | Literals that are never redacted. |
-| `upstreams` | list of `{match, target}` | empty | Path-prefix routes to your own origins. |
-| `scan_budget_bytes` | integer | `33554432` (32 MiB) | Per-leaf, per-detector scan budget: a primitive detector inspects at most this many bytes of one leaf. |
-| `detector_timeout` | duration | `30s` | Detection backstop. |
-| `max_body_bytes` | integer | `67108864` (64 MiB) | Memory guard on the total request body. A body over it is refused with 403 `body_too_large` at the shared read seam before any walk, and is never truncated or partially forwarded. |
-| `response_buffer_bytes` | integer | `33554432` (32 MiB) | Total cap on one buffered response. An over-cap response is a 502 before any byte is committed. |
-| `response_timeout` | duration | `5m` | Overall bound on reading one response. A response past the deadline is a 504 before any byte is committed. If the cap and the deadline trip together, the cap wins. |
-
-Every upstream response is buffered **whole** before any byte reaches the client,
-including `text/event-stream`: there is no token-level streaming. A
-response-scoped `Block` on the buffered response, SSE included, is a 502 before
-any byte is committed, and backfill restores a content-split placeholder exactly
-once before that single commit. `response_buffer_bytes` and `response_timeout`
-bound the buffered body and the whole read; over the cap is a 502, past the
-deadline is a 504, and both are decided before commit.
-
-The detector keys are exactly `prefix`, `email`, `luhn`, `jwt`, `pem`, and
-`entropy`. They are not `prefixes`, not `high_entropy`, and not `private_keys`.
-
-The `email` detector matches precisely: an address is a match only when its
-domain ends at a label boundary with a known public suffix (`.com`, `.co.uk`),
-so subdomains count and a look-alike such as `evilcorp.com` is rejected when the
-configured suffix is the narrower `.corp.com` in `replace` mode (an additive
-`.corp.com` still carries the built-in `.com`, so `evilcorp.com` would match).
-The built-in suffix table is compiled in, frozen, and always on.
-
-## Config and data directories
-
-| Platform | Config dir | Data dir |
-|---|---|---|
-| macOS | `~/Library/Application Support/tokenhush/config/` | `~/Library/Application Support/tokenhush/Data/` |
-| Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` | `${XDG_DATA_HOME:-~/.local/share}/tokenhush/` |
-| Windows | `%AppData%\tokenhush\` | `%LocalAppData%\tokenhush\` |
-
-`TOKENHUSH_HOME` moves both to one root: config at
-`<TOKENHUSH_HOME>/config` and data at `<TOKENHUSH_HOME>/data`. An empty value
-counts as unset.
-
-Pass `--config PATH` to `tokenhush run` or `tokenhush env` to read a specific
-`tokenhush.yaml` instead of the default location.
+With no `upstreams`, the built-in table applies: `/v1/messages` goes to
+Anthropic, and `/v1/chat/completions` and `/v1/responses` go to OpenAI. See
+[configuration.md](configuration.md) for the full table, the match rules and
+precedence, worked examples, and troubleshooting.
 
 ## See also
 

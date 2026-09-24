@@ -10,11 +10,11 @@ Child of root `AGENTS.md`. Read that first; this file only adds docs-tree rules.
 |---|---|
 | Layering, rule abstraction, frozen wire surfaces | `docs/architecture.md` |
 | Threat model, 8 invariants, residual risk | `docs/security.md` |
-| Per-tool setup (14 tools), routing, config reference | `docs/tool-setup.md` |
+| Per-tool setup (14 tools) | `docs/tool-setup.md` |
+| `tokenhush.yaml` reference, upstream routing, config/data dirs | `docs/configuration.md` |
 | Echo-upstream verification recipe | `docs/verify.md` |
 | Install/build paths, service wrappers, platforms | `docs/deployment.md` |
 | Compile-time `Rule` extension point | `docs/plugins.md` |
-| Post-rewrite obligations for the private Pro repo | `docs/PRO-MIGRATION.md` |
 | Vendor egress disclosure (generated) | `docs/generated/network-egress.md` |
 
 ## THE FROZEN TREE RULE

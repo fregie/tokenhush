@@ -56,12 +56,12 @@ var d8Docs = []string{
 // the bilingual rule below applies to the D8 set, not to this file.
 var extraAllowedDocs = []string{
 	"docs/AGENTS.md",
-	"docs/PRO-MIGRATION.md",
+	"docs/configuration.md",
+	"docs/configuration.zh-CN.md",
 	"docs/tool-setup.md",
 	"docs/verify.md",
 	"docs/deployment.md",
 	"docs/generated/network-egress.md",
-	"docs/PRO-MIGRATION.zh-CN.md",
 	"docs/tool-setup.zh-CN.md",
 	"docs/verify.zh-CN.md",
 	"docs/deployment.zh-CN.md",
@@ -462,7 +462,7 @@ func guardsContainsString(items []string, want string) bool {
 }
 
 // TestDocsGuardProductTree checks the real documentation tree: every D8 path
-// exists, docs/ holds exactly the D8 subset plus docs/PRO-MIGRATION.md, the
+// exists, docs/ holds exactly the D8 subset plus the extraAllowedDocs set, the
 // documented command set equals the CLI's real (parsed) command set, and
 // docs/security.md records every invariant and every residual risk.
 func TestDocsGuardProductTree(t *testing.T) {
@@ -571,21 +571,21 @@ func TestDocsGuardProductTree(t *testing.T) {
 	}
 }
 
-// TestToolSetupDocumentsResponseLimits pins the response-limit configuration
-// keys in the tool-setup configuration reference: the whole response is
-// buffered, so the total buffer cap and the read deadline are documented with
-// their defaults beside the existing request-side keys.
-func TestToolSetupDocumentsResponseLimits(t *testing.T) {
+// TestConfigurationDocumentsResponseLimits pins the response-limit configuration
+// keys in the configuration reference: the whole response is buffered, so the
+// total buffer cap and the read deadline are documented with their defaults
+// beside the existing request-side keys.
+func TestConfigurationDocumentsResponseLimits(t *testing.T) {
 	root := repoRoot(t)
-	data, err := os.ReadFile(filepath.Join(root, "docs", "tool-setup.md"))
+	data, err := os.ReadFile(filepath.Join(root, "docs", "configuration.md"))
 	if err != nil {
-		t.Fatalf("read docs/tool-setup.md: %v", err)
+		t.Fatalf("read docs/configuration.md: %v", err)
 	}
 	normalized := strings.ToLower(docsStripCode(string(data)))
 	normalized = strings.Join(strings.Fields(normalized), " ")
 	for _, want := range []string{"response_buffer_bytes", "response_timeout", "32 mib", "5m"} {
 		if !strings.Contains(normalized, want) {
-			t.Errorf("docs/tool-setup.md does not document %q", want)
+			t.Errorf("docs/configuration.md does not document %q", want)
 		}
 	}
 }

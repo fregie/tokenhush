@@ -139,7 +139,7 @@ upstreams:
 
 Routing is by **request path**, not provider name, and one path maps to one upstream. A relay that serves many models behind `/v1` is fine: the model is chosen by the request body, not by the route.
 
-Worked routing examples: [docs/tool-setup.md#configuring-request-routing-upstreams](docs/tool-setup.md#configuring-request-routing-upstreams). Every key in the config file: [docs/tool-setup.md#configuration-reference](docs/tool-setup.md#configuration-reference), or the [Configuration](#-configuration) section below.
+Worked routing examples: [docs/configuration.md#routing-requests-to-upstreams](docs/configuration.md#routing-requests-to-upstreams). Every key in the config file: [docs/configuration.md#configuration-reference](docs/configuration.md#configuration-reference), or the [Configuration](#-configuration) section below.
 
 ## 🔒 Why Tokenhush
 
@@ -347,6 +347,8 @@ Set `TOKENHUSH_HOME` to move both under one root.
 
 Unmatched paths fall back to the built-ins: `/v1/messages` goes to Anthropic, and `/v1/chat/completions` and `/v1/responses` go to OpenAI. `GET /v1/models` is the one named exception and defaults to OpenAI. Any other unknown path is an explicit error, never a silent misroute. Routing is by request path; the model is chosen by the request body.
 
+The full reference — every key with its default, the complete built-in routing table, the match rules and precedence, and worked routing examples — is in [docs/configuration.md](docs/configuration.md).
+
 ## 🛡️ Security model
 
 Tokenhush binds loopback only: `127.0.0.1` always, plus `[::1]` when the host has an IPv6 loopback. The Host allowlist is always enforced, and `Origin` is checked for browser-style requests.
@@ -379,14 +381,14 @@ The installers download and verify the published binary for your platform, so no
 
 | Document | What's inside |
 |---|---|
-| [docs/tool-setup.md](docs/tool-setup.md) / [中文](docs/tool-setup.zh-CN.md) | Per-tool setup for the 14 tools, request routing, and the config reference. |
+| [docs/configuration.md](docs/configuration.md) / [中文](docs/configuration.zh-CN.md) | Every `tokenhush.yaml` key, upstream routing, and where the file lives. |
+| [docs/tool-setup.md](docs/tool-setup.md) / [中文](docs/tool-setup.zh-CN.md) | Per-tool setup for the 14 tools. |
 | [docs/verify.md](docs/verify.md) / [中文](docs/verify.zh-CN.md) | The echo-upstream verification recipe in full. |
 | [docs/deployment.md](docs/deployment.md) / [中文](docs/deployment.zh-CN.md) | Install and build paths, service wrappers, release status. |
 | [docs/architecture.md](docs/architecture.md) / [中文](docs/architecture.zh-CN.md) | Layered architecture, the rule abstraction, and the data path. |
 | [docs/security.md](docs/security.md) / [中文](docs/security.zh-CN.md) | Security model, the eight invariants, and the residual-risk register. |
 | [docs/plugins.md](docs/plugins.md) / [中文](docs/plugins.zh-CN.md) | The `Rule` extension point and its restrictions. |
 | [docs/generated/network-egress.md](docs/generated/network-egress.md) / [中文](docs/generated/network-egress.zh-CN.md) | The two switchable vendor-bound egress categories, generated from `egress.yaml`. |
-| [docs/PRO-MIGRATION.md](docs/PRO-MIGRATION.md) / [中文](docs/PRO-MIGRATION.zh-CN.md) | What the Pro repository must do after this rewrite. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) / [中文](CONTRIBUTING.zh-CN.md) | How to build, test, and contribute. |
 | [SECURITY.md](SECURITY.md) / [中文](SECURITY.zh-CN.md) | Vulnerability disclosure policy. |
 | [CHANGELOG.md](CHANGELOG.md) / [中文](CHANGELOG.zh-CN.md) | Release history for the from-scratch core (v0.5.0 onward). |

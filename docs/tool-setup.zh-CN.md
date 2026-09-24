@@ -167,16 +167,11 @@ http://127.0.0.1:8787/v1
 
 然后用 [verify.zh-CN.md](verify.zh-CN.md) 里的本地检查确认整个往返。
 
-## 配置请求路由（`upstreams`）
+## 配置
 
-路由按**请求路径**，不是按厂商名。网关读取路径、选一个上游、把请求接在后面再发出。一个路径对应一个上游。
+Tokenhush 读取 `tokenhush.yaml`。完整参考 —— 每个键及其默认值、文件位置，以及如何把请求路由到你自己的厂商 —— 见 [configuration.zh-CN.md](configuration.zh-CN.md)。
 
-在 `upstreams:` 下声明你自己的上游。它是 `{match, target}` 条目的**列表**，不是映射：
-
-- `match` 是路径前缀。
-- `target` 是不带结尾斜杠且**不带 `/v1`** 的源站。
-
-用厂商源站。你的工具已经会发送完整路径，网关把它接在后面。这正是中转站无需特殊处理就能工作的原因。
+使用中转站前唯一必须设置的是 `upstreams` 条目。它是 `{match, target}` 条目的**列表**：`match` 是请求路径前缀，`target` 是厂商源站（加上 `/v1` 之前的任何前缀），不带结尾斜杠且**不带 `/v1`**。
 
 ```yaml
 upstreams:
@@ -184,83 +179,7 @@ upstreams:
     target: https://your-provider.example.com
 ```
 
-配置的 `upstreams` 条目优先于内置表。没有条目匹配时，应用内置表：
-
-| 请求路径 | 内置上游 |
-|---|---|
-| `/v1/messages` | Anthropic |
-| `/v1/chat/completions` | OpenAI |
-| `/v1/responses` | OpenAI |
-| `GET /v1/models` | OpenAI（唯一指名的例外） |
-| 其它未知路径 | 显式错误 |
-
-`GET /v1/models` 是唯一指名的例外：它默认去 OpenAI，而不是被当作未知路径。其它未知路径是显式错误，绝不静默错发。近似路径永不猜测。
-
-因为路由由路径而非模型决定，中转站在 `/v1` 后面服务多个模型没问题：模型由请求 body 选择。
-
-厂商的 API key 留在工具自己的配置里。网关原样转发认证头，只脱敏请求 body。
-
-## 配置参考
-
-Tokenhush 读取 `tokenhush.yaml`。它使用严格且封闭的 schema：文件缺失表示使用默认值，未知键是错误而不是警告。全部表面如下：
-
-```yaml
-listen:            {host: 127.0.0.1, port: 8787}
-log:               {level: info}
-detectors:         {prefix: true, email: true, luhn: true, jwt: true, pem: true, entropy: false}
-allowlist:         ["literal"]
-upstreams:         [{match: "/v1/chat/completions", target: "https://api.openai.com"}]
-scan_budget_bytes: 33554432
-detector_timeout:  30s
-max_body_bytes:    67108864
-response_buffer_bytes: 33554432
-response_timeout:  5m
-```
-
-| 键 | 类型 | 默认值 | 作用 |
-|---|---|---|---|
-| `listen.host` | 字符串 | `127.0.0.1` | 只能是 `127.0.0.1`、`::1` 或 `localhost`。`0.0.0.0` 会被拒绝。 |
-| `listen.port` | 整数 | `8787` | 1..65535。 |
-| `log.level` | 字符串 | `info` | `debug`、`info`、`warn`、`error` 之一。 |
-| `detectors.prefix` | 布尔值 | `true` | 已知 key 形态：`sk-`、`AKIA`、`ghp_`、`glpat-`、`xox*`、`AIza`、`npm_`。 |
-| `detectors.email` | 布尔值 | `true` | 邮箱地址；匹配要求域名在标签边界处结束于已知公共后缀。 |
-| `detectors.luhn` | 布尔值 | `true` | 卡号，经 Luhn 校验。 |
-| `detectors.jwt` | 布尔值 | `true` | JSON Web Token。 |
-| `detectors.pem` | 布尔值 | `true` | PEM 私钥头。 |
-| `detectors.entropy` | 布尔值 | `false` | 高熵字符串。默认关闭，需显式开启：它在真实 agent 流量上的误报（长工具名、会话 id）曾破坏 function calling。 |
-| `allowlist` | 字符串列表 | 空 | 永不脱敏的字面量。 |
-| `upstreams` | `{match, target}` 列表 | 空 | 指向你自己源站的路径前缀路由。 |
-| `scan_budget_bytes` | 整数 | `33554432`（32 MiB） | 每叶、每检测器扫描预算：原始检测器对单个叶最多检查这么多字节。 |
-| `detector_timeout` | 时长 | `30s` | 检测兜底。 |
-| `max_body_bytes` | 整数 | `67108864`（64 MiB） | 整个请求 body 的内存护栏。超过它的 body 在共享读取 seam 处、任何遍历之前以 403 `body_too_large` 拒绝，且绝不截断、绝不部分转发。 |
-| `response_buffer_bytes` | 整数 | `33554432`（32 MiB） | 单个缓冲响应的总量上限。超过上限的响应在提交任何字节之前返回 502。 |
-| `response_timeout` | 时长 | `5m` | 读取单个响应的整体上限。超过 deadline 的响应在提交任何字节之前返回 504。若上限与 deadline 同时触发，上限优先。 |
-
-每个上游响应都会**整段**缓冲，之后才会有任何字节抵达客户端，`text/event-stream`
-同样如此：不存在 token 级流式输出。缓冲响应上的响应作用域 `Block`（含 SSE）在提交
-任何字节之前返回 502，回填则在唯一一次提交之前把内容层拆分的占位符精确还原一次。
-`response_buffer_bytes` 与 `response_timeout` 分别为缓冲 body 与整段读取设界；超过
-上限是 502，超过 deadline 是 504，二者都在提交之前决定。
-
-检测器键名恰好是 `prefix`、`email`、`luhn`、`jwt`、`pem` 和 `entropy`。它们不是 `prefixes`，不是 `high_entropy`，也不是 `private_keys`。
-
-`email` 检测器精确匹配：只有当地址域名在标签边界上以已知公共后缀（`.com`、
-`.co.uk`）结尾时才算命中，因此子域名同样计入，而 `evilcorp.com` 这类形似地址
-只有在 `replace` 模式下把更窄的 `.corp.com` 配置为后缀时才会被拒绝（追加模式下的
-`.corp.com` 仍带有内置的 `.com`，因此 `evilcorp.com` 仍会命中）。内置后缀表编译进程序、
-已冻结、始终生效。
-
-## 配置目录与数据目录
-
-| 平台 | 配置目录 | 数据目录 |
-|---|---|---|
-| macOS | `~/Library/Application Support/tokenhush/config/` | `~/Library/Application Support/tokenhush/Data/` |
-| Linux | `${XDG_CONFIG_HOME:-~/.config}/tokenhush/` | `${XDG_DATA_HOME:-~/.local/share}/tokenhush/` |
-| Windows | `%AppData%\tokenhush\` | `%LocalAppData%\tokenhush\` |
-
-`TOKENHUSH_HOME` 会把两者移到一个根：配置在 `<TOKENHUSH_HOME>/config`，数据在 `<TOKENHUSH_HOME>/data`。空值视为未设置。
-
-给 `tokenhush run` 或 `tokenhush env` 传 `--config PATH`，可以读取指定的 `tokenhush.yaml`，而不是默认位置。
+没有 `upstreams` 时，应用内置表：`/v1/messages` 去 Anthropic，`/v1/chat/completions` 与 `/v1/responses` 去 OpenAI。完整表、匹配规则与优先级、示例与排错见 [configuration.zh-CN.md](configuration.zh-CN.md)。
 
 ## 另见
 
