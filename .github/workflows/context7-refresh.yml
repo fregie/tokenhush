@@ -1,0 +1,34 @@
+# Refresh the Context7 index for this repository after a push to the default
+# branch. Context7 is an MCP documentation server that several AI coding tools
+# read at inference time, so keeping its copy of these docs current keeps the
+# tool usable past the model training cutoff.
+#
+# The step is a graceful no-op until the CONTEXT7_API_KEY repository secret is
+# configured, so it can never block a release. To enable it: create an API key
+# at https://context7.com/dashboard and add it as the CONTEXT7_API_KEY secret.
+name: Refresh Context7 docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger a Context7 refresh
+        env:
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+        run: |
+          if [ -z "${CONTEXT7_API_KEY}" ]; then
+            echo "CONTEXT7_API_KEY is not set; skipping the Context7 refresh."
+            exit 0
+          fi
+          curl -fsS -X POST https://context7.com/api/v1/refresh \
+            -H "Authorization: Bearer ${CONTEXT7_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"libraryName": "/fregie/tokenhush"}'

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://context7.com/schema/context7.json",
+  "projectTitle": "Tokenhush",
+  "description": "Local, loopback-only HTTP gateway that redacts secrets and PII in AI coding tool requests before they reach the model, and restores them in the response.",
+  "folders": ["docs"],
+  "rules": [
+    "Tokenhush is a CLI: prefer `tokenhush` commands and `tokenhush.yaml` snippets over any library API.",
+    "The response path does not redact; a response rule may only allow, warn, or block."
+  ]
+}
