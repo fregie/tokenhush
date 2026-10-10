@@ -2,11 +2,13 @@
 
 **English** | [中文](architecture.zh-CN.md)
 
-tokenhush v0.5.0 is a from-scratch rewrite of the tokenhush core. It keeps the
-security invariants and the supply-chain wire format, and it drops everything
-the evidence showed to be vestigial or duplicated. This document is the
-architectural map: the layered dependency graph, the single rule abstraction,
-the frozen supply-chain byte surfaces, and the CLI that assembles all of it.
+Tokenhush is a local, loopback-only HTTP gateway that redacts secrets and PII in
+AI coding tool requests before they reach the model, and restores them in the
+response. The v0.5.0 core is a from-scratch rewrite: it keeps the security
+invariants and the supply-chain wire format, and drops everything the evidence
+showed to be vestigial or duplicated. This document is the architectural map:
+the layered dependency graph, the single rule abstraction, the frozen
+supply-chain byte surfaces, and the seven-command CLI that assembles all of it.
 
 - [The four goals of the rewrite](#the-four-goals-of-the-rewrite)
 - [The layered dependency graph](#the-layered-dependency-graph)

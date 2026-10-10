@@ -2,10 +2,12 @@
 
 **English** | [中文](security.zh-CN.md)
 
-This document is the operator-facing security contract of the v0.5.0 rewrite.
-It lists the eight invariants the core keeps and the nine residual risks it does
-not hide, states what is enforced where, and names the test that pins each
-invariant.
+Tokenhush is a local, loopback-only HTTP gateway that redacts secrets and PII in
+AI coding tool requests before they reach the model, and restores them in the
+response. This document is the operator-facing security contract of the v0.5.0
+rewrite: it lists the eight invariants the core keeps and the nine residual
+risks it does not hide, states what is enforced where, and names the test that
+pins each invariant.
 
 - [The direction contract](#the-direction-contract)
 - [The eight invariants](#the-eight-invariants)

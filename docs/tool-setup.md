@@ -2,12 +2,15 @@
 
 **English** | [中文](tool-setup.zh-CN.md)
 
-Any tool that lets you override its OpenAI-compatible or Anthropic base URL can
-sit behind Tokenhush. Point that URL at the loopback gateway and the tool keeps
-working the same way; the gateway redacts the request body on the way out and
-restores it on the way back.
+Tokenhush is a local, loopback-only HTTP gateway that redacts secrets and PII in
+an AI coding tool's request body before they reach the model, and restores them
+in the response. Any tool that lets you override its OpenAI-compatible or
+Anthropic base URL can sit behind it: point that URL at the loopback gateway and
+the tool keeps working the same way; the gateway redacts the request body on the
+way out and restores it on the way back.
 
-The gateway listens on `http://127.0.0.1:8787` by default.
+The gateway listens on `http://127.0.0.1:8787` by default, and `tokenhush env
+<tool>` prints a ready snippet for 14 clients.
 
 ## The one rule
 

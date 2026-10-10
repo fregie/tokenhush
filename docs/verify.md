@@ -2,10 +2,12 @@
 
 **English** | [中文](verify.zh-CN.md)
 
-This check proves the whole round trip without sending anything to a real
-provider. You run a fake vendor that echoes request bodies, point a throwaway
-gateway at it, send one request that carries a fake secret, and watch where the
-secret does and does not appear.
+Tokenhush is a local, loopback-only HTTP gateway that redacts secrets and PII in
+AI coding tool requests before they reach the model, and restores them in the
+response. This check proves the whole round trip without sending anything to a
+real provider: you run a fake vendor that echoes request bodies, point a
+throwaway gateway at it, send one request that carries a fake secret, and watch
+where the secret does and does not appear.
 
 You need Go 1.25+, plus `python3` and `curl`.
 

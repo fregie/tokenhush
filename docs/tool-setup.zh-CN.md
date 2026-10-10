@@ -2,9 +2,9 @@
 
 **中文** | [English](tool-setup.md)
 
-任何允许覆盖其 OpenAI 兼容或 Anthropic base URL 的工具，都能放在 Tokenhush 之后。把那个 URL 指向回环网关，工具就照常工作；网关在出站方向脱敏请求 body，在回程还原它。
+Tokenhush 是一个本地、仅回环的 HTTP 网关：在 AI 编程工具的请求 body 到达模型之前，把它里面的密钥与 PII 脱敏，并在响应回来时还原。任何允许覆盖其 OpenAI 兼容或 Anthropic base URL 的工具，都能放在它之后：把那个 URL 指向回环网关，工具就照常工作。
 
-网关默认监听 `http://127.0.0.1:8787`。
+网关默认监听 `http://127.0.0.1:8787`，`tokenhush env <tool>` 会为 14 个客户端打印现成片段。
 
 ## 唯一的规则
 
